@@ -125,8 +125,34 @@ app.get('*', (req, res) => {
 
 // ---------------- HTTPS Server ----------------
 const PORT = process.env.PORT || 3000;
-const key = fs.readFileSync(path.join(__dirname, 'certs/key.pem'));
-const cert = fs.readFileSync(path.join(__dirname, 'certs/cert.pem'));
+const keyPath = process.env.SSL_KEY_PATH || path.join(__dirname, 'certs/key.pem');
+const certPath = process.env.SSL_CERT_PATH || path.join(__dirname, 'certs/cert.pem');
+
+for (const requiredPath of [keyPath, certPath]) {
+  if (!fs.existsSync(requiredPath)) {
+    console.error('TLS certificate files are missing.');
+    console.error(`Missing file: ${requiredPath}`);
+    console.error('If running with Docker Compose, ensure host certs are in ./certs relative to secure-uploader/docker-compose.yml, or override SSL_KEY_PATH/SSL_CERT_PATH.');
+    process.exit(1);
+  }
+}
+
+let key;
+let cert;
+try {
+  fs.accessSync(keyPath, fs.constants.R_OK);
+  fs.accessSync(certPath, fs.constants.R_OK);
+  key = fs.readFileSync(keyPath);
+  cert = fs.readFileSync(certPath);
+} catch (err) {
+  console.error('Failed to read TLS certificate files.');
+  console.error(`Process UID:GID ${process.getuid?.() ?? 'n/a'}:${process.getgid?.() ?? 'n/a'}`);
+  console.error(`Key path: ${keyPath}`);
+  console.error(`Cert path: ${certPath}`);
+  if (err && err.code) console.error(`Node error code: ${err.code}`);
+  console.error('Likely causes: unreadable file permissions, missing execute permission on a parent directory, or SELinux/AppArmor bind-mount restrictions.');
+  process.exit(1);
+}
 
 const server = https.createServer({ key, cert }, app);
 server.listen(PORT, () => console.log(`Secure uploader running on https://0.0.0.0:${PORT}`));
