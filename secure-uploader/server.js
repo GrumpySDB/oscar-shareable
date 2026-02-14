@@ -66,28 +66,33 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:'],
-        objectSrc: ["'none'"],
-        baseUri: ["'none'"],
-        frameAncestors: ["'none'"],
-        upgradeInsecureRequests: [],
-      },
+const securityHeaders = helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'none'"],
+      frameAncestors: ["'none'"],
+      upgradeInsecureRequests: [],
     },
-    hsts: {
-      maxAge: 31536000,
-      includeSubDomains: false,
-      preload: false,
-    },
-    crossOriginEmbedderPolicy: false,
-  })
-);
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: false,
+    preload: false,
+  },
+  crossOriginEmbedderPolicy: false,
+});
+
+app.use((req, res, next) => {
+  if (req.path.startsWith('/oscar/')) {
+    return next();
+  }
+  return securityHeaders(req, res, next);
+});
 
 
 
@@ -247,6 +252,62 @@ function proxyOscarRequest(req, res) {
   });
 
   req.pipe(proxyReq);
+}
+
+function proxyOscarWebSocket(req, socket, head) {
+  const oscarPath = req.url && req.url.startsWith('/oscar') ? req.url.replace(/^\/oscar/, '') || '/' : '/';
+  const targetPort = oscarTarget.port || (oscarTarget.protocol === 'https:' ? 443 : 80);
+  const connectOptions = {
+    protocol: oscarTarget.protocol,
+    hostname: oscarTarget.hostname,
+    port: targetPort,
+    path: oscarPath,
+    method: 'GET',
+    headers: {
+      ...req.headers,
+      host: oscarTarget.host,
+      connection: 'Upgrade',
+      upgrade: 'websocket',
+    },
+  };
+
+  const requestLib = oscarTarget.protocol === 'https:' ? https : http;
+  const proxyReq = requestLib.request(connectOptions);
+
+  proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+    const statusCode = proxyRes.statusCode || 101;
+    const statusMessage = proxyRes.statusMessage || 'Switching Protocols';
+    const headerLines = [`HTTP/1.1 ${statusCode} ${statusMessage}`];
+
+    for (const [name, value] of Object.entries(proxyRes.headers)) {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          headerLines.push(`${name}: ${item}`);
+        }
+      } else if (value !== undefined) {
+        headerLines.push(`${name}: ${value}`);
+      }
+    }
+
+    socket.write(`${headerLines.join('\r\n')}\r\n\r\n`);
+    if (proxyHead && proxyHead.length > 0) {
+      socket.write(proxyHead);
+    }
+    if (head && head.length > 0) {
+      proxySocket.write(head);
+    }
+    proxySocket.pipe(socket).pipe(proxySocket);
+  });
+
+  proxyReq.on('response', () => {
+    socket.end();
+  });
+
+  proxyReq.on('error', () => {
+    socket.destroy();
+  });
+
+  proxyReq.end();
 }
 
 const upload = multer({
@@ -481,7 +542,44 @@ const tlsOptions = {
   cert: fs.readFileSync(SSL_CERT_PATH),
 };
 
-https.createServer(tlsOptions, app).listen(HTTPS_PORT, () => {
+const httpsServer = https.createServer(tlsOptions, app);
+
+httpsServer.on('upgrade', (req, socket, head) => {
+  if (!req.url || !req.url.startsWith('/oscar/')) {
+    socket.destroy();
+    return;
+  }
+
+  const cookies = new Map();
+  for (const chunk of String(req.headers.cookie || '').split(';')) {
+    const trimmed = chunk.trim();
+    if (!trimmed) continue;
+    const sep = trimmed.indexOf('=');
+    if (sep <= 0) continue;
+    cookies.set(trimmed.slice(0, sep), decodeURIComponent(trimmed.slice(sep + 1)));
+  }
+
+  const sessionToken = cookies.get('oscar_session');
+  if (!sessionToken) {
+    socket.destroy();
+    return;
+  }
+
+  try {
+    const payload = jwt.verify(sessionToken, JWT_SECRET);
+    if (payload.scope !== 'oscar') {
+      socket.destroy();
+      return;
+    }
+  } catch (_err) {
+    socket.destroy();
+    return;
+  }
+
+  proxyOscarWebSocket(req, socket, head);
+});
+
+httpsServer.listen(HTTPS_PORT, () => {
   console.log(`OSCAR uploader running on https://0.0.0.0:${HTTPS_PORT}`);
 });
 
