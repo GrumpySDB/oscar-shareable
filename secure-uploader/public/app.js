@@ -7,6 +7,7 @@ let token = sessionStorage.getItem('authToken') || null;
 let preparedFiles = [];
 let preparedFolder = '';
 let selectedDateMs = 0;
+const BUSY_MESSAGE = 'The service is temporarily in use.  Please try again in about 3 minutes.';
 
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
@@ -50,8 +51,9 @@ function showApp() {
   appCard.classList.remove('hidden');
 }
 
-function setMessage(message, isError = false) {
-  appMessage.style.color = isError ? '#c93d3d' : '#13865b';
+function setMessage(message, isError = false, isBusy = false) {
+  appMessage.classList.toggle('error-state', Boolean(isError));
+  appMessage.classList.toggle('busy-state', Boolean(isBusy));
   appMessage.textContent = message;
 }
 
@@ -88,6 +90,10 @@ function getBasename(file) {
   return file.name;
 }
 
+function formatBusyMessage(_retryAfterSeconds = null) {
+  return BUSY_MESSAGE;
+}
+
 function validateFile(file, startDateMs) {
   const relativePath = getRelativePath(file);
   const extension = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
@@ -111,11 +117,19 @@ async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
     let detail = 'Request failed';
+    let retryAfterSeconds = null;
     try {
       const body = await response.json();
       detail = body.error || detail;
+      retryAfterSeconds = Number(body.retryAfterSeconds);
     } catch (_err) {}
-    throw new Error(detail);
+
+    const error = new Error(detail);
+    error.status = response.status;
+    if (Number.isFinite(retryAfterSeconds)) {
+      error.retryAfterSeconds = retryAfterSeconds;
+    }
+    throw error;
   }
 
   if (response.status === 204) return null;
@@ -220,6 +234,10 @@ async function scanAndPrepare() {
     const data = await api(`/api/folders/${encodeURIComponent(folder)}/files`);
     existingNames = Array.isArray(data.filenames) ? data.filenames : [];
   } catch (err) {
+    if (err.status === 423) {
+      setMessage(formatBusyMessage(err.retryAfterSeconds), true, true);
+      return;
+    }
     setMessage(`Unable to load existing files: ${err.message}`, true);
     return;
   }
@@ -304,10 +322,18 @@ function uploadPreparedFiles() {
       uploadBtn.disabled = true;
     } else {
       let message = 'Upload failed';
+      let retryAfterSeconds = null;
       try {
-        message = JSON.parse(request.responseText).error || message;
+        const body = JSON.parse(request.responseText);
+        message = body.error || message;
+        retryAfterSeconds = Number(body.retryAfterSeconds);
       } catch (_err) {}
-      setMessage(message, true);
+
+      if (request.status === 423) {
+        setMessage(formatBusyMessage(retryAfterSeconds), true, true);
+      } else {
+        setMessage(message, true);
+      }
       uploadBtn.disabled = false;
     }
   };
@@ -335,6 +361,10 @@ async function proceedToOscar() {
     }
     window.location.assign(result.launchUrl);
   } catch (err) {
+    if (err.status === 423) {
+      setMessage(formatBusyMessage(err.retryAfterSeconds), true, true);
+      return;
+    }
     setMessage(`Unable to open OSCAR: ${err.message}`, true);
   }
 }
