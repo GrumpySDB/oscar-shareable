@@ -4,7 +4,7 @@ Hardened web app for uploading OSCAR SD card files through Docker.
 
 ## Security highlights
 - Runs in Docker with non-root UID:GID `911:911` and hardened compose settings.
-- Login required for upload/delete actions.
+- Login required for upload/delete actions and before reaching the OSCAR UI.
 - Credentials loaded from `.env`.
 - Strict file validation (`.crc`, `.tgt`, `.edf`, max 10MB each).
 - Folder name validation and server-side path safety.
@@ -28,6 +28,7 @@ HTTP_PORT=3000
 HTTPS_PORT=3443
 SSL_KEY_PATH=/app/certs/key.pem
 SSL_CERT_PATH=/app/certs/cert.pem
+OSCAR_BASE_URL=http://oscar:3000
 ```
 
 ## Run
@@ -56,3 +57,9 @@ App URL: `https://localhost:3443`
   - `STR.edf`
 - Non-required files must be within selected date range and no older than 1 year.
 - Users can delete all uploaded data for a folder.
+
+## Integrated OSCAR service
+- `docker-compose.yml` now runs the uploader and `rogerrum/docker-oscar:latest` together.
+- The upload page includes a large **Proceed to OSCAR** button.
+- Clicking it calls an authenticated API endpoint that issues a short-lived launch URL, then sets an HttpOnly gate cookie under `/oscar` before proxying traffic to the OSCAR container.
+- Direct access to `/oscar/*` without the gate cookie returns `401 Unauthorized`.

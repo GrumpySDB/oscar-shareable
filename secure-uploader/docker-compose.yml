@@ -13,6 +13,7 @@ services:
       HTTPS_PORT: 3443
       UPLOAD_UID: 911
       UPLOAD_GID: 911
+      OSCAR_BASE_URL: http://oscar:3000
     volumes:
       - ./data/uploads:/app/data/uploads
     restart: unless-stopped
@@ -23,3 +24,17 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    depends_on:
+      - oscar
+
+  oscar:
+    image: rogerrum/docker-oscar:latest
+    container_name: oscar
+    restart: unless-stopped
+    expose:
+      - "3000"
+    volumes:
+      - ./oscar-data:/config/Documents/OSCAR_Data:rw
+      - ./data/uploads:/config/SDCARD:ro
+    environment:
+      TZ: "America/Toronto"

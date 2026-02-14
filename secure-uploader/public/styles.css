@@ -150,3 +150,16 @@ button.danger {
   min-height: 20px;
   color: var(--success);
 }
+
+
+button.oscar-cta {
+  background: #0e7a43;
+  font-size: 1.1rem;
+  padding: 1rem 1rem;
+  margin-top: 1rem;
+}
+
+button.oscar-cta:hover {
+  background: #0b6738;
+}
+
