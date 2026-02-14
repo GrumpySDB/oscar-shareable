@@ -63,4 +63,6 @@ App URL: `https://localhost:3443`
 - The upload page includes a large **Proceed to OSCAR** button.
 - Clicking it calls an authenticated API endpoint that issues a short-lived launch URL, then sets an HttpOnly gate cookie under `/oscar` before proxying traffic to the OSCAR container.
 - Direct access to `/oscar/*` without the gate cookie returns `401 Unauthorized`.
+- Requests under `/oscar/*` bypass the uploader's Helmet CSP so OSCAR can serve its own scripts/styles without browser CSP violations.
 - The proxy rewrites OSCAR's `Content-Security-Policy` `frame-ancestors` directive to `'self'` so the embedded VNC view can load under the shared app origin.
+- WebSocket upgrades under `/oscar/*` are now proxied (with the same gate cookie check), which restores OSCAR audio/socket connectivity.
