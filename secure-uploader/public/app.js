@@ -16,6 +16,30 @@ const summary = document.getElementById('summary');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
 
+
+const loginBanner = document.getElementById('loginBanner');
+const uploadBanner = document.getElementById('uploadBanner');
+
+async function loadRandomBanner(imageElement) {
+  if (!imageElement) return;
+
+  try {
+    const response = await fetch('/images/manifest.json', { cache: 'no-store' });
+    if (!response.ok) return;
+
+    const data = await response.json();
+    if (!Array.isArray(data.images) || data.images.length === 0) return;
+
+    const index = Math.floor(Math.random() * data.images.length);
+    const selected = String(data.images[index] || '').trim();
+    if (!selected) return;
+
+    imageElement.src = `/images/${encodeURIComponent(selected)}`;
+    imageElement.classList.remove('hidden');
+  } catch (_err) {}
+}
+
+
 function showLogin() {
   loginCard.classList.remove('hidden');
   appCard.classList.add('hidden');
@@ -323,4 +347,6 @@ document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFil
 document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
 
 configureDateInput();
+loadRandomBanner(loginBanner);
+loadRandomBanner(uploadBanner);
 checkSession();

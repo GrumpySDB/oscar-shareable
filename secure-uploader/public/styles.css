@@ -37,6 +37,18 @@ body {
   padding: 1.5rem;
 }
 
+.screen-banner {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 10px;
+  margin: 0 0 1rem;
+  background: #f8faff;
+}
+
 .hidden {
   display: none;
 }
