@@ -143,6 +143,7 @@ function authMiddleware(req, res, next) {
 
 const upload = multer({
   storage: multer.memoryStorage(),
+  preservePath: true,
   limits: {
     fileSize: MAX_FILE_SIZE,
     files: 500,
