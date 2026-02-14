@@ -149,8 +149,21 @@ button.danger {
   margin-top: 0.7rem;
   min-height: 20px;
   color: var(--success);
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
 }
 
+.message.error-state {
+  color: var(--danger);
+  background: #fff2f2;
+  border: 1px solid #f0cccc;
+}
+
+.message.busy-state {
+  color: #7a4b00;
+  background: linear-gradient(180deg, #fffaf0, #fff4dd);
+  border: 1px solid #f4d7a2;
+}
 
 button.oscar-cta {
   background: #0e7a43;
