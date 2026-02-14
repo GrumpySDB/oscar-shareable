@@ -3,7 +3,7 @@
 Hardened web app for uploading OSCAR SD card files through Docker.
 
 ## Security highlights
-- Runs in Docker with non-root user and hardened compose settings.
+- Runs in Docker with non-root UID:GID `911:911` and hardened compose settings.
 - Login required for upload/delete actions.
 - Credentials loaded from `.env`.
 - Strict file validation (`.crc`, `.tgt`, `.edf`, max 10MB each).
@@ -11,6 +11,8 @@ Hardened web app for uploading OSCAR SD card files through Docker.
 - Security headers with Helmet and API rate limiting.
 - HTTPS-only serving with a self-signed certificate.
 - HTTP listener only redirects to HTTPS (308).
+- Upload directory ownership is enforced to `911:911` by startup/runtime checks in the uploader container.
+- Server refuses to run if upload directory ownership is not `911:911`.
 
 ## Required environment variables
 Create a `.env` file:
@@ -31,6 +33,14 @@ SSL_CERT_PATH=/app/certs/cert.pem
 ## Run
 ```bash
 docker compose up --build
+```
+
+If uploads still fail due to host filesystem ACLs or root-squash, fix ownership on the host:
+
+```bash
+sudo mkdir -p secure-uploader/data/uploads
+sudo chown -R 911:911 secure-uploader/data/uploads
+sudo chmod 750 secure-uploader/data/uploads
 ```
 
 App URL: `https://localhost:3443`
