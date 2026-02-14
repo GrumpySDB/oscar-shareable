@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN addgroup -g 911 -S appgroup && adduser -u 911 -S appuser -G appgroup
 RUN apk add --no-cache openssl
 
 COPY package.json ./

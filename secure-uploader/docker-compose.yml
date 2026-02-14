@@ -2,6 +2,7 @@ services:
   uploader:
     build:
       context: .
+    user: "911:911"
     ports:
       - "3000:3000"
       - "3443:3443"
@@ -10,6 +11,8 @@ services:
     environment:
       HTTP_PORT: 3000
       HTTPS_PORT: 3443
+      UPLOAD_UID: 911
+      UPLOAD_GID: 911
     volumes:
       - ./data/uploads:/app/data/uploads
     restart: unless-stopped

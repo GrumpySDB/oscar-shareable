@@ -28,6 +28,8 @@ const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
 const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 const UPLOAD_ROOT = path.join(__dirname, 'data', 'uploads');
+const UPLOAD_UID = Number(process.env.UPLOAD_UID || 911);
+const UPLOAD_GID = Number(process.env.UPLOAD_GID || 911);
 
 if (REQUIRE_DOCKER && !fs.existsSync('/.dockerenv')) {
   console.error('Refusing to start outside Docker (REQUIRE_DOCKER=true).');
@@ -40,6 +42,13 @@ if (!JWT_SECRET || !APP_USERNAME || !APP_PASSWORD) {
 }
 
 fs.mkdirSync(UPLOAD_ROOT, { recursive: true, mode: 0o750 });
+
+try {
+  ensureOwnershipSync(UPLOAD_ROOT);
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -140,6 +149,25 @@ const upload = multer({
   },
 });
 
+
+function ownershipError(targetPath, stats) {
+  return new Error(`Upload path ownership must be ${UPLOAD_UID}:${UPLOAD_GID}; found ${stats.uid}:${stats.gid} at ${targetPath}`);
+}
+
+function ensureOwnershipSync(targetPath) {
+  const stats = fs.statSync(targetPath);
+  if (stats.uid !== UPLOAD_UID || stats.gid !== UPLOAD_GID) {
+    throw ownershipError(targetPath, stats);
+  }
+}
+
+async function ensureOwnership(targetPath) {
+  const stats = await fsp.stat(targetPath);
+  if (stats.uid !== UPLOAD_UID || stats.gid !== UPLOAD_GID) {
+    throw ownershipError(targetPath, stats);
+  }
+}
+
 async function listFilenames(folderPath) {
   const entries = await fsp.readdir(folderPath, { withFileTypes: true });
   const names = [];
@@ -231,10 +259,16 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
 
     const folderPath = path.join(UPLOAD_ROOT, folder);
     await fsp.mkdir(folderPath, { recursive: true, mode: 0o750 });
+    await ensureOwnership(UPLOAD_ROOT);
+    await ensureOwnership(folderPath);
 
     for (const file of files) {
       const destination = path.join(folderPath, path.basename(file.originalname));
+      if (fs.existsSync(destination)) {
+        await ensureOwnership(destination);
+      }
       await fsp.writeFile(destination, file.buffer, { mode: 0o640 });
+      await ensureOwnership(destination);
     }
 
     return res.json({ uploaded: files.length });
