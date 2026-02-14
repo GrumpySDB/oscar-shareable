@@ -207,8 +207,16 @@ function requireOscarSession(req, res, next) {
   }
 }
 
+function getOscarTargetPath(incomingPath) {
+  const rawPath = typeof incomingPath === 'string' ? incomingPath : '/';
+  if (rawPath.startsWith('/oscar')) {
+    return rawPath.replace(/^\/oscar/, '') || '/';
+  }
+  return rawPath || '/';
+}
+
 function proxyOscarRequest(req, res) {
-  const oscarPath = req.originalUrl.replace(/^\/oscar/, '') || '/';
+  const oscarPath = getOscarTargetPath(req.originalUrl);
   const options = {
     protocol: oscarTarget.protocol,
     hostname: oscarTarget.hostname,
@@ -255,7 +263,7 @@ function proxyOscarRequest(req, res) {
 }
 
 function proxyOscarWebSocket(req, socket, head) {
-  const oscarPath = req.url && req.url.startsWith('/oscar') ? req.url.replace(/^\/oscar/, '') || '/' : '/';
+  const oscarPath = getOscarTargetPath(req.url);
   const targetPort = oscarTarget.port || (oscarTarget.protocol === 'https:' ? 443 : 80);
   const connectOptions = {
     protocol: oscarTarget.protocol,
@@ -519,6 +527,7 @@ app.get('/oscar/login', (req, res) => {
 });
 
 app.use('/oscar', requireOscarSession, proxyOscarRequest);
+app.use('/websockify', requireOscarSession, proxyOscarRequest);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/{*splat}', (_req, res) => {
@@ -545,7 +554,7 @@ const tlsOptions = {
 const httpsServer = https.createServer(tlsOptions, app);
 
 httpsServer.on('upgrade', (req, socket, head) => {
-  if (!req.url || !req.url.startsWith('/oscar/')) {
+  if (!req.url || (!req.url.startsWith('/oscar/') && !req.url.startsWith('/websockify'))) {
     socket.destroy();
     return;
   }
