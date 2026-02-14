@@ -6,7 +6,7 @@ services:
     command:
       - --configFile=/etc/traefik/traefik.yml
     ports:
-      - "${SECURE_UPLOADER_PORT:?Run scripts/start-secure-uploader.sh to pick a random high port}:8443"
+      - "50710:8443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
