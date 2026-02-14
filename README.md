@@ -2,7 +2,7 @@
 
 ## secure-uploader TLS cert behavior
 
-The Docker image now generates a self-signed certificate at build time, stored in:
+The Docker image generates a self-signed certificate at build time, stored in:
 
 - `/app/certs/key.pem`
 - `/app/certs/cert.pem`
@@ -13,6 +13,23 @@ If you need custom cert locations, you can still override in-container paths wit
 
 - `SSL_KEY_PATH`
 - `SSL_CERT_PATH`
+
+## Reverse proxy + CrowdSec hardening
+
+`secure-uploader/docker-compose.yml` now places Traefik in front of the uploader and publishes **only** the Traefik HTTPS entrypoint.
+
+- Exposed host port is provided by `SECURE_UPLOADER_PORT` and must be high-numbered.
+- `secure-uploader/scripts/start-secure-uploader.sh` automatically picks a random port from `49152-65535`.
+- CrowdSec (`crowdsecurity/crowdsec`) parses Traefik access logs and the Traefik CrowdSec bouncer protects requests through forward auth.
+
+### Run securely
+
+```bash
+cd secure-uploader
+./scripts/start-secure-uploader.sh
+```
+
+The script prints the selected URL, for example `https://localhost:55321`.
 
 ### If files exist but startup still fails
 
