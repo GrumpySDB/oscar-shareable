@@ -6,6 +6,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const { URL } = require('url');
 const helmet = require('helmet');
 const multer = require('multer');
 const jwt = require('jsonwebtoken');
@@ -20,6 +21,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const APP_USERNAME = process.env.APP_USERNAME;
 const APP_PASSWORD = process.env.APP_PASSWORD;
 const REQUIRE_DOCKER = String(process.env.REQUIRE_DOCKER || 'true').toLowerCase() === 'true';
+const OSCAR_BASE_URL = process.env.OSCAR_BASE_URL || 'http://oscar:3000';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const USERNAME_MAX_LENGTH = 128;
@@ -30,6 +32,16 @@ const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 const UPLOAD_ROOT = path.join(__dirname, 'data', 'uploads');
 const UPLOAD_UID = Number(process.env.UPLOAD_UID || 911);
 const UPLOAD_GID = Number(process.env.UPLOAD_GID || 911);
+const OSCAR_LAUNCH_TTL_SECONDS = 120;
+const OSCAR_SESSION_TTL_SECONDS = 8 * 60 * 60;
+
+let oscarTarget;
+try {
+  oscarTarget = new URL(OSCAR_BASE_URL);
+} catch (_error) {
+  console.error(`Invalid OSCAR_BASE_URL: ${OSCAR_BASE_URL}`);
+  process.exit(1);
+}
 
 if (REQUIRE_DOCKER && !fs.existsSync('/.dockerenv')) {
   console.error('Refusing to start outside Docker (REQUIRE_DOCKER=true).');
@@ -141,6 +153,92 @@ function authMiddleware(req, res, next) {
   }
 }
 
+function parseCookies(req) {
+  const raw = String(req.headers.cookie || '');
+  const map = new Map();
+  for (const chunk of raw.split(';')) {
+    const trimmed = chunk.trim();
+    if (!trimmed) continue;
+    const separator = trimmed.indexOf('=');
+    if (separator <= 0) continue;
+    const key = trimmed.slice(0, separator).trim();
+    const value = trimmed.slice(separator + 1).trim();
+    map.set(key, decodeURIComponent(value));
+  }
+  return map;
+}
+
+function issueOscarSessionCookie(res) {
+  const token = jwt.sign({ sub: 'shared-user', scope: 'oscar' }, JWT_SECRET, {
+    expiresIn: OSCAR_SESSION_TTL_SECONDS,
+  });
+  const isProd = process.env.NODE_ENV === 'production';
+  const cookieParts = [
+    `oscar_session=${encodeURIComponent(token)}`,
+    'Path=/oscar',
+    `Max-Age=${OSCAR_SESSION_TTL_SECONDS}`,
+    'HttpOnly',
+    'SameSite=Strict',
+  ];
+  if (isProd) cookieParts.push('Secure');
+  res.setHeader('Set-Cookie', cookieParts.join('; '));
+}
+
+function requireOscarSession(req, res, next) {
+  const cookies = parseCookies(req);
+  const sessionToken = cookies.get('oscar_session');
+  if (!sessionToken) {
+    return res.status(401).send('Unauthorized');
+  }
+
+  try {
+    const payload = jwt.verify(sessionToken, JWT_SECRET);
+    if (payload.scope !== 'oscar') {
+      return res.status(401).send('Unauthorized');
+    }
+    return next();
+  } catch (_err) {
+    return res.status(401).send('Unauthorized');
+  }
+}
+
+function proxyOscarRequest(req, res) {
+  const oscarPath = req.originalUrl.replace(/^\/oscar/, '') || '/';
+  const options = {
+    protocol: oscarTarget.protocol,
+    hostname: oscarTarget.hostname,
+    port: oscarTarget.port || (oscarTarget.protocol === 'https:' ? 443 : 80),
+    method: req.method,
+    path: oscarPath,
+    headers: {
+      ...req.headers,
+      host: oscarTarget.host,
+    },
+  };
+
+  delete options.headers.authorization;
+
+  const requestLib = oscarTarget.protocol === 'https:' ? https : http;
+  const proxyReq = requestLib.request(options, (proxyRes) => {
+    for (const [headerName, headerValue] of Object.entries(proxyRes.headers)) {
+      if (headerName.toLowerCase() === 'transfer-encoding') continue;
+      if (headerValue !== undefined) {
+        res.setHeader(headerName, headerValue);
+      }
+    }
+    res.status(proxyRes.statusCode || 502);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', () => {
+    if (!res.headersSent) {
+      res.status(502).send('Unable to connect to OSCAR service');
+    }
+  });
+
+  req.pipe(proxyReq);
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   preservePath: true,
@@ -233,6 +331,13 @@ app.get('/api/session', authMiddleware, (_req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/oscar-launch', authMiddleware, (_req, res) => {
+  const launchToken = jwt.sign({ sub: 'shared-user', purpose: 'oscar-launch' }, JWT_SECRET, {
+    expiresIn: OSCAR_LAUNCH_TTL_SECONDS,
+  });
+  res.json({ launchUrl: `/oscar/login?token=${encodeURIComponent(launchToken)}` });
+});
+
 app.get('/api/folders/:folder/files', authMiddleware, async (req, res) => {
   const folder = sanitizeFolderName(req.params.folder);
   if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
@@ -323,6 +428,26 @@ app.delete('/api/folders/:folder', authMiddleware, async (req, res) => {
   await fsp.rm(folderPath, { recursive: true, force: true });
   return res.json({ deleted: folder });
 });
+
+app.get('/oscar/login', (req, res) => {
+  const launchToken = typeof req.query.token === 'string' ? req.query.token : '';
+  if (!launchToken) {
+    return res.status(401).send('Unauthorized');
+  }
+
+  try {
+    const payload = jwt.verify(launchToken, JWT_SECRET);
+    if (payload.purpose !== 'oscar-launch') {
+      return res.status(401).send('Unauthorized');
+    }
+    issueOscarSessionCookie(res);
+    return res.redirect('/oscar/');
+  } catch (_err) {
+    return res.status(401).send('Unauthorized');
+  }
+});
+
+app.use('/oscar', requireOscarSession, proxyOscarRequest);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/{*splat}', (_req, res) => {

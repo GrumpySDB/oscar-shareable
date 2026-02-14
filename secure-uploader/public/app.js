@@ -320,6 +320,25 @@ function uploadPreparedFiles() {
   request.send(form);
 }
 
+
+async function proceedToOscar() {
+  if (!token) {
+    setMessage('Please log in before opening OSCAR.', true);
+    showLogin();
+    return;
+  }
+
+  try {
+    const result = await api('/api/oscar-launch', { method: 'POST' });
+    if (!result || typeof result.launchUrl !== 'string') {
+      throw new Error('Unable to open OSCAR right now.');
+    }
+    window.location.assign(result.launchUrl);
+  } catch (err) {
+    setMessage(`Unable to open OSCAR: ${err.message}`, true);
+  }
+}
+
 async function deleteFolder() {
   const folder = document.getElementById('folderName').value.trim();
   if (!folderNameValid(folder)) {
@@ -345,6 +364,7 @@ document.getElementById('logoutBtn').addEventListener('click', logout);
 document.getElementById('scanBtn').addEventListener('click', scanAndPrepare);
 document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);
 document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
+document.getElementById('oscarBtn').addEventListener('click', proceedToOscar);
 
 configureDateInput();
 loadRandomBanner(loginBanner);
