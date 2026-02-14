@@ -222,6 +222,16 @@ function proxyOscarRequest(req, res) {
   const proxyReq = requestLib.request(options, (proxyRes) => {
     for (const [headerName, headerValue] of Object.entries(proxyRes.headers)) {
       if (headerName.toLowerCase() === 'transfer-encoding') continue;
+      if (headerName.toLowerCase() === 'content-security-policy' && typeof headerValue === 'string') {
+        const directives = headerValue
+          .split(';')
+          .map((directive) => directive.trim())
+          .filter(Boolean)
+          .filter((directive) => !directive.toLowerCase().startsWith('frame-ancestors'));
+        directives.push("frame-ancestors 'self'");
+        res.setHeader(headerName, directives.join('; '));
+        continue;
+      }
       if (headerValue !== undefined) {
         res.setHeader(headerName, headerValue);
       }
