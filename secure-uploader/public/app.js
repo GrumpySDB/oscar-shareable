@@ -56,12 +56,21 @@ function isRequired(name) {
   return REQUIRED_ALWAYS.includes(name);
 }
 
+function getRelativePath(file) {
+  return file.webkitRelativePath || file.name;
+}
+
+function getBasename(file) {
+  return file.name;
+}
+
 function validateFile(file, startDateMs) {
-  const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+  const relativePath = getRelativePath(file);
+  const extension = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
   if (!ALLOWED_EXTENSIONS.has(extension)) return false;
   if (file.size > MAX_FILE_SIZE) return false;
 
-  if (isRequired(file.name)) return true;
+  if (isRequired(getBasename(file))) return true;
 
   const modified = Number(file.lastModified || 0);
   const now = Date.now();
@@ -192,10 +201,10 @@ async function scanAndPrepare() {
   }
 
   const existingSet = new Set(existingNames);
-  const byName = new Map(files.map((file) => [file.name, file]));
+  const requiredBasenames = new Set(files.map((file) => getBasename(file)));
 
   for (const required of REQUIRED_ALWAYS) {
-    if (!byName.has(required)) {
+    if (!requiredBasenames.has(required)) {
       setMessage(`Missing required file in selected folder: ${required}`, true);
       return;
     }
@@ -211,7 +220,8 @@ async function scanAndPrepare() {
       continue;
     }
 
-    if (!isRequired(file.name) && existingSet.has(file.name)) {
+    const relativePath = getRelativePath(file);
+    if (!isRequired(getBasename(file)) && existingSet.has(relativePath)) {
       skippedExisting += 1;
       continue;
     }
@@ -249,7 +259,9 @@ function uploadPreparedFiles() {
   form.append('folder', preparedFolder);
   form.append('selectedDateMs', String(selectedDateMs));
   for (const file of preparedFiles) {
+    const relativePath = getRelativePath(file);
     form.append('files', file, file.name);
+    form.append('paths', relativePath);
   }
 
   const request = new XMLHttpRequest();

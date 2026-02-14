@@ -172,9 +172,37 @@ async function listFilenames(folderPath) {
   const entries = await fsp.readdir(folderPath, { withFileTypes: true });
   const names = [];
   for (const entry of entries) {
+    const entryPath = path.join(folderPath, entry.name);
+    if (entry.isDirectory()) {
+      const children = await listFilenames(entryPath);
+      for (const child of children) {
+        names.push(path.posix.join(entry.name, child));
+      }
+    }
     if (entry.isFile()) names.push(entry.name);
   }
   return names;
+}
+
+function sanitizeUploadRelativePath(value) {
+  if (typeof value !== 'string') return null;
+  if (value.length === 0 || value.length > 512) return null;
+  if (/\0/.test(value)) return null;
+
+  const slashNormalized = value.replace(/\\/g, '/');
+  const normalized = path.posix.normalize(slashNormalized);
+  if (normalized === '.' || normalized.startsWith('/') || normalized.startsWith('../') || normalized.includes('/../')) {
+    return null;
+  }
+
+  const segments = normalized.split('/');
+  for (const segment of segments) {
+    if (!segment || segment === '.' || segment === '..') return null;
+    if (segment.length > 255) return null;
+    if (/[\u0000-\u001F\u007F]/.test(segment)) return null;
+  }
+
+  return segments.join('/');
 }
 
 app.post('/api/login', authLimiter, (req, res) => {
@@ -233,27 +261,43 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     const files = Array.isArray(req.files) ? req.files : [];
     if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
 
-    const incomingNames = files.map((file) => file.originalname);
-    for (const requiredName of REQUIRED_ALWAYS) {
-      if (!incomingNames.includes(requiredName)) {
-        return res.status(400).json({ error: `Missing required file: ${requiredName}` });
-      }
+    const rawPaths = req.body.paths;
+    const pathEntries = Array.isArray(rawPaths)
+      ? rawPaths
+      : (typeof rawPaths === 'string' ? [rawPaths] : []);
+    if (pathEntries.length !== files.length) {
+      return res.status(400).json({ error: 'Upload paths are missing or mismatched' });
     }
 
     const dedupe = new Set();
-    for (const file of files) {
-      if (dedupe.has(file.originalname)) {
-        return res.status(400).json({ error: `Duplicate filename in upload: ${file.originalname}` });
+    const incomingBasenames = [];
+    for (const [index, file] of files.entries()) {
+      const requestedPath = pathEntries[index];
+      const relativePath = sanitizeUploadRelativePath(requestedPath);
+      if (!relativePath) {
+        return res.status(400).json({ error: `Invalid file path: ${requestedPath}` });
       }
-      dedupe.add(file.originalname);
 
-      const extension = path.extname(file.originalname).toLowerCase();
+      if (dedupe.has(relativePath)) {
+        return res.status(400).json({ error: `Duplicate filename in upload: ${relativePath}` });
+      }
+      dedupe.add(relativePath);
+      file.safeRelativePath = relativePath;
+      incomingBasenames.push(path.posix.basename(relativePath));
+
+      const extension = path.extname(relativePath).toLowerCase();
       if (!ALLOWED_EXTENSIONS.has(extension)) {
-        return res.status(400).json({ error: `Invalid file extension: ${file.originalname}` });
+        return res.status(400).json({ error: `Invalid file extension: ${relativePath}` });
       }
 
       if (file.size > MAX_FILE_SIZE) {
-        return res.status(400).json({ error: `File exceeds 10MB: ${file.originalname}` });
+        return res.status(400).json({ error: `File exceeds 10MB: ${relativePath}` });
+      }
+    }
+
+    for (const requiredName of REQUIRED_ALWAYS) {
+      if (!incomingBasenames.includes(requiredName)) {
+        return res.status(400).json({ error: `Missing required file: ${requiredName}` });
       }
     }
 
@@ -263,7 +307,10 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     await ensureOwnership(folderPath);
 
     for (const file of files) {
-      const destination = path.join(folderPath, path.basename(file.originalname));
+      const destination = path.join(folderPath, file.safeRelativePath);
+      const destinationDir = path.dirname(destination);
+      await fsp.mkdir(destinationDir, { recursive: true, mode: 0o750 });
+      await ensureOwnership(destinationDir);
       if (fs.existsSync(destination)) {
         await ensureOwnership(destination);
       }
