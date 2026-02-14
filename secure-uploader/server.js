@@ -1,170 +1,234 @@
 require('dotenv').config();
+
 const express = require('express');
-const multer = require('multer');
 const fs = require('fs');
+const fsp = require('fs/promises');
 const path = require('path');
 const helmet = require('helmet');
-const cors = require('cors');
+const multer = require('multer');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
-const https = require('https');
-
-const { initDB, findUser, upsertFile, db } = require('./db');
-const { authenticate } = require('./middleware');
+const crypto = require('crypto');
 
 const app = express();
-app.use(express.json());
-app.use(cors());
+const PORT = Number(process.env.PORT || 3000);
+const JWT_SECRET = process.env.JWT_SECRET;
+const APP_USERNAME = process.env.APP_USERNAME;
+const APP_PASSWORD = process.env.APP_PASSWORD;
+const REQUIRE_DOCKER = String(process.env.REQUIRE_DOCKER || 'true').toLowerCase() === 'true';
 
-// ---------------- Helmet + CSP ----------------
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
+const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
+const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+const UPLOAD_ROOT = path.join(__dirname, 'data', 'uploads');
+
+if (REQUIRE_DOCKER && !fs.existsSync('/.dockerenv')) {
+  console.error('Refusing to start outside Docker (REQUIRE_DOCKER=true).');
+  process.exit(1);
+}
+
+if (!JWT_SECRET || !APP_USERNAME || !APP_PASSWORD) {
+  console.error('Missing required environment variables: JWT_SECRET, APP_USERNAME, APP_PASSWORD.');
+  process.exit(1);
+}
+
+fs.mkdirSync(UPLOAD_ROOT, { recursive: true, mode: 0o750 });
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
-        styleSrc: ["'self'", 'https:'],
-        imgSrc: ["'self'", "data:"],
-        connectSrc: ["'self'"],
+        styleSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:'],
         objectSrc: ["'none'"],
-        upgradeInsecureRequests: [],
+        baseUri: ["'none'"],
+        frameAncestors: ["'none'"],
       },
     },
+    crossOriginEmbedderPolicy: false,
   })
 );
 
-// ---------------- Initialize DB ----------------
-initDB(process.env.DEFAULT_USER, process.env.DEFAULT_PASS);
 
-const REQUIRED_FILES = ["config.json","manifest.xml","data.db","metadata.txt"];
-const ALLOWED_EXT = ['edf','crc','tgt'];
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-// ---------------- Serve frontend ----------------
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ---------------- Helpers ----------------
-function sanitizePath(p) {
-  return path.normalize(p).replace(/^(\.\.(\/|\\|$))+/, '');
+function createSimpleLimiter({ windowMs, max }) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const key = req.ip || 'unknown';
+    const now = Date.now();
+    const item = hits.get(key) || { count: 0, resetAt: now + windowMs };
+    if (now > item.resetAt) {
+      item.count = 0;
+      item.resetAt = now + windowMs;
+    }
+    item.count += 1;
+    hits.set(key, item);
+    if (item.count > max) {
+      return res.status(429).json({ error: 'Too many requests' });
+    }
+    return next();
+  };
 }
 
-// ---------------- Login ----------------
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-  const user = await findUser(username);
-  if (!user) return res.sendStatus(401);
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return res.sendStatus(401);
+const authLimiter = createSimpleLimiter({ windowMs: 15 * 60 * 1000, max: 30 });
+const apiLimiter = createSimpleLimiter({ windowMs: 15 * 60 * 1000, max: 300 });
+app.use('/api', apiLimiter);
 
-  const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: "8h" });
-  res.json({ token });
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+function sanitizeFolderName(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(normalized)) return null;
+  return normalized;
+}
+
+function authMiddleware(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const token = header.slice(7);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.auth = payload;
+    return next();
+  } catch (_err) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+}
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_FILE_SIZE,
+    files: 500,
+  },
 });
 
-// ---------------- Upload ----------------
-const upload = multer({ dest: "uploads/", limits: { fileSize: MAX_FILE_SIZE } });
+async function listFilenames(folderPath) {
+  const entries = await fsp.readdir(folderPath, { withFileTypes: true });
+  const names = [];
+  for (const entry of entries) {
+    if (entry.isFile()) names.push(entry.name);
+  }
+  return names;
+}
 
-app.post("/upload", authenticate, upload.single("file"), async (req, res) => {
+app.post('/api/login', authLimiter, (req, res) => {
+  const { username, password } = req.body || {};
+  if (!safeEqual(username, APP_USERNAME) || !safeEqual(password, APP_PASSWORD)) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  const token = jwt.sign({ sub: 'shared-user' }, JWT_SECRET, { expiresIn: '8h' });
+  return res.json({ token });
+});
+
+app.get('/api/session', authMiddleware, (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.get('/api/folders/:folder/files', authMiddleware, async (req, res) => {
+  const folder = sanitizeFolderName(req.params.folder);
+  if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
+
+  const folderPath = path.join(UPLOAD_ROOT, folder);
+  if (!fs.existsSync(folderPath)) return res.json({ filenames: [] });
+
+  const filenames = await listFilenames(folderPath);
+  return res.json({ filenames });
+});
+
+app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) => {
   try {
-    const relativePath = sanitizePath(req.body.relativePath);
-    const lastModified = parseInt(req.body.lastModified);
-    const username = sanitizePath(req.body.username) || "default";
+    const folder = sanitizeFolderName(req.body.folder);
+    if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
 
-    // Validate extension
-    const ext = path.extname(req.file.originalname).slice(1).toLowerCase();
-    if (!ALLOWED_EXT.includes(ext)) {
-      fs.unlinkSync(req.file.path);
-      return res.status(400).json({ status: "error", message: "Invalid file type" });
+    const selectedDate = Number(req.body.selectedDateMs);
+    if (!Number.isFinite(selectedDate)) return res.status(400).json({ error: 'Invalid selected date' });
+
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    const minDate = Date.now() - ONE_YEAR_MS;
+    if (selectedDate < minDate || selectedDate > today.getTime()) {
+      return res.status(400).json({ error: 'Selected date out of range' });
     }
 
-    // Create user folder
-    const userDir = path.join("uploads", username);
-    fs.mkdirSync(userDir, { recursive: true, mode: 0o700 });
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
 
-    // Destination path
-    const dest = path.join(userDir, relativePath);
-    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+    const incomingNames = files.map((file) => file.originalname);
+    for (const requiredName of REQUIRED_ALWAYS) {
+      if (!incomingNames.includes(requiredName)) {
+        return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+      }
+    }
 
-    // Move file
-    fs.renameSync(req.file.path, dest);
+    const dedupe = new Set();
+    for (const file of files) {
+      if (dedupe.has(file.originalname)) {
+        return res.status(400).json({ error: `Duplicate filename in upload: ${file.originalname}` });
+      }
+      dedupe.add(file.originalname);
 
-    // Update DB
-    await upsertFile(path.join(username, relativePath), lastModified);
+      const extension = path.extname(file.originalname).toLowerCase();
+      if (!ALLOWED_EXTENSIONS.has(extension)) {
+        return res.status(400).json({ error: `Invalid file extension: ${file.originalname}` });
+      }
 
-    res.json({ status: "uploaded" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: "error", message: err.message });
+      if (file.size > MAX_FILE_SIZE) {
+        return res.status(400).json({ error: `File exceeds 10MB: ${file.originalname}` });
+      }
+    }
+
+    const folderPath = path.join(UPLOAD_ROOT, folder);
+    await fsp.mkdir(folderPath, { recursive: true, mode: 0o750 });
+
+    for (const file of files) {
+      const destination = path.join(folderPath, path.basename(file.originalname));
+      await fsp.writeFile(destination, file.buffer, { mode: 0o640 });
+    }
+
+    return res.json({ uploaded: files.length });
+  } catch (error) {
+    return res.status(500).json({ error: 'Upload failed', detail: error.message });
   }
 });
 
-// ---------------- Existing files endpoint ----------------
-app.get("/existing-files", authenticate, async (req, res) => {
-  const username = sanitizePath(req.query.username || '');
-  db.all(`SELECT path FROM files WHERE path LIKE ?`, [username + '/%'], (err, rows) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json([]);
-    }
-    res.json(rows.map(r => r.path));
-  });
+app.delete('/api/folders/:folder', authMiddleware, async (req, res) => {
+  const folder = sanitizeFolderName(req.params.folder);
+  if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
+
+  const folderPath = path.join(UPLOAD_ROOT, folder);
+  await fsp.rm(folderPath, { recursive: true, force: true });
+  return res.json({ deleted: folder });
 });
 
-// ---------------- Delete user data ----------------
-app.post("/delete-user", authenticate, async (req, res) => {
-  const username = sanitizePath(req.body.username || '');
-  const userDir = path.join("uploads", username);
-  if (fs.existsSync(userDir)) fs.rmSync(userDir, { recursive: true, force: true });
-  db.run(`DELETE FROM files WHERE path LIKE ?`, [username + '/%']);
-  res.json({ status: "deleted" });
-});
-
-// ---------------- Catch-all for frontend ----------------
-app.get('*', (req, res) => {
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ---------------- HTTPS Server ----------------
-const PORT = process.env.PORT || 3000;
-const keyPath = process.env.SSL_KEY_PATH || path.join(__dirname, 'certs/key.pem');
-const certPath = process.env.SSL_CERT_PATH || path.join(__dirname, 'certs/cert.pem');
-
-for (const requiredPath of [keyPath, certPath]) {
-  if (!fs.existsSync(requiredPath)) {
-    console.error('TLS certificate files are missing.');
-    console.error(`Missing file: ${requiredPath}`);
-    console.error('If running with Docker Compose, ensure host certs are in ./certs relative to secure-uploader/docker-compose.yml, or override SSL_KEY_PATH/SSL_CERT_PATH.');
-    process.exit(1);
+app.use((err, _req, res, _next) => {
+  if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ error: 'File exceeds 10MB limit' });
   }
-}
+  return res.status(500).json({ error: 'Unexpected server error' });
+});
 
-let key;
-let cert;
-try {
-  fs.accessSync(keyPath, fs.constants.R_OK);
-  fs.accessSync(certPath, fs.constants.R_OK);
-  key = fs.readFileSync(keyPath);
-  cert = fs.readFileSync(certPath);
-} catch (err) {
-  console.error('Failed to read TLS certificate files.');
-  console.error(`Process UID:GID ${process.getuid?.() ?? 'n/a'}:${process.getgid?.() ?? 'n/a'}`);
-  console.error(`Key path: ${keyPath}`);
-  console.error(`Cert path: ${certPath}`);
-  if (err && err.code) console.error(`Node error code: ${err.code}`);
-  console.error('Likely causes: unreadable file permissions, missing execute permission on a parent directory, or SELinux/AppArmor bind-mount restrictions.');
-  process.exit(1);
-}
-
-const server = https.createServer({ key, cert }, app);
-server.listen(PORT, () => console.log(`Secure uploader running on https://0.0.0.0:${PORT}`));
-
-// ---------------- Graceful Shutdown ----------------
-function gracefulShutdown() {
-  console.log("Shutting down gracefully...");
-  server.close(() => {
-    console.log("Server closed");
-    process.exit(0);
-  });
-  setTimeout(() => { console.error("Force shutdown!"); process.exit(1); }, 5000);
-}
-process.on("SIGINT", gracefulShutdown);
-process.on("SIGTERM", gracefulShutdown);
+app.listen(PORT, () => {
+  console.log(`OSCAR uploader running on port ${PORT}`);
+});
