@@ -49,7 +49,6 @@ services:
       - traefik.http.routers.uploader.middlewares=crowdsec-auth@file
       - traefik.http.services.uploader.loadbalancer.server.port=3443
       - traefik.http.services.uploader.loadbalancer.server.scheme=https
-      - traefik.docker.network=default
 
   oscar:
     image: rogerrum/docker-oscar:latest
