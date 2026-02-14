@@ -17,6 +17,8 @@ const APP_PASSWORD = process.env.APP_PASSWORD;
 const REQUIRE_DOCKER = String(process.env.REQUIRE_DOCKER || 'true').toLowerCase() === 'true';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const USERNAME_MAX_LENGTH = 128;
+const PASSWORD_MAX_LENGTH = 256;
 const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
 const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
@@ -94,6 +96,15 @@ function sanitizeFolderName(value) {
   return normalized;
 }
 
+function sanitizeCredentialInput(value, { trim = false, maxLength }) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.normalize('NFKC');
+  const candidate = trim ? normalized.trim() : normalized;
+  if (candidate.length === 0 || candidate.length > maxLength) return null;
+  if (/[\u0000-\u001F\u007F]/.test(candidate)) return null;
+  return candidate;
+}
+
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
@@ -128,7 +139,20 @@ async function listFilenames(folderPath) {
 }
 
 app.post('/api/login', authLimiter, (req, res) => {
-  const { username, password } = req.body || {};
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const username = sanitizeCredentialInput(body.username, {
+    trim: true,
+    maxLength: USERNAME_MAX_LENGTH,
+  });
+  const password = sanitizeCredentialInput(body.password, {
+    trim: false,
+    maxLength: PASSWORD_MAX_LENGTH,
+  });
+
+  if (!username || !password) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
   if (!safeEqual(username, APP_USERNAME) || !safeEqual(password, APP_PASSWORD)) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
@@ -218,7 +242,7 @@ app.delete('/api/folders/:folder', authMiddleware, async (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (_req, res) => {
+app.get('/{*splat}', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

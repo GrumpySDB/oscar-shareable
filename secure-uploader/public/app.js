@@ -44,6 +44,14 @@ function folderNameValid(value) {
   return /^[A-Za-z0-9_-]{1,64}$/.test(value);
 }
 
+function sanitizeUsernameInput(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.normalize('NFKC').trim();
+  if (normalized.length === 0 || normalized.length > 128) return null;
+  if (/[\u0000-\u001F\u007F]/.test(normalized)) return null;
+  return normalized;
+}
+
 function isRequired(name) {
   return REQUIRED_ALWAYS.includes(name);
 }
@@ -97,10 +105,24 @@ async function checkSession() {
   }
 }
 
+let loginInProgress = false;
+
 async function login() {
+  if (loginInProgress) return;
+
+  loginInProgress = true;
   loginError.textContent = '';
-  const username = document.getElementById('username').value;
+  const usernameInput = document.getElementById('username');
+  const username = sanitizeUsernameInput(usernameInput.value);
   const password = document.getElementById('password').value;
+
+  if (!username) {
+    loginError.textContent = 'Please enter a valid username.';
+    loginInProgress = false;
+    return;
+  }
+
+  usernameInput.value = username;
 
   try {
     const result = await api('/api/login', {
@@ -114,6 +136,8 @@ async function login() {
     showApp();
   } catch (err) {
     loginError.textContent = err.message;
+  } finally {
+    loginInProgress = false;
   }
 }
 
@@ -279,7 +303,10 @@ async function deleteFolder() {
   }
 }
 
-document.getElementById('loginBtn').addEventListener('click', login);
+document.getElementById('loginForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  login();
+});
 document.getElementById('logoutBtn').addEventListener('click', logout);
 document.getElementById('scanBtn').addEventListener('click', scanAndPrepare);
 document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);

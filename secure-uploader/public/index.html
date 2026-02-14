@@ -11,11 +11,13 @@
     <section id="loginCard" class="card">
       <h1>OSCAR Secure Uploader</h1>
       <p class="subtle">Sign in to upload SD card data.</p>
-      <label for="username">Username</label>
-      <input id="username" type="text" autocomplete="username" />
-      <label for="password">Password</label>
-      <input id="password" type="password" autocomplete="current-password" />
-      <button id="loginBtn">Login</button>
+      <form id="loginForm" novalidate>
+        <label for="username">Username</label>
+        <input id="username" type="text" autocomplete="username" maxlength="128" />
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" maxlength="256" />
+        <button id="loginBtn" type="submit">Login</button>
+      </form>
       <p id="loginError" class="error"></p>
     </section>
 
