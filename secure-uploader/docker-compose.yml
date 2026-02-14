@@ -11,7 +11,6 @@ services:
 
     volumes:
       - ./uploads:/app/uploads
-      - ./certs:/app/certs:ro
       - ./db:/app/db
 
     env_file:
