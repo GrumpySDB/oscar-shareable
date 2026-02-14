@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Secure Uploader</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Login -->
+  <div id="login">
+    <h2>Login</h2>
+    <input id="username" type="text" placeholder="Username">
+    <input id="password" type="password" placeholder="Password">
+    <button id="loginBtn">Login</button>
+  </div>
+
+  <!-- Upload App -->
+  <div id="app" class="hidden">
+    <h2>Directory Upload</h2>
+
+    <label>Folder Name (username):</label>
+    <input type="text" id="uploadUsername" placeholder="Folder name" required>
+
+    <label>Start Date (max 1 year ago):</label>
+    <input type="date" id="startDate">
+    <small>You can select a date up to 1 year in the past. End date is always today.</small>
+
+    <input type="file" id="directory" webkitdirectory multiple>
+    <button id="uploadBtn">Upload</button>
+
+    <div class="progress-container">
+      <div id="progressBar"></div>
+    </div>
+
+    <hr>
+    <button id="deleteBtn" style="background-color: #e74c3c;">Delete User Data</button>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
