@@ -34,7 +34,7 @@ const UPLOAD_UID = Number(process.env.UPLOAD_UID || 911);
 const UPLOAD_GID = Number(process.env.UPLOAD_GID || 911);
 const OSCAR_LAUNCH_TTL_SECONDS = 120;
 const OSCAR_SESSION_TTL_SECONDS = 8 * 60 * 60;
-const SERVICE_BUSY_MESSAGE = 'The service is temporarily in use. Please wait a few minutes and try again.';
+const SERVICE_BUSY_MESSAGE = 'The service is temporarily in use.  Please try again in about 3 minutes.';
 
 let activeServiceLock = null;
 

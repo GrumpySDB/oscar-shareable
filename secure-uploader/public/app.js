@@ -7,7 +7,7 @@ let token = sessionStorage.getItem('authToken') || null;
 let preparedFiles = [];
 let preparedFolder = '';
 let selectedDateMs = 0;
-const BUSY_MESSAGE = 'The service is temporarily in use. Please wait a few minutes and try again.';
+const BUSY_MESSAGE = 'The service is temporarily in use.  Please try again in about 3 minutes.';
 
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
@@ -90,11 +90,7 @@ function getBasename(file) {
   return file.name;
 }
 
-function formatBusyMessage(retryAfterSeconds = null) {
-  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-    const roundedMinutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
-    return `${BUSY_MESSAGE} Please try again in about ${roundedMinutes} minute${roundedMinutes === 1 ? '' : 's'}.`;
-  }
+function formatBusyMessage(_retryAfterSeconds = null) {
   return BUSY_MESSAGE;
 }
 
