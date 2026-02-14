@@ -1,3 +1,6 @@
-uploads/*
-db/*
-certs/*
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+data/uploads
