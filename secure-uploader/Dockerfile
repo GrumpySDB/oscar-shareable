@@ -4,6 +4,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN apk add --no-cache openssl
 
 COPY package.json ./
 RUN npm install --omit=dev
