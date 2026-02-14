@@ -4,13 +4,18 @@ const express = require('express');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const http = require('http');
+const https = require('https');
 const helmet = require('helmet');
 const multer = require('multer');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
 const app = express();
-const PORT = Number(process.env.PORT || 3000);
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.PORT || 3443);
+const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || path.join(__dirname, 'certs', 'key.pem');
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || path.join(__dirname, 'certs', 'cert.pem');
 const JWT_SECRET = process.env.JWT_SECRET;
 const APP_USERNAME = process.env.APP_USERNAME;
 const APP_PASSWORD = process.env.APP_PASSWORD;
@@ -51,7 +56,13 @@ app.use(
         objectSrc: ["'none'"],
         baseUri: ["'none'"],
         frameAncestors: ["'none'"],
+        upgradeInsecureRequests: [],
       },
+    },
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: false,
+      preload: false,
     },
     crossOriginEmbedderPolicy: false,
   })
@@ -253,6 +264,29 @@ app.use((err, _req, res, _next) => {
   return res.status(500).json({ error: 'Unexpected server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`OSCAR uploader running on port ${PORT}`);
+if (!fs.existsSync(SSL_KEY_PATH) || !fs.existsSync(SSL_CERT_PATH)) {
+  console.error(`TLS files not found. Expected:\n- key: ${SSL_KEY_PATH}\n- cert: ${SSL_CERT_PATH}`);
+  process.exit(1);
+}
+
+const tlsOptions = {
+  key: fs.readFileSync(SSL_KEY_PATH),
+  cert: fs.readFileSync(SSL_CERT_PATH),
+};
+
+https.createServer(tlsOptions, app).listen(HTTPS_PORT, () => {
+  console.log(`OSCAR uploader running on https://0.0.0.0:${HTTPS_PORT}`);
 });
+
+http
+  .createServer((req, res) => {
+    const hostHeader = String(req.headers.host || '');
+    const host = hostHeader ? hostHeader.replace(/:\d+$/, '') : 'localhost';
+    const httpsPortSuffix = HTTPS_PORT === 443 ? '' : `:${HTTPS_PORT}`;
+    const location = `https://${host}${httpsPortSuffix}${req.url || '/'}`;
+    res.writeHead(308, { Location: location });
+    res.end();
+  })
+  .listen(HTTP_PORT, () => {
+    console.log(`HTTP redirector running on http://0.0.0.0:${HTTP_PORT}`);
+  });

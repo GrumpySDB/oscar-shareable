@@ -4,8 +4,12 @@ services:
       context: .
     ports:
       - "3000:3000"
+      - "3443:3443"
     env_file:
       - .env
+    environment:
+      HTTP_PORT: 3000
+      HTTPS_PORT: 3443
     volumes:
       - ./data/uploads:/app/data/uploads
     restart: unless-stopped
