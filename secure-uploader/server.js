@@ -180,7 +180,7 @@ function issueOscarSessionCookie(res) {
   const isProd = process.env.NODE_ENV === 'production';
   const cookieParts = [
     `oscar_session=${encodeURIComponent(token)}`,
-    'Path=/oscar',
+    'Path=/',
     `Max-Age=${OSCAR_SESSION_TTL_SECONDS}`,
     'HttpOnly',
     'SameSite=Strict',
