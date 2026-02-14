@@ -259,9 +259,7 @@ function uploadPreparedFiles() {
   form.append('folder', preparedFolder);
   form.append('selectedDateMs', String(selectedDateMs));
   for (const file of preparedFiles) {
-    const relativePath = getRelativePath(file);
-    form.append('files', file, file.name);
-    form.append('paths', relativePath);
+    form.append('files', file, getRelativePath(file));
   }
 
   const request = new XMLHttpRequest();

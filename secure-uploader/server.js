@@ -261,21 +261,18 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     const files = Array.isArray(req.files) ? req.files : [];
     if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
 
-    const rawPaths = req.body.paths;
-    const pathEntries = Array.isArray(rawPaths)
-      ? rawPaths
-      : (typeof rawPaths === 'string' ? [rawPaths] : []);
-    if (pathEntries.length !== files.length) {
-      return res.status(400).json({ error: 'Upload paths are missing or mismatched' });
+    const incomingBasenames = files.map((file) => path.basename(file.originalname));
+    for (const requiredName of REQUIRED_ALWAYS) {
+      if (!incomingBasenames.includes(requiredName)) {
+        return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+      }
     }
 
     const dedupe = new Set();
-    const incomingBasenames = [];
-    for (const [index, file] of files.entries()) {
-      const requestedPath = pathEntries[index];
-      const relativePath = sanitizeUploadRelativePath(requestedPath);
+    for (const file of files) {
+      const relativePath = sanitizeUploadRelativePath(file.originalname);
       if (!relativePath) {
-        return res.status(400).json({ error: `Invalid file path: ${requestedPath}` });
+        return res.status(400).json({ error: `Invalid file path: ${file.originalname}` });
       }
 
       if (dedupe.has(relativePath)) {
@@ -283,7 +280,6 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       }
       dedupe.add(relativePath);
       file.safeRelativePath = relativePath;
-      incomingBasenames.push(path.posix.basename(relativePath));
 
       const extension = path.extname(relativePath).toLowerCase();
       if (!ALLOWED_EXTENSIONS.has(extension)) {
@@ -292,12 +288,6 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
 
       if (file.size > MAX_FILE_SIZE) {
         return res.status(400).json({ error: `File exceeds 10MB: ${relativePath}` });
-      }
-    }
-
-    for (const requiredName of REQUIRED_ALWAYS) {
-      if (!incomingBasenames.includes(requiredName)) {
-        return res.status(400).json({ error: `Missing required file: ${requiredName}` });
       }
     }
 
