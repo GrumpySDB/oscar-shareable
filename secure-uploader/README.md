@@ -9,16 +9,23 @@ Hardened web app for uploading OSCAR SD card files through Docker.
 - Strict file validation (`.crc`, `.tgt`, `.edf`, max 10MB each).
 - Folder name validation and server-side path safety.
 - Security headers with Helmet and API rate limiting.
+- HTTPS-only serving with a self-signed certificate.
+- HTTP listener only redirects to HTTPS (308).
 
 ## Required environment variables
 Create a `.env` file:
 
 ```env
-PORT=3000
 JWT_SECRET=change-this-to-a-long-random-secret
 APP_USERNAME=shared-user
 APP_PASSWORD=change-me
 REQUIRE_DOCKER=true
+
+# Optional overrides
+HTTP_PORT=3000
+HTTPS_PORT=3443
+SSL_KEY_PATH=/app/certs/key.pem
+SSL_CERT_PATH=/app/certs/cert.pem
 ```
 
 ## Run
@@ -26,7 +33,9 @@ REQUIRE_DOCKER=true
 docker compose up --build
 ```
 
-App URL: `http://localhost:3000`
+App URL: `https://localhost:3443`
+
+> Because the certificate is self-signed, your browser will show a trust warning on first load.
 
 ## Workflow behavior
 - Frontend scans selected SD folder.
