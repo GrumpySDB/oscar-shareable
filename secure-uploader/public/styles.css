@@ -158,13 +158,6 @@ button.danger {
   background: #fff2f2;
   border: 1px solid #f0cccc;
 }
-
-.message.busy-state {
-  color: #7a4b00;
-  background: linear-gradient(180deg, #fffaf0, #fff4dd);
-  border: 1px solid #f4d7a2;
-}
-
 button.oscar-cta {
   background: #0e7a43;
   font-size: 1.1rem;

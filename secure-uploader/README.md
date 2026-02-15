@@ -67,4 +67,3 @@ App URL: `https://localhost:3443`
 - Requests under `/oscar/*` bypass the uploader's Helmet CSP so OSCAR can serve its own scripts/styles without browser CSP violations.
 - The proxy rewrites OSCAR's `Content-Security-Policy` `frame-ancestors` directive to `'self'` so the embedded VNC view can load under the shared app origin.
 - WebSocket upgrades under `/oscar/*` are now proxied (with the same gate cookie check), which restores OSCAR audio/socket connectivity.
-- Upload and OSCAR launch now share a single service lock: if another user is actively using one flow, new upload/OSCAR attempts receive `423 Locked` plus a gentle "temporarily in use" message and retry hint.
