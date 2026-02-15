@@ -1,26 +1,11 @@
 services:
-  reverse-proxy:
-    image: traefik:v3.1
-    container_name: uploader-reverse-proxy
-    restart: unless-stopped
-    command:
-      - --configFile=/etc/traefik/traefik.yml
-    ports:
-      - "${SECURE_UPLOADER_PORT:?Run scripts/start-secure-uploader.sh to pick a random high port}:8443"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
-      - ./traefik/logs:/var/log/traefik
-    depends_on:
-      - uploader
-      - crowdsec
-      - crowdsec-bouncer
-
   uploader:
     build:
       context: .
     user: "911:911"
+    ports:
+      - "3000:3000"
+      - "3443:3443"
     env_file:
       - .env
     environment:
@@ -41,15 +26,6 @@ services:
       - ALL
     depends_on:
       - oscar
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.uploader.rule=PathPrefix(`/`)
-      - traefik.http.routers.uploader.entrypoints=websecure
-      - traefik.http.routers.uploader.tls=true
-      - traefik.http.routers.uploader.middlewares=crowdsec-auth@file
-      - traefik.http.services.uploader.loadbalancer.server.port=3443
-      - traefik.http.services.uploader.loadbalancer.server.scheme=https
-      - traefik.docker.network=default
 
   oscar:
     image: rogerrum/docker-oscar:latest
@@ -62,35 +38,3 @@ services:
       - ./data/uploads:/config/SDCARD:ro
     environment:
       TZ: "America/Toronto"
-
-  crowdsec:
-    image: crowdsecurity/crowdsec:latest
-    container_name: crowdsec
-    restart: unless-stopped
-    environment:
-      COLLECTIONS: crowdsecurity/traefik
-      GID: "1000"
-    volumes:
-      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
-      - ./traefik/logs:/var/log/traefik:ro
-      - crowdsec-db:/var/lib/crowdsec/data
-      - crowdsec-config:/etc/crowdsec
-    expose:
-      - "8080"
-
-  crowdsec-bouncer:
-    image: fbonalair/traefik-crowdsec-bouncer:latest
-    container_name: crowdsec-bouncer
-    restart: unless-stopped
-    environment:
-      CROWDSEC_BOUNCER_API_KEY: ${CROWDSEC_BOUNCER_API_KEY:?Set CROWDSEC_BOUNCER_API_KEY in .env}
-      CROWDSEC_AGENT_HOST: crowdsec:8080
-      GIN_MODE: release
-    depends_on:
-      - crowdsec
-    expose:
-      - "8080"
-
-volumes:
-  crowdsec-db:
-  crowdsec-config:

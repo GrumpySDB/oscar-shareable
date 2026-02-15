@@ -1,6 +1,0 @@
-http:
-  middlewares:
-    crowdsec-auth:
-      forwardAuth:
-        address: http://crowdsec-bouncer:8080/api/v1/forwardAuth
-        trustForwardHeader: true
