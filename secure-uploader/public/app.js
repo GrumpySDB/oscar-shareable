@@ -394,15 +394,17 @@ async function proceedToOscar() {
     return;
   }
 
+  const acknowledged = window.confirm(
+    'Please do NOT exit the OSCAR application INSIDE the browser window.  Simply close the browser window when you are done.\n\nIf you do exit OSCAR inside the browser window, OSCAR cannot be restarted and will be down for everyone.  Click OK to Acknowledge and Proceed.'
+  );
+  if (!acknowledged) return;
+
   try {
     const result = await api('/api/oscar-launch', { method: 'POST' });
     if (!result || typeof result.launchUrl !== 'string') {
       throw new Error('Unable to open OSCAR right now.');
     }
-    const oscarWindow = window.open(result.launchUrl, '_blank', 'noopener,noreferrer');
-    if (!oscarWindow) {
-      setMessage('Popup blocked. Please allow popups and try again.', true);
-    }
+    window.open(result.launchUrl, '_blank', 'noopener,noreferrer');
   } catch (err) {
     if (err.status === 423) {
       setMessage(formatBusyMessage(err.retryAfterSeconds), true, true);
