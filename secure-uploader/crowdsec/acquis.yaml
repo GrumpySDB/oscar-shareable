@@ -1,4 +1,4 @@
 filenames:
-  - /var/log/nginx/access.log
+  - /var/log/traefik/access.log
 labels:
-  type: nginx
+  type: traefik
