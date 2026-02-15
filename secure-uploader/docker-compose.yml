@@ -10,6 +10,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
       - ./traefik/logs:/var/log/traefik
     depends_on:
       - uploader
@@ -45,9 +46,7 @@ services:
       - traefik.http.routers.uploader.rule=PathPrefix(`/`)
       - traefik.http.routers.uploader.entrypoints=websecure
       - traefik.http.routers.uploader.tls=true
-      - traefik.http.routers.uploader.middlewares=crowdsec-auth
-      - traefik.http.middlewares.crowdsec-auth.forwardauth.address=http://crowdsec-bouncer:8080/api/v1/forwardAuth
-      - traefik.http.middlewares.crowdsec-auth.forwardauth.trustForwardHeader=true
+      - traefik.http.routers.uploader.middlewares=crowdsec-auth@file
       - traefik.http.services.uploader.loadbalancer.server.port=3443
       - traefik.http.services.uploader.loadbalancer.server.scheme=https
 
