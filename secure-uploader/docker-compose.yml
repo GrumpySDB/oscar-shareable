@@ -1,24 +1,19 @@
 services:
   reverse-proxy:
-    image: nginx:1.27-alpine
+    image: traefik:v3.1
     container_name: uploader-reverse-proxy
     restart: unless-stopped
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    environment:
+      DOCKER_API_VERSION: "1.44"
     ports:
-      - "50710:443"
-    command: >-
-      /bin/sh -c '
-      if [ ! -f /etc/nginx/certs/selfsigned.crt ] || [ ! -f /etc/nginx/certs/selfsigned.key ]; then
-        mkdir -p /etc/nginx/certs &&
-        openssl req -x509 -nodes -days 825 -newkey rsa:4096
-        -subj "/CN=localhost"
-        -keyout /etc/nginx/certs/selfsigned.key
-        -out /etc/nginx/certs/selfsigned.crt;
-      fi &&
-      nginx -g "daemon off;"'
+      - "50710:8443"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/certs:/etc/nginx/certs
-      - ./nginx/logs:/var/log/nginx
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./traefik/logs:/var/log/traefik
     depends_on:
       - uploader
       - crowdsec
@@ -48,6 +43,16 @@ services:
       - ALL
     depends_on:
       - oscar
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.uploader.rule=PathPrefix(`/`)
+      - traefik.http.routers.uploader.entrypoints=websecure
+      - traefik.http.routers.uploader.tls=true
+      - traefik.http.routers.uploader.middlewares=crowdsec-auth
+      - traefik.http.middlewares.crowdsec-auth.forwardauth.address=http://crowdsec-bouncer:8080/api/v1/forwardAuth
+      - traefik.http.middlewares.crowdsec-auth.forwardauth.trustForwardHeader=true
+      - traefik.http.services.uploader.loadbalancer.server.port=3443
+      - traefik.http.services.uploader.loadbalancer.server.scheme=https
 
   oscar:
     image: rogerrum/docker-oscar:latest
@@ -66,11 +71,11 @@ services:
     container_name: crowdsec
     restart: unless-stopped
     environment:
-      COLLECTIONS: crowdsecurity/nginx
+      COLLECTIONS: crowdsecurity/traefik
       GID: "1000"
     volumes:
       - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
-      - ./nginx/logs:/var/log/nginx:ro
+      - ./traefik/logs:/var/log/traefik:ro
       - crowdsec-db:/var/lib/crowdsec/data
       - crowdsec-config:/etc/crowdsec
     expose:

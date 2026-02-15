@@ -16,10 +16,10 @@ If you need custom cert locations, you can still override in-container paths wit
 
 ## Reverse proxy + CrowdSec hardening
 
-`secure-uploader/docker-compose.yml` now places NGINX in front of the uploader and publishes **only** the NGINX HTTPS listener.
+`secure-uploader/docker-compose.yml` now places Traefik in front of the uploader and publishes **only** the Traefik HTTPS entrypoint.
 
 - Exposed host port is fixed at `50710`.
-- CrowdSec (`crowdsecurity/crowdsec`) parses NGINX access logs and blocks abusive requests through a forward-auth bouncer gate.
+- CrowdSec (`crowdsecurity/crowdsec`) parses Traefik access logs and the Traefik CrowdSec bouncer protects requests through forward auth.
 
 ### Run securely
 

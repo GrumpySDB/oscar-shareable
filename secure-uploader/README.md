@@ -11,8 +11,8 @@ Hardened web app for uploading OSCAR SD card files through Docker.
 - Security headers with Helmet and API rate limiting.
 - Upload directory ownership is enforced to `911:911` by startup/runtime checks in the uploader container.
 - Server refuses to run if upload directory ownership is not `911:911`.
-- An NGINX reverse proxy is the **only** exposed service and publishes on host port `50710`.
-- CrowdSec protects NGINX using access-log detection plus a forward-auth bouncer check before traffic reaches the uploader.
+- A Traefik reverse proxy is the **only** exposed service and publishes on host port `50710`.
+- CrowdSec protects the reverse proxy via forward-auth middleware (`crowdsec-bouncer`).
 
 ## Required environment variables
 Create a `.env` file:
@@ -49,13 +49,6 @@ sudo chmod 750 secure-uploader/data/uploads
 ```
 
 > Because the certificate is self-signed, your browser will show a trust warning on first load.
-
-
-## Reverse proxy stack (Traefik replacement)
-- Traefik has been replaced with **NGINX** to avoid the unresolved routing/404 issues seen in this environment.
-- NGINX terminates TLS on `:443` (mapped to host `50710`) and proxies to the uploader container over HTTPS.
-- CrowdSec now parses NGINX access logs (`crowdsecurity/nginx` collection) and blocks abusive IPs through the bouncer auth check.
-- A self-signed certificate is auto-generated on first startup under `nginx/certs/`.
 
 ## Workflow behavior
 - Frontend scans selected SD folder.
