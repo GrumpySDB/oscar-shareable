@@ -399,22 +399,13 @@ async function proceedToOscar() {
   );
   if (!acknowledged) return;
 
-  // Open a placeholder tab immediately within the user gesture so browsers do
-  // not block the resulting OSCAR launch as an unsolicited popup.
-  const launchWindow = window.open('about:blank', '_blank', 'noopener,noreferrer');
-  if (!launchWindow) {
-    setMessage('Please allow popups for this site to open OSCAR.', true);
-    return;
-  }
-
   try {
     const result = await api('/api/oscar-launch', { method: 'POST' });
     if (!result || typeof result.launchUrl !== 'string') {
       throw new Error('Unable to open OSCAR right now.');
     }
-    launchWindow.location.replace(result.launchUrl);
+    window.open(result.launchUrl, '_blank', 'noopener,noreferrer');
   } catch (err) {
-    launchWindow.close();
     if (err.status === 423) {
       setMessage(formatBusyMessage(err.retryAfterSeconds), true, true);
       return;
