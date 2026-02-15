@@ -2,6 +2,7 @@ const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
 const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+const MAX_UPLOAD_FILES = 10000;
 
 let token = sessionStorage.getItem('authToken') || null;
 let preparedFiles = [];
@@ -94,6 +95,31 @@ function formatBusyMessage(_retryAfterSeconds = null) {
   return BUSY_MESSAGE;
 }
 
+function extractDateFromPath(file) {
+  const relativePath = getRelativePath(file);
+
+  // OSCAR file structures commonly include YYYYMMDD or YYYY-MM-DD in file/folder names.
+  const compact = relativePath.match(/(?:^|\D)((?:19|20)\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:\D|$)/);
+  if (compact) {
+    const year = Number(compact[1]);
+    const month = Number(compact[2]);
+    const day = Number(compact[3]);
+    const parsed = new Date(year, month - 1, day).getTime();
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const dashed = relativePath.match(/(?:^|\D)((?:19|20)\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])(?:\D|$)/);
+  if (dashed) {
+    const year = Number(dashed[1]);
+    const month = Number(dashed[2]);
+    const day = Number(dashed[3]);
+    const parsed = new Date(year, month - 1, day).getTime();
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
 function validateFile(file, startDateMs) {
   const relativePath = getRelativePath(file);
   const extension = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
@@ -102,7 +128,8 @@ function validateFile(file, startDateMs) {
 
   if (isRequired(getBasename(file))) return true;
 
-  const modified = Number(file.lastModified || 0);
+  const inferredDate = extractDateFromPath(file);
+  const modified = Number.isFinite(inferredDate) ? inferredDate : Number(file.lastModified || 0);
   const now = Date.now();
   const oneYearAgo = now - ONE_YEAR_MS;
   if (modified < oneYearAgo || modified > now) return false;
@@ -273,6 +300,14 @@ async function scanAndPrepare() {
 
   if (eligible.length === 0) {
     setMessage('No new valid files to upload after filtering.', true);
+    return;
+  }
+
+  if (eligible.length > MAX_UPLOAD_FILES) {
+    setMessage(
+      `Too many files selected after filtering (${eligible.length}). Please choose a later start date so no more than ${MAX_UPLOAD_FILES} files are uploaded at once.`,
+      true,
+    );
     return;
   }
 

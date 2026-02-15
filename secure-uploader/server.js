@@ -374,7 +374,7 @@ const upload = multer({
   preservePath: true,
   limits: {
     fileSize: MAX_FILE_SIZE,
-    files: 500,
+    files: 10000,
   },
 });
 
@@ -630,8 +630,13 @@ app.get('/{*splat}', (_req, res) => {
 });
 
 app.use((err, _req, res, _next) => {
-  if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({ error: 'File exceeds 10MB limit' });
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File exceeds 10MB limit' });
+    }
+    if (err.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({ error: 'Too many files in one upload (max 10000)' });
+    }
   }
   return res.status(500).json({ error: 'Unexpected server error' });
 });
