@@ -40,6 +40,73 @@ docker compose up --build -d
 
 The app is available at `https://localhost:50710`.
 
+## Traefik troubleshooting and error logging
+
+If the reverse proxy path fails (timeouts, `502`, auth loops, TLS errors), use the methods below to capture enough signal to diagnose root cause quickly.
+
+### 1) Generate a one-shot diagnostics bundle
+
+From `secure-uploader/`:
+
+```bash
+./scripts/traefik-debug.sh
+```
+
+This writes timestamped diagnostics into `secure-uploader/debug/traefik-debug-<timestamp>/`, including:
+- live Traefik static/dynamic config as mounted in the container,
+- recent Traefik access + runtime logs,
+- uploader + CrowdSec + bouncer logs,
+- connectivity probes from Traefik -> uploader and Traefik -> bouncer,
+- a host-side TLS probe to `https://localhost:50710`.
+
+### 2) Turn up Traefik log verbosity temporarily
+
+When startup/routing behavior is unclear, temporarily set Traefik to debug level:
+
+```yaml
+log:
+  level: DEBUG
+```
+
+in `traefik/traefik.yml`, then restart only the proxy:
+
+```bash
+docker compose up -d reverse-proxy
+```
+
+After reproducing the issue, return to `INFO` to keep noise down.
+
+### 3) Trace a single failing request across all components
+
+Use a reproducible curl request and compare timestamps across logs:
+
+```bash
+curl -vk https://localhost:50710/
+docker compose logs --tail=200 reverse-proxy uploader crowdsec crowdsec-bouncer
+```
+
+Look for these patterns:
+- `forwardauth` errors or `5xx` around `crowdsec-bouncer` (auth middleware path),
+- `x509` / TLS handshake failures between Traefik and uploader,
+- `server not reachable` / connection refused to `uploader:3443`.
+
+### 4) Validate container-to-container reachability from Traefik
+
+```bash
+docker compose exec reverse-proxy sh -lc 'curl -vk https://uploader:3443/'
+docker compose exec reverse-proxy sh -lc 'curl -sv http://crowdsec-bouncer:8080/api/v1/forwardAuth'
+```
+
+If these fail, the issue is network, service health, or middleware endpoint configuration (not browser-side).
+
+### 5) Parse Traefik JSON access logs for response/status hotspots
+
+```bash
+docker compose exec reverse-proxy sh -lc 'tail -n 300 /var/log/traefik/access.log'
+```
+
+Focus on status spikes (`401`, `403`, `502`, `504`), router/service names, and request durations.
+
 If uploads still fail due to host filesystem ACLs or root-squash, fix ownership on the host:
 
 ```bash
