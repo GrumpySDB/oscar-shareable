@@ -28,7 +28,6 @@ const USERNAME_MAX_LENGTH = 128;
 const PASSWORD_MAX_LENGTH = 256;
 const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
 const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
-const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 const UPLOAD_ROOT = path.join(__dirname, 'data', 'uploads');
 const UPLOAD_UID = Number(process.env.UPLOAD_UID || 911);
 const UPLOAD_GID = Number(process.env.UPLOAD_GID || 911);
@@ -121,6 +120,12 @@ function createSimpleLimiter({ windowMs, max }) {
 const authLimiter = createSimpleLimiter({ windowMs: 15 * 60 * 1000, max: 30 });
 const apiLimiter = createSimpleLimiter({ windowMs: 15 * 60 * 1000, max: 300 });
 app.use('/api', apiLimiter);
+
+function getSixMonthsAgo(referenceTime = Date.now()) {
+  const date = new Date(referenceTime);
+  date.setMonth(date.getMonth() - 6);
+  return date;
+}
 
 function safeEqual(a, b) {
   const left = Buffer.from(String(a));
@@ -374,7 +379,7 @@ const upload = multer({
   preservePath: true,
   limits: {
     fileSize: MAX_FILE_SIZE,
-    files: 10000,
+    files: 5000,
   },
 });
 
@@ -522,7 +527,7 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
 
     const today = new Date();
     today.setHours(23, 59, 59, 999);
-    const minDate = Date.now() - ONE_YEAR_MS;
+    const minDate = getSixMonthsAgo().getTime();
     if (selectedDate < minDate || selectedDate > today.getTime()) {
       return res.status(400).json({ error: 'Selected date out of range' });
     }
@@ -635,7 +640,7 @@ app.use((err, _req, res, _next) => {
       return res.status(400).json({ error: 'File exceeds 10MB limit' });
     }
     if (err.code === 'LIMIT_FILE_COUNT') {
-      return res.status(400).json({ error: 'Too many files in one upload (max 10000)' });
+      return res.status(400).json({ error: 'Too many files in one upload (max 5000)' });
     }
   }
   return res.status(500).json({ error: 'Unexpected server error' });

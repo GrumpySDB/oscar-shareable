@@ -1,8 +1,7 @@
 const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
 const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
-const MAX_UPLOAD_FILES = 10000;
+const MAX_UPLOAD_FILES = 5000;
 
 let token = sessionStorage.getItem('authToken') || null;
 let preparedFiles = [];
@@ -58,10 +57,16 @@ function setMessage(message, isError = false, isBusy = false) {
   appMessage.textContent = message;
 }
 
+function getSixMonthsAgo(referenceTime = Date.now()) {
+  const date = new Date(referenceTime);
+  date.setMonth(date.getMonth() - 6);
+  return date;
+}
+
 function configureDateInput() {
   const input = document.getElementById('startDate');
   const today = new Date();
-  const min = new Date(Date.now() - ONE_YEAR_MS);
+  const min = getSixMonthsAgo();
   input.max = today.toISOString().slice(0, 10);
   input.min = min.toISOString().slice(0, 10);
   input.value = min.toISOString().slice(0, 10);
@@ -131,8 +136,8 @@ function validateFile(file, startDateMs) {
   const inferredDate = extractDateFromPath(file);
   const modified = Number.isFinite(inferredDate) ? inferredDate : Number(file.lastModified || 0);
   const now = Date.now();
-  const oneYearAgo = now - ONE_YEAR_MS;
-  if (modified < oneYearAgo || modified > now) return false;
+  const sixMonthsAgo = getSixMonthsAgo(now).getTime();
+  if (modified < sixMonthsAgo || modified > now) return false;
   if (modified < startDateMs) return false;
 
   return true;
@@ -251,8 +256,8 @@ async function scanAndPrepare() {
   }
 
   const now = Date.now();
-  if (selectedDate.getTime() < now - ONE_YEAR_MS || selectedDate.getTime() > now) {
-    setMessage('Start date must be within the past year.', true);
+  if (selectedDate.getTime() < getSixMonthsAgo(now).getTime() || selectedDate.getTime() > now) {
+    setMessage('Start date must be within the past 6 months.', true);
     return;
   }
 
@@ -394,7 +399,10 @@ async function proceedToOscar() {
     if (!result || typeof result.launchUrl !== 'string') {
       throw new Error('Unable to open OSCAR right now.');
     }
-    window.location.assign(result.launchUrl);
+    const oscarWindow = window.open(result.launchUrl, '_blank', 'noopener,noreferrer');
+    if (!oscarWindow) {
+      setMessage('Popup blocked. Please allow popups and try again.', true);
+    }
   } catch (err) {
     if (err.status === 423) {
       setMessage(formatBusyMessage(err.retryAfterSeconds), true, true);
