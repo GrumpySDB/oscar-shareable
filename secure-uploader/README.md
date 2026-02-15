@@ -11,7 +11,7 @@ Hardened web app for uploading OSCAR SD card files through Docker.
 - Security headers with Helmet and API rate limiting.
 - Upload directory ownership is enforced to `911:911` by startup/runtime checks in the uploader container.
 - Server refuses to run if upload directory ownership is not `911:911`.
-- A Traefik reverse proxy is the **only** exposed service and publishes on host port `50710`.
+- A Traefik reverse proxy is the **only** exposed service and it must publish on a high random port (49152-65535).
 - CrowdSec protects the reverse proxy via forward-auth middleware (`crowdsec-bouncer`).
 
 ## Required environment variables
@@ -33,12 +33,19 @@ OSCAR_BASE_URL=http://oscar:3000
 ```
 
 ## Run
+Start with the helper script (recommended):
 
 ```bash
-docker compose up --build -d
+./scripts/start-secure-uploader.sh
 ```
 
-The app is available at `https://localhost:50710`.
+The script picks a random high port (49152-65535), launches Compose, and prints the URL.
+
+Manual run (if you want to pin a specific high port):
+
+```bash
+SECURE_UPLOADER_PORT=55443 docker compose up --build -d
+```
 
 If uploads still fail due to host filesystem ACLs or root-squash, fix ownership on the host:
 
