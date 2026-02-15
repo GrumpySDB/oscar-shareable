@@ -5,14 +5,11 @@ services:
     restart: unless-stopped
     command:
       - --configFile=/etc/traefik/traefik.yml
-    environment:
-      DOCKER_API_VERSION: "1.44"
     ports:
       - "50710:8443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
       - ./traefik/logs:/var/log/traefik
     depends_on:
       - uploader

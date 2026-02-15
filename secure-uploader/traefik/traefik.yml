@@ -8,9 +8,6 @@ api:
 providers:
   docker:
     exposedByDefault: false
-  file:
-    filename: /etc/traefik/dynamic.yml
-    watch: true
 
 serversTransport:
   insecureSkipVerify: true
