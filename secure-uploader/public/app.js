@@ -399,10 +399,9 @@ async function proceedToOscar() {
   );
   if (!acknowledged) return;
 
-  // Open a named placeholder tab immediately within the user gesture so
-  // browsers do not block the OSCAR launch as an unsolicited popup.
-  const launchTarget = `oscar-launch-${Date.now()}`;
-  const launchWindow = window.open('about:blank', launchTarget);
+  // Open a placeholder tab immediately within the user gesture so browsers do
+  // not block the resulting OSCAR launch as an unsolicited popup.
+  const launchWindow = window.open('about:blank', '_blank', 'noopener,noreferrer');
   if (!launchWindow) {
     setMessage('Please allow popups for this site to open OSCAR.', true);
     return;
@@ -413,15 +412,7 @@ async function proceedToOscar() {
     if (!result || typeof result.launchUrl !== 'string') {
       throw new Error('Unable to open OSCAR right now.');
     }
-
-    // Resolve potentially relative launch URLs against the current origin.
-    // (The placeholder tab starts at about:blank, where relative URLs fail.)
-    const launchUrl = new URL(result.launchUrl, window.location.origin).toString();
-
-    // Clear opener before navigation to avoid tabnabbing while still
-    // preserving a reliable handle for navigation across browsers.
-    launchWindow.opener = null;
-    launchWindow.location.href = launchUrl;
+    launchWindow.location.replace(result.launchUrl);
   } catch (err) {
     launchWindow.close();
     if (err.status === 423) {
