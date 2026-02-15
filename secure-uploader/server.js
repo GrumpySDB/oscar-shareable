@@ -33,9 +33,6 @@ const UPLOAD_UID = Number(process.env.UPLOAD_UID || 911);
 const UPLOAD_GID = Number(process.env.UPLOAD_GID || 911);
 const OSCAR_LAUNCH_TTL_SECONDS = 120;
 const OSCAR_SESSION_TTL_SECONDS = 8 * 60 * 60;
-const SERVICE_BUSY_MESSAGE = 'The service is temporarily in use.  Please try again in about 3 minutes.';
-
-let activeServiceLock = null;
 
 let oscarTarget;
 try {
@@ -135,49 +132,6 @@ function safeEqual(a, b) {
 }
 
 
-function readActiveLock() {
-  if (!activeServiceLock) return null;
-  if (activeServiceLock.expiresAt <= Date.now()) {
-    activeServiceLock = null;
-    return null;
-  }
-  return activeServiceLock;
-}
-
-function setBusyHeaders(res, lock) {
-  const retryAfterSeconds = Math.max(1, Math.ceil((lock.expiresAt - Date.now()) / 1000));
-  res.setHeader('Retry-After', String(retryAfterSeconds));
-  return res.status(423).json({
-    error: SERVICE_BUSY_MESSAGE,
-    retryAfterSeconds,
-    purpose: lock.purpose,
-  });
-}
-
-function withServiceLock({ ownerId, purpose, ttlMs, onBusy }) {
-  const lock = readActiveLock();
-  if (lock && lock.ownerId !== ownerId) {
-    return onBusy(lock);
-  }
-
-  const now = Date.now();
-  activeServiceLock = {
-    ownerId,
-    purpose,
-    acquiredAt: now,
-    expiresAt: now + ttlMs,
-  };
-  return null;
-}
-
-function releaseServiceLock(ownerId, purpose = null) {
-  const lock = readActiveLock();
-  if (!lock) return;
-  if (lock.ownerId !== ownerId) return;
-  if (purpose && lock.purpose !== purpose) return;
-  activeServiceLock = null;
-}
-
 function sanitizeFolderName(value) {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
@@ -252,10 +206,6 @@ function requireOscarSession(req, res, next) {
     const payload = jwt.verify(sessionToken, JWT_SECRET);
     if (payload.scope !== 'oscar') {
       return res.status(401).send('Unauthorized');
-    }
-    const lock = readActiveLock();
-    if (lock && lock.ownerId !== payload.sub) {
-      return setBusyHeaders(res, lock);
     }
     return next();
   } catch (_err) {
@@ -467,30 +417,8 @@ app.get('/api/session', authMiddleware, (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/lock-status', authMiddleware, (_req, res) => {
-  const lock = readActiveLock();
-  if (!lock) {
-    return res.json({ busy: false });
-  }
-
-  return res.json({
-    busy: true,
-    purpose: lock.purpose,
-    retryAfterSeconds: Math.max(1, Math.ceil((lock.expiresAt - Date.now()) / 1000)),
-    message: SERVICE_BUSY_MESSAGE,
-  });
-});
-
 app.post('/api/oscar-launch', authMiddleware, (req, res) => {
   const ownerId = String(req.auth.sid || req.auth.sub || 'unknown');
-  const busy = withServiceLock({
-    ownerId,
-    purpose: 'oscar',
-    ttlMs: OSCAR_SESSION_TTL_SECONDS * 1000,
-    onBusy: (lock) => setBusyHeaders(res, lock),
-  });
-  if (busy) return busy;
-
   const launchToken = jwt.sign({ sub: ownerId, purpose: 'oscar-launch' }, JWT_SECRET, {
     expiresIn: OSCAR_LAUNCH_TTL_SECONDS,
   });
@@ -509,15 +437,6 @@ app.get('/api/folders/:folder/files', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) => {
-  const ownerId = String(req.auth.sid || req.auth.sub || 'unknown');
-  const busy = withServiceLock({
-    ownerId,
-    purpose: 'upload',
-    ttlMs: 10 * 60 * 1000,
-    onBusy: (lock) => setBusyHeaders(res, lock),
-  });
-  if (busy) return busy;
-
   try {
     const folder = sanitizeFolderName(req.body.folder);
     if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
@@ -585,8 +504,6 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     return res.json({ uploaded: files.length });
   } catch (error) {
     return res.status(500).json({ error: 'Upload failed', detail: error.message });
-  } finally {
-    releaseServiceLock(ownerId, 'upload');
   }
 });
 
@@ -610,14 +527,6 @@ app.get('/oscar/login', (req, res) => {
     if (payload.purpose !== 'oscar-launch' || typeof payload.sub !== 'string') {
       return res.status(401).send('Unauthorized');
     }
-
-    const busy = withServiceLock({
-      ownerId: payload.sub,
-      purpose: 'oscar',
-      ttlMs: OSCAR_SESSION_TTL_SECONDS * 1000,
-      onBusy: (lock) => setBusyHeaders(res, lock),
-    });
-    if (busy) return busy;
 
     issueOscarSessionCookie(res, payload.sub);
     return res.redirect('/oscar/');
@@ -682,11 +591,6 @@ httpsServer.on('upgrade', (req, socket, head) => {
   try {
     const payload = jwt.verify(sessionToken, JWT_SECRET);
     if (payload.scope !== 'oscar') {
-      socket.destroy();
-      return;
-    }
-    const lock = readActiveLock();
-    if (lock && lock.ownerId !== payload.sub) {
       socket.destroy();
       return;
     }
