@@ -56,6 +56,7 @@ App URL: `https://localhost:3443`
   - `Identification.tgt`
   - `STR.edf`
 - Non-required files must be within selected date range and no older than 1 year.
+- Uploads are capped at 10,000 files per request; choose a later start date if scan finds more.
 - Users can delete all uploaded data for a folder.
 
 ## Integrated OSCAR service
