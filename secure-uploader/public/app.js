@@ -399,10 +399,9 @@ async function proceedToOscar() {
   );
   if (!acknowledged) return;
 
-  // Open a named placeholder tab immediately within the user gesture so
-  // browsers do not block the OSCAR launch as an unsolicited popup.
-  const launchTarget = `oscar-launch-${Date.now()}`;
-  const launchWindow = window.open('about:blank', launchTarget);
+  // Open a placeholder tab immediately within the user gesture so browsers do
+  // not block the resulting OSCAR launch as an unsolicited popup.
+  const launchWindow = window.open('about:blank', '_blank', 'noopener,noreferrer');
   if (!launchWindow) {
     setMessage('Please allow popups for this site to open OSCAR.', true);
     return;
@@ -413,11 +412,7 @@ async function proceedToOscar() {
     if (!result || typeof result.launchUrl !== 'string') {
       throw new Error('Unable to open OSCAR right now.');
     }
-
-    // Clear opener before navigation to avoid tabnabbing while still
-    // preserving a reliable handle for navigation across browsers.
-    launchWindow.opener = null;
-    launchWindow.location.href = result.launchUrl;
+    launchWindow.location.replace(result.launchUrl);
   } catch (err) {
     launchWindow.close();
     if (err.status === 423) {
