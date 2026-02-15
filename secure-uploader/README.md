@@ -55,14 +55,14 @@ App URL: `https://localhost:3443`
   - `Identification.crc`
   - `Identification.tgt`
   - `STR.edf`
-- Non-required files must be within selected date range and no older than 1 year.
-- Uploads are capped at 10,000 files per request; choose a later start date if scan finds more.
+- Non-required files must be within selected date range and no older than 6 months.
+- Uploads are capped at 5,000 files per request; choose a later start date if scan finds more.
 - Users can delete all uploaded data for a folder.
 
 ## Integrated OSCAR service
 - `docker-compose.yml` now runs the uploader and `rogerrum/docker-oscar:latest` together.
 - The upload page includes a large **Proceed to OSCAR** button.
-- Clicking it calls an authenticated API endpoint that issues a short-lived launch URL, then sets an HttpOnly gate cookie under `/oscar` before proxying traffic to the OSCAR container.
+- Clicking it calls an authenticated API endpoint that issues a short-lived launch URL and opens OSCAR in a new browser tab/window, then sets an HttpOnly gate cookie under `/oscar` before proxying traffic to the OSCAR container.
 - Direct access to `/oscar/*` without the gate cookie returns `401 Unauthorized`.
 - Requests under `/oscar/*` bypass the uploader's Helmet CSP so OSCAR can serve its own scripts/styles without browser CSP violations.
 - The proxy rewrites OSCAR's `Content-Security-Policy` `frame-ancestors` directive to `'self'` so the embedded VNC view can load under the shared app origin.
