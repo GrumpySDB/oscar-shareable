@@ -30,3 +30,8 @@ What to look for:
 - Container runs as `911:911`, so that user must be able to read both files.
 - Parent directories also need execute (`x`) permission so the container user can traverse to the files.
 - On SELinux hosts, bind mounts may need relabeling (for example `:z` / `:Z`) so container access is allowed.
+
+
+## Service port
+
+The secure uploader is exposed only on HTTPS port `50710` in the compose setup.

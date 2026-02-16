@@ -10,7 +10,6 @@ Hardened web app for uploading OSCAR SD card files through Docker.
 - Folder name validation and server-side path safety.
 - Security headers with Helmet and API rate limiting.
 - HTTPS-only serving with a self-signed certificate.
-- HTTP listener only redirects to HTTPS (308).
 - Upload directory ownership is enforced to `911:911` by startup/runtime checks in the uploader container.
 - Server refuses to run if upload directory ownership is not `911:911`.
 
@@ -24,8 +23,7 @@ APP_PASSWORD=change-me
 REQUIRE_DOCKER=true
 
 # Optional overrides
-HTTP_PORT=3000
-HTTPS_PORT=3443
+HTTPS_PORT=50710
 SSL_KEY_PATH=/app/certs/key.pem
 SSL_CERT_PATH=/app/certs/cert.pem
 OSCAR_BASE_URL=http://oscar:3000
@@ -44,7 +42,7 @@ sudo chown -R 911:911 secure-uploader/data/uploads
 sudo chmod 750 secure-uploader/data/uploads
 ```
 
-App URL: `https://localhost:3443`
+App URL: `https://localhost:50710`
 
 > Because the certificate is self-signed, your browser will show a trust warning on first load.
 

@@ -4,7 +4,6 @@ const express = require('express');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 const helmet = require('helmet');
@@ -13,8 +12,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
 const app = express();
-const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.PORT || 3443);
-const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.PORT || 50710);
 const SSL_KEY_PATH = process.env.SSL_KEY_PATH || path.join(__dirname, 'certs', 'key.pem');
 const SSL_CERT_PATH = process.env.SSL_CERT_PATH || path.join(__dirname, 'certs', 'cert.pem');
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -605,16 +603,3 @@ httpsServer.on('upgrade', (req, socket, head) => {
 httpsServer.listen(HTTPS_PORT, () => {
   console.log(`OSCAR uploader running on https://0.0.0.0:${HTTPS_PORT}`);
 });
-
-http
-  .createServer((req, res) => {
-    const hostHeader = String(req.headers.host || '');
-    const host = hostHeader ? hostHeader.replace(/:\d+$/, '') : 'localhost';
-    const httpsPortSuffix = HTTPS_PORT === 443 ? '' : `:${HTTPS_PORT}`;
-    const location = `https://${host}${httpsPortSuffix}${req.url || '/'}`;
-    res.writeHead(308, { Location: location });
-    res.end();
-  })
-  .listen(HTTP_PORT, () => {
-    console.log(`HTTP redirector running on http://0.0.0.0:${HTTP_PORT}`);
-  });
