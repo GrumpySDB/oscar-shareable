@@ -5,6 +5,7 @@ Hardened web app for uploading OSCAR SD card files through Docker.
 ## Security highlights
 - Runs in Docker with non-root UID:GID `911:911` and hardened compose settings.
 - Login required for upload/delete actions and before reaching the OSCAR UI.
+- Auth sessions time out after 30 minutes by default (configurable with `AUTH_SESSION_TTL_SECONDS`).
 - Credentials loaded from `.env`.
 - Strict file validation (`.crc`, `.tgt`, `.edf`, max 10MB each).
 - Folder name validation and server-side path safety.
@@ -27,6 +28,7 @@ HTTPS_PORT=50710
 SSL_KEY_PATH=/app/certs/key.pem
 SSL_CERT_PATH=/app/certs/cert.pem
 OSCAR_BASE_URL=http://oscar:3000
+AUTH_SESSION_TTL_SECONDS=1800
 ```
 
 ## Run
