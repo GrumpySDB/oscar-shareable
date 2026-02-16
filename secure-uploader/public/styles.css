@@ -77,6 +77,31 @@ input:focus {
   border-color: #a7bbff;
 }
 
+.date-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.date-input-wrap .date-icon {
+  position: absolute;
+  left: 0.7rem;
+  font-size: 1rem;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+#startDate {
+  padding-left: 2.1rem;
+  background: linear-gradient(180deg, #fbfdff 0%, #f3f7ff 100%);
+  border-color: #c8d6ff;
+  box-shadow: inset 0 1px 2px rgba(36, 87, 245, 0.07);
+}
+
+#startDate:hover {
+  border-color: #a9bcff;
+}
+
 button {
   margin-top: 0.9rem;
   border: none;

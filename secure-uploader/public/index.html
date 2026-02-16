@@ -33,7 +33,10 @@
       <input id="folderName" type="text" placeholder="example-clinic-a" maxlength="64" />
 
       <label for="startDate">Start Date (max 6 months back)</label>
-      <input id="startDate" type="date" />
+      <div class="date-input-wrap">
+        <span class="date-icon" aria-hidden="true">📅</span>
+        <input id="startDate" type="date" />
+      </div>
 
       <label for="directoryInput">OSCAR SD Card Folder</label>
       <input id="directoryInput" type="file" webkitdirectory directory multiple />
