@@ -4,6 +4,7 @@ const express = require('express');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 const helmet = require('helmet');
@@ -37,6 +38,11 @@ try {
   oscarTarget = new URL(OSCAR_BASE_URL);
 } catch (_error) {
   console.error(`Invalid OSCAR_BASE_URL: ${OSCAR_BASE_URL}`);
+  process.exit(1);
+}
+
+if (oscarTarget.protocol !== 'http:' && oscarTarget.protocol !== 'https:') {
+  console.error(`OSCAR_BASE_URL protocol must be http or https. Received: ${oscarTarget.protocol}`);
   process.exit(1);
 }
 
@@ -181,15 +187,14 @@ function issueOscarSessionCookie(res, ownerId) {
   const token = jwt.sign({ sub: ownerId, scope: 'oscar' }, JWT_SECRET, {
     expiresIn: OSCAR_SESSION_TTL_SECONDS,
   });
-  const isProd = process.env.NODE_ENV === 'production';
   const cookieParts = [
     `oscar_session=${encodeURIComponent(token)}`,
     'Path=/',
     `Max-Age=${OSCAR_SESSION_TTL_SECONDS}`,
     'HttpOnly',
     'SameSite=Strict',
+    'Secure',
   ];
-  if (isProd) cookieParts.push('Secure');
   res.setHeader('Set-Cookie', cookieParts.join('; '));
 }
 
@@ -219,6 +224,40 @@ function getOscarTargetPath(incomingPath) {
   return rawPath || '/';
 }
 
+
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function buildOscarProxyHeaders(req, { isWebSocket = false } = {}) {
+  const headers = {};
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
+    headers[name] = value;
+  }
+
+  headers.host = oscarTarget.host;
+  headers['x-forwarded-for'] = req.ip || req.socket.remoteAddress || '';
+  headers['x-forwarded-proto'] = 'https';
+  if (req.headers.host) {
+    headers['x-forwarded-host'] = req.headers.host;
+  }
+
+  if (isWebSocket) {
+    headers.connection = 'Upgrade';
+    headers.upgrade = 'websocket';
+  }
+
+  return headers;
+}
+
 function proxyOscarRequest(req, res) {
   const oscarPath = getOscarTargetPath(req.originalUrl);
   const options = {
@@ -227,10 +266,7 @@ function proxyOscarRequest(req, res) {
     port: oscarTarget.port || (oscarTarget.protocol === 'https:' ? 443 : 80),
     method: req.method,
     path: oscarPath,
-    headers: {
-      ...req.headers,
-      host: oscarTarget.host,
-    },
+    headers: buildOscarProxyHeaders(req),
   };
 
   delete options.headers.authorization;
@@ -275,12 +311,7 @@ function proxyOscarWebSocket(req, socket, head) {
     port: targetPort,
     path: oscarPath,
     method: 'GET',
-    headers: {
-      ...req.headers,
-      host: oscarTarget.host,
-      connection: 'Upgrade',
-      upgrade: 'websocket',
-    },
+    headers: buildOscarProxyHeaders(req, { isWebSocket: true }),
   };
 
   const requestLib = oscarTarget.protocol === 'https:' ? https : http;
