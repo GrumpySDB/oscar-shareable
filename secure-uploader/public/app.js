@@ -210,9 +210,20 @@ async function login() {
   }
 }
 
-function logout() {
+async function logout() {
+  const currentToken = token;
   token = null;
   sessionStorage.removeItem('authToken');
+
+  if (currentToken) {
+    try {
+      await fetch('/api/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${currentToken}` },
+      });
+    } catch (_err) {}
+  }
+
   preparedFiles = [];
   uploadBtn.disabled = true;
   summary.textContent = '';
