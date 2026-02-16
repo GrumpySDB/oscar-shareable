@@ -4,13 +4,11 @@ services:
       context: .
     user: "911:911"
     ports:
-      - "3000:3000"
-      - "3443:3443"
+      - "50710:50710"
     env_file:
       - .env
     environment:
-      HTTP_PORT: 3000
-      HTTPS_PORT: 3443
+      HTTPS_PORT: 50710
       UPLOAD_UID: 911
       UPLOAD_GID: 911
       OSCAR_BASE_URL: http://oscar:3000
