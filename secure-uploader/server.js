@@ -1,170 +1,620 @@
 require('dotenv').config();
-const express = require('express');
-const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
-const helmet = require('helmet');
-const cors = require('cors');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
-const https = require('https');
 
-const { initDB, findUser, upsertFile, db } = require('./db');
-const { authenticate } = require('./middleware');
+const express = require('express');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
+const http = require('http');
+const https = require('https');
+const { URL } = require('url');
+const helmet = require('helmet');
+const multer = require('multer');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 
 const app = express();
-app.use(express.json());
-app.use(cors());
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.PORT || 3443);
+const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || path.join(__dirname, 'certs', 'key.pem');
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || path.join(__dirname, 'certs', 'cert.pem');
+const JWT_SECRET = process.env.JWT_SECRET;
+const APP_USERNAME = process.env.APP_USERNAME;
+const APP_PASSWORD = process.env.APP_PASSWORD;
+const REQUIRE_DOCKER = String(process.env.REQUIRE_DOCKER || 'true').toLowerCase() === 'true';
+const OSCAR_BASE_URL = process.env.OSCAR_BASE_URL || 'http://oscar:3000';
 
-// ---------------- Helmet + CSP ----------------
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", 'https:'],
-        imgSrc: ["'self'", "data:"],
-        connectSrc: ["'self'"],
-        objectSrc: ["'none'"],
-        upgradeInsecureRequests: [],
-      },
-    },
-  })
-);
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const USERNAME_MAX_LENGTH = 128;
+const PASSWORD_MAX_LENGTH = 256;
+const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
+const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
+const UPLOAD_ROOT = path.join(__dirname, 'data', 'uploads');
+const UPLOAD_UID = Number(process.env.UPLOAD_UID || 911);
+const UPLOAD_GID = Number(process.env.UPLOAD_GID || 911);
+const OSCAR_LAUNCH_TTL_SECONDS = 120;
+const OSCAR_SESSION_TTL_SECONDS = 8 * 60 * 60;
 
-// ---------------- Initialize DB ----------------
-initDB(process.env.DEFAULT_USER, process.env.DEFAULT_PASS);
-
-const REQUIRED_FILES = ["config.json","manifest.xml","data.db","metadata.txt"];
-const ALLOWED_EXT = ['edf','crc','tgt'];
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
-
-// ---------------- Serve frontend ----------------
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ---------------- Helpers ----------------
-function sanitizePath(p) {
-  return path.normalize(p).replace(/^(\.\.(\/|\\|$))+/, '');
-}
-
-// ---------------- Login ----------------
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-  const user = await findUser(username);
-  if (!user) return res.sendStatus(401);
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return res.sendStatus(401);
-
-  const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: "8h" });
-  res.json({ token });
-});
-
-// ---------------- Upload ----------------
-const upload = multer({ dest: "uploads/", limits: { fileSize: MAX_FILE_SIZE } });
-
-app.post("/upload", authenticate, upload.single("file"), async (req, res) => {
-  try {
-    const relativePath = sanitizePath(req.body.relativePath);
-    const lastModified = parseInt(req.body.lastModified);
-    const username = sanitizePath(req.body.username) || "default";
-
-    // Validate extension
-    const ext = path.extname(req.file.originalname).slice(1).toLowerCase();
-    if (!ALLOWED_EXT.includes(ext)) {
-      fs.unlinkSync(req.file.path);
-      return res.status(400).json({ status: "error", message: "Invalid file type" });
-    }
-
-    // Create user folder
-    const userDir = path.join("uploads", username);
-    fs.mkdirSync(userDir, { recursive: true, mode: 0o700 });
-
-    // Destination path
-    const dest = path.join(userDir, relativePath);
-    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
-
-    // Move file
-    fs.renameSync(req.file.path, dest);
-
-    // Update DB
-    await upsertFile(path.join(username, relativePath), lastModified);
-
-    res.json({ status: "uploaded" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: "error", message: err.message });
-  }
-});
-
-// ---------------- Existing files endpoint ----------------
-app.get("/existing-files", authenticate, async (req, res) => {
-  const username = sanitizePath(req.query.username || '');
-  db.all(`SELECT path FROM files WHERE path LIKE ?`, [username + '/%'], (err, rows) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json([]);
-    }
-    res.json(rows.map(r => r.path));
-  });
-});
-
-// ---------------- Delete user data ----------------
-app.post("/delete-user", authenticate, async (req, res) => {
-  const username = sanitizePath(req.body.username || '');
-  const userDir = path.join("uploads", username);
-  if (fs.existsSync(userDir)) fs.rmSync(userDir, { recursive: true, force: true });
-  db.run(`DELETE FROM files WHERE path LIKE ?`, [username + '/%']);
-  res.json({ status: "deleted" });
-});
-
-// ---------------- Catch-all for frontend ----------------
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// ---------------- HTTPS Server ----------------
-const PORT = process.env.PORT || 3000;
-const keyPath = process.env.SSL_KEY_PATH || path.join(__dirname, 'certs/key.pem');
-const certPath = process.env.SSL_CERT_PATH || path.join(__dirname, 'certs/cert.pem');
-
-for (const requiredPath of [keyPath, certPath]) {
-  if (!fs.existsSync(requiredPath)) {
-    console.error('TLS certificate files are missing.');
-    console.error(`Missing file: ${requiredPath}`);
-    console.error('If running with Docker Compose, ensure host certs are in ./certs relative to secure-uploader/docker-compose.yml, or override SSL_KEY_PATH/SSL_CERT_PATH.');
-    process.exit(1);
-  }
-}
-
-let key;
-let cert;
+let oscarTarget;
 try {
-  fs.accessSync(keyPath, fs.constants.R_OK);
-  fs.accessSync(certPath, fs.constants.R_OK);
-  key = fs.readFileSync(keyPath);
-  cert = fs.readFileSync(certPath);
-} catch (err) {
-  console.error('Failed to read TLS certificate files.');
-  console.error(`Process UID:GID ${process.getuid?.() ?? 'n/a'}:${process.getgid?.() ?? 'n/a'}`);
-  console.error(`Key path: ${keyPath}`);
-  console.error(`Cert path: ${certPath}`);
-  if (err && err.code) console.error(`Node error code: ${err.code}`);
-  console.error('Likely causes: unreadable file permissions, missing execute permission on a parent directory, or SELinux/AppArmor bind-mount restrictions.');
+  oscarTarget = new URL(OSCAR_BASE_URL);
+} catch (_error) {
+  console.error(`Invalid OSCAR_BASE_URL: ${OSCAR_BASE_URL}`);
   process.exit(1);
 }
 
-const server = https.createServer({ key, cert }, app);
-server.listen(PORT, () => console.log(`Secure uploader running on https://0.0.0.0:${PORT}`));
-
-// ---------------- Graceful Shutdown ----------------
-function gracefulShutdown() {
-  console.log("Shutting down gracefully...");
-  server.close(() => {
-    console.log("Server closed");
-    process.exit(0);
-  });
-  setTimeout(() => { console.error("Force shutdown!"); process.exit(1); }, 5000);
+if (REQUIRE_DOCKER && !fs.existsSync('/.dockerenv')) {
+  console.error('Refusing to start outside Docker (REQUIRE_DOCKER=true).');
+  process.exit(1);
 }
-process.on("SIGINT", gracefulShutdown);
-process.on("SIGTERM", gracefulShutdown);
+
+if (!JWT_SECRET || !APP_USERNAME || !APP_PASSWORD) {
+  console.error('Missing required environment variables: JWT_SECRET, APP_USERNAME, APP_PASSWORD.');
+  process.exit(1);
+}
+
+fs.mkdirSync(UPLOAD_ROOT, { recursive: true, mode: 0o750 });
+
+try {
+  ensureOwnershipSync(UPLOAD_ROOT);
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+const securityHeaders = helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'none'"],
+      frameAncestors: ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: false,
+    preload: false,
+  },
+  crossOriginEmbedderPolicy: false,
+});
+
+app.use((req, res, next) => {
+  if (req.path.startsWith('/oscar/')) {
+    return next();
+  }
+  return securityHeaders(req, res, next);
+});
+
+
+
+function createSimpleLimiter({ windowMs, max }) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const key = req.ip || 'unknown';
+    const now = Date.now();
+    const item = hits.get(key) || { count: 0, resetAt: now + windowMs };
+    if (now > item.resetAt) {
+      item.count = 0;
+      item.resetAt = now + windowMs;
+    }
+    item.count += 1;
+    hits.set(key, item);
+    if (item.count > max) {
+      return res.status(429).json({ error: 'Too many requests' });
+    }
+    return next();
+  };
+}
+
+const authLimiter = createSimpleLimiter({ windowMs: 15 * 60 * 1000, max: 30 });
+const apiLimiter = createSimpleLimiter({ windowMs: 15 * 60 * 1000, max: 300 });
+app.use('/api', apiLimiter);
+
+function getSixMonthsAgo(referenceTime = Date.now()) {
+  const date = new Date(referenceTime);
+  date.setMonth(date.getMonth() - 6);
+  return date;
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+
+function sanitizeFolderName(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(normalized)) return null;
+  return normalized;
+}
+
+function sanitizeCredentialInput(value, { trim = false, maxLength }) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.normalize('NFKC');
+  const candidate = trim ? normalized.trim() : normalized;
+  if (candidate.length === 0 || candidate.length > maxLength) return null;
+  if (/[\u0000-\u001F\u007F]/.test(candidate)) return null;
+  return candidate;
+}
+
+function authMiddleware(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const token = header.slice(7);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.auth = payload;
+    return next();
+  } catch (_err) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+}
+
+function parseCookies(req) {
+  const raw = String(req.headers.cookie || '');
+  const map = new Map();
+  for (const chunk of raw.split(';')) {
+    const trimmed = chunk.trim();
+    if (!trimmed) continue;
+    const separator = trimmed.indexOf('=');
+    if (separator <= 0) continue;
+    const key = trimmed.slice(0, separator).trim();
+    const value = trimmed.slice(separator + 1).trim();
+    map.set(key, decodeURIComponent(value));
+  }
+  return map;
+}
+
+function issueOscarSessionCookie(res, ownerId) {
+  const token = jwt.sign({ sub: ownerId, scope: 'oscar' }, JWT_SECRET, {
+    expiresIn: OSCAR_SESSION_TTL_SECONDS,
+  });
+  const isProd = process.env.NODE_ENV === 'production';
+  const cookieParts = [
+    `oscar_session=${encodeURIComponent(token)}`,
+    'Path=/',
+    `Max-Age=${OSCAR_SESSION_TTL_SECONDS}`,
+    'HttpOnly',
+    'SameSite=Strict',
+  ];
+  if (isProd) cookieParts.push('Secure');
+  res.setHeader('Set-Cookie', cookieParts.join('; '));
+}
+
+function requireOscarSession(req, res, next) {
+  const cookies = parseCookies(req);
+  const sessionToken = cookies.get('oscar_session');
+  if (!sessionToken) {
+    return res.status(401).send('Unauthorized');
+  }
+
+  try {
+    const payload = jwt.verify(sessionToken, JWT_SECRET);
+    if (payload.scope !== 'oscar') {
+      return res.status(401).send('Unauthorized');
+    }
+    return next();
+  } catch (_err) {
+    return res.status(401).send('Unauthorized');
+  }
+}
+
+function getOscarTargetPath(incomingPath) {
+  const rawPath = typeof incomingPath === 'string' ? incomingPath : '/';
+  if (rawPath.startsWith('/oscar')) {
+    return rawPath.replace(/^\/oscar/, '') || '/';
+  }
+  return rawPath || '/';
+}
+
+function proxyOscarRequest(req, res) {
+  const oscarPath = getOscarTargetPath(req.originalUrl);
+  const options = {
+    protocol: oscarTarget.protocol,
+    hostname: oscarTarget.hostname,
+    port: oscarTarget.port || (oscarTarget.protocol === 'https:' ? 443 : 80),
+    method: req.method,
+    path: oscarPath,
+    headers: {
+      ...req.headers,
+      host: oscarTarget.host,
+    },
+  };
+
+  delete options.headers.authorization;
+
+  const requestLib = oscarTarget.protocol === 'https:' ? https : http;
+  const proxyReq = requestLib.request(options, (proxyRes) => {
+    for (const [headerName, headerValue] of Object.entries(proxyRes.headers)) {
+      if (headerName.toLowerCase() === 'transfer-encoding') continue;
+      if (headerName.toLowerCase() === 'content-security-policy' && typeof headerValue === 'string') {
+        const directives = headerValue
+          .split(';')
+          .map((directive) => directive.trim())
+          .filter(Boolean)
+          .filter((directive) => !directive.toLowerCase().startsWith('frame-ancestors'));
+        directives.push("frame-ancestors 'self'");
+        res.setHeader(headerName, directives.join('; '));
+        continue;
+      }
+      if (headerValue !== undefined) {
+        res.setHeader(headerName, headerValue);
+      }
+    }
+    res.status(proxyRes.statusCode || 502);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', () => {
+    if (!res.headersSent) {
+      res.status(502).send('Unable to connect to OSCAR service');
+    }
+  });
+
+  req.pipe(proxyReq);
+}
+
+function proxyOscarWebSocket(req, socket, head) {
+  const oscarPath = getOscarTargetPath(req.url);
+  const targetPort = oscarTarget.port || (oscarTarget.protocol === 'https:' ? 443 : 80);
+  const connectOptions = {
+    protocol: oscarTarget.protocol,
+    hostname: oscarTarget.hostname,
+    port: targetPort,
+    path: oscarPath,
+    method: 'GET',
+    headers: {
+      ...req.headers,
+      host: oscarTarget.host,
+      connection: 'Upgrade',
+      upgrade: 'websocket',
+    },
+  };
+
+  const requestLib = oscarTarget.protocol === 'https:' ? https : http;
+  const proxyReq = requestLib.request(connectOptions);
+
+  proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+    const statusCode = proxyRes.statusCode || 101;
+    const statusMessage = proxyRes.statusMessage || 'Switching Protocols';
+    const headerLines = [`HTTP/1.1 ${statusCode} ${statusMessage}`];
+
+    for (const [name, value] of Object.entries(proxyRes.headers)) {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          headerLines.push(`${name}: ${item}`);
+        }
+      } else if (value !== undefined) {
+        headerLines.push(`${name}: ${value}`);
+      }
+    }
+
+    socket.write(`${headerLines.join('\r\n')}\r\n\r\n`);
+    if (proxyHead && proxyHead.length > 0) {
+      socket.write(proxyHead);
+    }
+    if (head && head.length > 0) {
+      proxySocket.write(head);
+    }
+    proxySocket.pipe(socket).pipe(proxySocket);
+  });
+
+  proxyReq.on('response', () => {
+    socket.end();
+  });
+
+  proxyReq.on('error', () => {
+    socket.destroy();
+  });
+
+  proxyReq.end();
+}
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  preservePath: true,
+  limits: {
+    fileSize: MAX_FILE_SIZE,
+    files: 5000,
+  },
+});
+
+
+function ownershipError(targetPath, stats) {
+  return new Error(`Upload path ownership must be ${UPLOAD_UID}:${UPLOAD_GID}; found ${stats.uid}:${stats.gid} at ${targetPath}`);
+}
+
+function ensureOwnershipSync(targetPath) {
+  const stats = fs.statSync(targetPath);
+  if (stats.uid !== UPLOAD_UID || stats.gid !== UPLOAD_GID) {
+    throw ownershipError(targetPath, stats);
+  }
+}
+
+async function ensureOwnership(targetPath) {
+  const stats = await fsp.stat(targetPath);
+  if (stats.uid !== UPLOAD_UID || stats.gid !== UPLOAD_GID) {
+    throw ownershipError(targetPath, stats);
+  }
+}
+
+async function listFilenames(folderPath) {
+  const entries = await fsp.readdir(folderPath, { withFileTypes: true });
+  const names = [];
+  for (const entry of entries) {
+    const entryPath = path.join(folderPath, entry.name);
+    if (entry.isDirectory()) {
+      const children = await listFilenames(entryPath);
+      for (const child of children) {
+        names.push(path.posix.join(entry.name, child));
+      }
+    }
+    if (entry.isFile()) names.push(entry.name);
+  }
+  return names;
+}
+
+function sanitizeUploadRelativePath(value) {
+  if (typeof value !== 'string') return null;
+  if (value.length === 0 || value.length > 512) return null;
+  if (/\0/.test(value)) return null;
+
+  const slashNormalized = value.replace(/\\/g, '/');
+  const normalized = path.posix.normalize(slashNormalized);
+  if (normalized === '.' || normalized.startsWith('/') || normalized.startsWith('../') || normalized.includes('/../')) {
+    return null;
+  }
+
+  const segments = normalized.split('/');
+  for (const segment of segments) {
+    if (!segment || segment === '.' || segment === '..') return null;
+    if (segment.length > 255) return null;
+    if (/[\u0000-\u001F\u007F]/.test(segment)) return null;
+  }
+
+  return segments.join('/');
+}
+
+app.post('/api/login', authLimiter, (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const username = sanitizeCredentialInput(body.username, {
+    trim: true,
+    maxLength: USERNAME_MAX_LENGTH,
+  });
+  const password = sanitizeCredentialInput(body.password, {
+    trim: false,
+    maxLength: PASSWORD_MAX_LENGTH,
+  });
+
+  if (!username || !password) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  if (!safeEqual(username, APP_USERNAME) || !safeEqual(password, APP_PASSWORD)) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  const sessionId = crypto.randomUUID();
+  const token = jwt.sign({ sub: username, sid: sessionId }, JWT_SECRET, { expiresIn: '8h' });
+  return res.json({ token });
+});
+
+app.get('/api/session', authMiddleware, (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.post('/api/oscar-launch', authMiddleware, (req, res) => {
+  const ownerId = String(req.auth.sid || req.auth.sub || 'unknown');
+  const launchToken = jwt.sign({ sub: ownerId, purpose: 'oscar-launch' }, JWT_SECRET, {
+    expiresIn: OSCAR_LAUNCH_TTL_SECONDS,
+  });
+  res.json({ launchUrl: `/oscar/login?token=${encodeURIComponent(launchToken)}` });
+});
+
+app.get('/api/folders/:folder/files', authMiddleware, async (req, res) => {
+  const folder = sanitizeFolderName(req.params.folder);
+  if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
+
+  const folderPath = path.join(UPLOAD_ROOT, folder);
+  if (!fs.existsSync(folderPath)) return res.json({ filenames: [] });
+
+  const filenames = await listFilenames(folderPath);
+  return res.json({ filenames });
+});
+
+app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) => {
+  try {
+    const folder = sanitizeFolderName(req.body.folder);
+    if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
+
+    const selectedDate = Number(req.body.selectedDateMs);
+    if (!Number.isFinite(selectedDate)) return res.status(400).json({ error: 'Invalid selected date' });
+
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    const minDate = getSixMonthsAgo().getTime();
+    if (selectedDate < minDate || selectedDate > today.getTime()) {
+      return res.status(400).json({ error: 'Selected date out of range' });
+    }
+
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
+
+    const incomingBasenames = files.map((file) => path.basename(file.originalname));
+    for (const requiredName of REQUIRED_ALWAYS) {
+      if (!incomingBasenames.includes(requiredName)) {
+        return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+      }
+    }
+
+    const dedupe = new Set();
+    for (const file of files) {
+      const relativePath = sanitizeUploadRelativePath(file.originalname);
+      if (!relativePath) {
+        return res.status(400).json({ error: `Invalid file path: ${file.originalname}` });
+      }
+
+      if (dedupe.has(relativePath)) {
+        return res.status(400).json({ error: `Duplicate filename in upload: ${relativePath}` });
+      }
+      dedupe.add(relativePath);
+      file.safeRelativePath = relativePath;
+
+      const extension = path.extname(relativePath).toLowerCase();
+      if (!ALLOWED_EXTENSIONS.has(extension)) {
+        return res.status(400).json({ error: `Invalid file extension: ${relativePath}` });
+      }
+
+      if (file.size > MAX_FILE_SIZE) {
+        return res.status(400).json({ error: `File exceeds 10MB: ${relativePath}` });
+      }
+    }
+
+    const folderPath = path.join(UPLOAD_ROOT, folder);
+    await fsp.mkdir(folderPath, { recursive: true, mode: 0o750 });
+    await ensureOwnership(UPLOAD_ROOT);
+    await ensureOwnership(folderPath);
+
+    for (const file of files) {
+      const destination = path.join(folderPath, file.safeRelativePath);
+      const destinationDir = path.dirname(destination);
+      await fsp.mkdir(destinationDir, { recursive: true, mode: 0o750 });
+      await ensureOwnership(destinationDir);
+      if (fs.existsSync(destination)) {
+        await ensureOwnership(destination);
+      }
+      await fsp.writeFile(destination, file.buffer, { mode: 0o640 });
+      await ensureOwnership(destination);
+    }
+
+    return res.json({ uploaded: files.length });
+  } catch (error) {
+    return res.status(500).json({ error: 'Upload failed', detail: error.message });
+  }
+});
+
+app.delete('/api/folders/:folder', authMiddleware, async (req, res) => {
+  const folder = sanitizeFolderName(req.params.folder);
+  if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
+
+  const folderPath = path.join(UPLOAD_ROOT, folder);
+  await fsp.rm(folderPath, { recursive: true, force: true });
+  return res.json({ deleted: folder });
+});
+
+app.get('/oscar/login', (req, res) => {
+  const launchToken = typeof req.query.token === 'string' ? req.query.token : '';
+  if (!launchToken) {
+    return res.status(401).send('Unauthorized');
+  }
+
+  try {
+    const payload = jwt.verify(launchToken, JWT_SECRET);
+    if (payload.purpose !== 'oscar-launch' || typeof payload.sub !== 'string') {
+      return res.status(401).send('Unauthorized');
+    }
+
+    issueOscarSessionCookie(res, payload.sub);
+    return res.redirect('/oscar/');
+  } catch (_err) {
+    return res.status(401).send('Unauthorized');
+  }
+});
+
+app.use('/oscar', requireOscarSession, proxyOscarRequest);
+app.use('/websockify', requireOscarSession, proxyOscarRequest);
+
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/{*splat}', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.use((err, _req, res, _next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File exceeds 10MB limit' });
+    }
+    if (err.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({ error: 'Too many files in one upload (max 5000)' });
+    }
+  }
+  return res.status(500).json({ error: 'Unexpected server error' });
+});
+
+if (!fs.existsSync(SSL_KEY_PATH) || !fs.existsSync(SSL_CERT_PATH)) {
+  console.error(`TLS files not found. Expected:\n- key: ${SSL_KEY_PATH}\n- cert: ${SSL_CERT_PATH}`);
+  process.exit(1);
+}
+
+const tlsOptions = {
+  key: fs.readFileSync(SSL_KEY_PATH),
+  cert: fs.readFileSync(SSL_CERT_PATH),
+};
+
+const httpsServer = https.createServer(tlsOptions, app);
+
+httpsServer.on('upgrade', (req, socket, head) => {
+  if (!req.url || (!req.url.startsWith('/oscar/') && !req.url.startsWith('/websockify'))) {
+    socket.destroy();
+    return;
+  }
+
+  const cookies = new Map();
+  for (const chunk of String(req.headers.cookie || '').split(';')) {
+    const trimmed = chunk.trim();
+    if (!trimmed) continue;
+    const sep = trimmed.indexOf('=');
+    if (sep <= 0) continue;
+    cookies.set(trimmed.slice(0, sep), decodeURIComponent(trimmed.slice(sep + 1)));
+  }
+
+  const sessionToken = cookies.get('oscar_session');
+  if (!sessionToken) {
+    socket.destroy();
+    return;
+  }
+
+  try {
+    const payload = jwt.verify(sessionToken, JWT_SECRET);
+    if (payload.scope !== 'oscar') {
+      socket.destroy();
+      return;
+    }
+  } catch (_err) {
+    socket.destroy();
+    return;
+  }
+
+  proxyOscarWebSocket(req, socket, head);
+});
+
+httpsServer.listen(HTTPS_PORT, () => {
+  console.log(`OSCAR uploader running on https://0.0.0.0:${HTTPS_PORT}`);
+});
+
+http
+  .createServer((req, res) => {
+    const hostHeader = String(req.headers.host || '');
+    const host = hostHeader ? hostHeader.replace(/:\d+$/, '') : 'localhost';
+    const httpsPortSuffix = HTTPS_PORT === 443 ? '' : `:${HTTPS_PORT}`;
+    const location = `https://${host}${httpsPortSuffix}${req.url || '/'}`;
+    res.writeHead(308, { Location: location });
+    res.end();
+  })
+  .listen(HTTP_PORT, () => {
+    console.log(`HTTP redirector running on http://0.0.0.0:${HTTP_PORT}`);
+  });

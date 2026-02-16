@@ -1,41 +1,61 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Secure Uploader</title>
-  <link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OSCAR Secure Upload</title>
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <!-- Login -->
-  <div id="login">
-    <h2>Login</h2>
-    <input id="username" type="text" placeholder="Username">
-    <input id="password" type="password" placeholder="Password">
-    <button id="loginBtn">Login</button>
-  </div>
+  <main class="container">
+    <section id="loginCard" class="card">
+      <img id="loginBanner" class="screen-banner hidden" alt="Random welcome image" />
+      <h1>OSCAR Secure Uploader</h1>
+      <p class="subtle">Sign in to upload SD card data.</p>
+      <form id="loginForm" novalidate>
+        <label for="username">Username</label>
+        <input id="username" type="text" autocomplete="username" maxlength="128" />
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" maxlength="256" />
+        <button id="loginBtn" type="submit">Login</button>
+      </form>
+      <p id="loginError" class="error"></p>
+    </section>
 
-  <!-- Upload App -->
-  <div id="app" class="hidden">
-    <h2>Directory Upload</h2>
+    <section id="appCard" class="card hidden">
+      <img id="uploadBanner" class="screen-banner hidden" alt="Random upload image" />
+      <div class="header-row">
+        <h2>Upload SD Card Files</h2>
+        <button id="logoutBtn" class="ghost">Logout</button>
+      </div>
 
-    <label>Folder Name (username):</label>
-    <input type="text" id="uploadUsername" placeholder="Folder name" required>
+      <label for="folderName">Folder Name</label>
+      <input id="folderName" type="text" placeholder="example-clinic-a" maxlength="64" />
 
-    <label>Start Date (max 1 year ago):</label>
-    <input type="date" id="startDate">
-    <small>You can select a date up to 1 year in the past. End date is always today.</small>
+      <label for="startDate">Start Date (max 6 months back)</label>
+      <input id="startDate" type="date" />
 
-    <input type="file" id="directory" webkitdirectory multiple>
-    <button id="uploadBtn">Upload</button>
+      <label for="directoryInput">OSCAR SD Card Folder</label>
+      <input id="directoryInput" type="file" webkitdirectory directory multiple />
 
-    <div class="progress-container">
-      <div id="progressBar"></div>
-    </div>
+      <p class="subtle">Required on every upload: Identification.crc, Identification.tgt, STR.edf</p>
+      <button id="scanBtn">Scan & Prepare Upload</button>
 
-    <hr>
-    <button id="deleteBtn" style="background-color: #e74c3c;">Delete User Data</button>
-  </div>
+      <div id="summary" class="summary"></div>
 
-  <script src="app.js" defer></script>
+      <div class="progress-wrap" aria-label="overall upload progress">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+
+      <p id="appMessage" class="message"></p>
+
+      <button id="uploadBtn" disabled>Upload Selected Files</button>
+      <button id="deleteBtn" class="danger">Delete Uploaded Folder Data</button>
+      <button id="oscarBtn" class="oscar-cta" type="button">Proceed to OSCAR</button>
+
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
 </body>
 </html>

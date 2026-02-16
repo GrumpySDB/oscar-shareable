@@ -1,30 +1,40 @@
-version: "3.9"
-
 services:
   uploader:
-    build: .
-    container_name: secure-uploader
+    build:
+      context: .
+    user: "911:911"
     ports:
       - "3000:3000"
-
-    user: "911:911"
-
-    volumes:
-      - ./uploads:/app/uploads
-      - ./db:/app/db
-
+      - "3443:3443"
     env_file:
       - .env
-
+    environment:
+      HTTP_PORT: 3000
+      HTTPS_PORT: 3443
+      UPLOAD_UID: 911
+      UPLOAD_GID: 911
+      OSCAR_BASE_URL: http://oscar:3000
+    volumes:
+      - ./data/uploads:/app/data/uploads
     restart: unless-stopped
-
-    # ---- HARDENING ----
     read_only: true
+    tmpfs:
+      - /tmp
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    depends_on:
+      - oscar
 
-volumes:
-  uploads_data:
-  db_data:
+  oscar:
+    image: rogerrum/docker-oscar:latest
+    container_name: oscar
+    restart: unless-stopped
+    expose:
+      - "3000"
+    volumes:
+      - ./oscar-data:/config/Documents/OSCAR_Data:rw
+      - ./data/uploads:/config/SDCARD:ro
+    environment:
+      TZ: "America/Toronto"

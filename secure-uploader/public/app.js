@@ -1,156 +1,423 @@
-let token = null;
-const CONCURRENCY = 5;
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_EXT = ['edf','crc','tgt'];
-const ALWAYS_ACCEPT = ["Identification.crc","Identification.tgt","STR.edf"];
-const REQUIRED_FILES = ["config.json","manifest.xml","data.db","metadata.txt"];
+const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
+const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_UPLOAD_FILES = 5000;
 
-document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("loginBtn").addEventListener("click", login);
-  document.getElementById("uploadBtn").addEventListener("click", uploadFiles);
-  document.getElementById("deleteBtn").addEventListener("click", deleteUser);
-});
+let token = sessionStorage.getItem('authToken') || null;
+let preparedFiles = [];
+let preparedFolder = '';
+let selectedDateMs = 0;
 
-// ---------------- LOGIN ----------------
-async function login() {
-  const username = document.getElementById("username").value;
-  const password = document.getElementById("password").value;
+const loginCard = document.getElementById('loginCard');
+const appCard = document.getElementById('appCard');
+const loginError = document.getElementById('loginError');
+const appMessage = document.getElementById('appMessage');
+const summary = document.getElementById('summary');
+const progressBar = document.getElementById('progressBar');
+const uploadBtn = document.getElementById('uploadBtn');
 
-  const res = await fetch("/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password })
-  });
 
-  if (!res.ok) return alert("Login failed");
+const loginBanner = document.getElementById('loginBanner');
+const uploadBanner = document.getElementById('uploadBanner');
 
-  token = (await res.json()).token;
+async function loadRandomBanner(imageElement) {
+  if (!imageElement) return;
 
-  document.getElementById("login").classList.add("hidden");
-  document.getElementById("app").classList.remove("hidden");
+  try {
+    const response = await fetch('/images/manifest.json', { cache: 'no-store' });
+    if (!response.ok) return;
+
+    const data = await response.json();
+    if (!Array.isArray(data.images) || data.images.length === 0) return;
+
+    const index = Math.floor(Math.random() * data.images.length);
+    const selected = String(data.images[index] || '').trim();
+    if (!selected) return;
+
+    imageElement.src = `/images/${encodeURIComponent(selected)}`;
+    imageElement.classList.remove('hidden');
+  } catch (_err) {}
 }
 
-// ---------------- Helpers ----------------
-function withinRange(file, start) {
-  const t = file.lastModified;
-  const today = new Date();
-  today.setHours(23,59,59,999);
 
-  if (start && t < new Date(start).setHours(0,0,0,0)) return false;
-  if (t > today.getTime()) return false; // end date always today
+function showLogin() {
+  loginCard.classList.remove('hidden');
+  appCard.classList.add('hidden');
+}
+
+function showApp() {
+  loginCard.classList.add('hidden');
+  appCard.classList.remove('hidden');
+}
+
+function setMessage(message, isError = false) {
+  appMessage.classList.toggle('error-state', Boolean(isError));
+  appMessage.textContent = message;
+}
+
+function getSixMonthsAgo(referenceTime = Date.now()) {
+  const date = new Date(referenceTime);
+  date.setMonth(date.getMonth() - 6);
+  return date;
+}
+
+function configureDateInput() {
+  const input = document.getElementById('startDate');
+  const today = new Date();
+  const min = getSixMonthsAgo();
+  input.max = today.toISOString().slice(0, 10);
+  input.min = min.toISOString().slice(0, 10);
+  input.value = min.toISOString().slice(0, 10);
+}
+
+function folderNameValid(value) {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(value);
+}
+
+function sanitizeUsernameInput(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.normalize('NFKC').trim();
+  if (normalized.length === 0 || normalized.length > 128) return null;
+  if (/[\u0000-\u001F\u007F]/.test(normalized)) return null;
+  return normalized;
+}
+
+function isRequired(name) {
+  return REQUIRED_ALWAYS.includes(name);
+}
+
+function getRelativePath(file) {
+  return file.webkitRelativePath || file.name;
+}
+
+function getBasename(file) {
+  return file.name;
+}
+
+
+function extractDateFromPath(file) {
+  const relativePath = getRelativePath(file);
+
+  // OSCAR file structures commonly include YYYYMMDD or YYYY-MM-DD in file/folder names.
+  const compact = relativePath.match(/(?:^|\D)((?:19|20)\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:\D|$)/);
+  if (compact) {
+    const year = Number(compact[1]);
+    const month = Number(compact[2]);
+    const day = Number(compact[3]);
+    const parsed = new Date(year, month - 1, day).getTime();
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const dashed = relativePath.match(/(?:^|\D)((?:19|20)\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])(?:\D|$)/);
+  if (dashed) {
+    const year = Number(dashed[1]);
+    const month = Number(dashed[2]);
+    const day = Number(dashed[3]);
+    const parsed = new Date(year, month - 1, day).getTime();
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
+function validateFile(file, startDateMs) {
+  const relativePath = getRelativePath(file);
+  const extension = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
+  if (!ALLOWED_EXTENSIONS.has(extension)) return false;
+  if (file.size > MAX_FILE_SIZE) return false;
+
+  if (isRequired(getBasename(file))) return true;
+
+  const inferredDate = extractDateFromPath(file);
+  const modified = Number.isFinite(inferredDate) ? inferredDate : Number(file.lastModified || 0);
+  const now = Date.now();
+  const sixMonthsAgo = getSixMonthsAgo(now).getTime();
+  if (modified < sixMonthsAgo || modified > now) return false;
+  if (modified < startDateMs) return false;
+
   return true;
 }
 
-function validFile(file) {
-  const ext = file.name.split('.').pop().toLowerCase();
-  return ALLOWED_EXT.includes(ext) && file.size <= MAX_FILE_SIZE;
-}
+async function api(path, options = {}) {
+  const headers = options.headers || {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(path, { ...options, headers });
+  if (!response.ok) {
+    let detail = 'Request failed';
+    try {
+      const body = await response.json();
+      detail = body.error || detail;
+    } catch (_err) {}
 
-// ---------------- UPLOAD ----------------
-async function uploadFiles() {
-  const username = document.getElementById("uploadUsername").value.trim();
-  if (!username) return alert("Please enter a folder name");
-
-  const files = Array.from(document.getElementById("directory").files);
-  const start = document.getElementById("startDate").value;
-
-  // ---------------- Fetch existing files ----------------
-  let existingFiles = [];
-  try {
-    const res = await fetch(`/existing-files?username=${encodeURIComponent(username)}`, {
-      headers: { "Authorization": "Bearer " + token }
-    });
-    if (res.ok) {
-      existingFiles = await res.json();
-      if (!Array.isArray(existingFiles)) existingFiles = [];
-    } else {
-      console.warn("Could not fetch existing files, status:", res.status);
-    }
-  } catch(err) {
-    console.error("Could not fetch existing files:", err);
-    existingFiles = [];
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
   }
 
-  // ---------------- Filter eligible files ----------------
-  const eligible = files.filter(f => {
-    const pathInUpload = f.webkitRelativePath;
-    if (ALWAYS_ACCEPT.includes(f.name)) return true; // always accept special files
-    if (existingFiles.includes(pathInUpload)) return false; // skip existing files
-    return (REQUIRED_FILES.includes(f.name) || withinRange(f, start)) && validFile(f);
-  });
+  if (response.status === 204) return null;
+  return response.json();
+}
 
-  if (eligible.length === 0) return alert("No valid files to upload");
+async function checkSession() {
+  if (!token) {
+    showLogin();
+    return;
+  }
 
-  let completed = 0;
-  const progressBar = document.getElementById("progressBar");
+  try {
+    await api('/api/session');
+    showApp();
+  } catch (_err) {
+    token = null;
+    sessionStorage.removeItem('authToken');
+    showLogin();
+  }
+}
 
-  async function worker(queue) {
-    while (queue.length) {
-      const file = queue.pop();
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("relativePath", file.webkitRelativePath);
-      formData.append("lastModified", file.lastModified);
-      formData.append("username", username);
+let loginInProgress = false;
 
+async function login() {
+  if (loginInProgress) return;
+
+  loginInProgress = true;
+  loginError.textContent = '';
+  const usernameInput = document.getElementById('username');
+  const username = sanitizeUsernameInput(usernameInput.value);
+  const password = document.getElementById('password').value;
+
+  if (!username) {
+    loginError.textContent = 'Please enter a valid username.';
+    loginInProgress = false;
+    return;
+  }
+
+  usernameInput.value = username;
+
+  try {
+    const result = await api('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    token = result.token;
+    sessionStorage.setItem('authToken', token);
+    showApp();
+  } catch (err) {
+    loginError.textContent = err.message;
+  } finally {
+    loginInProgress = false;
+  }
+}
+
+function logout() {
+  token = null;
+  sessionStorage.removeItem('authToken');
+  preparedFiles = [];
+  uploadBtn.disabled = true;
+  summary.textContent = '';
+  progressBar.style.width = '0%';
+  setMessage('');
+  showLogin();
+}
+
+async function scanAndPrepare() {
+  setMessage('');
+  summary.textContent = '';
+  uploadBtn.disabled = true;
+  progressBar.style.width = '0%';
+
+  const folder = document.getElementById('folderName').value.trim();
+  if (!folderNameValid(folder)) {
+    setMessage('Folder name must be 1-64 chars, only letters/numbers/_/-.', true);
+    return;
+  }
+
+  const files = Array.from(document.getElementById('directoryInput').files || []);
+  if (files.length === 0) {
+    setMessage('Please choose an SD card folder first.', true);
+    return;
+  }
+
+  const selectedDate = new Date(document.getElementById('startDate').value);
+  if (Number.isNaN(selectedDate.getTime())) {
+    setMessage('Please select a valid start date.', true);
+    return;
+  }
+
+  const now = Date.now();
+  if (selectedDate.getTime() < getSixMonthsAgo(now).getTime() || selectedDate.getTime() > now) {
+    setMessage('Start date must be within the past 6 months.', true);
+    return;
+  }
+
+  let existingNames = [];
+  try {
+    const data = await api(`/api/folders/${encodeURIComponent(folder)}/files`);
+    existingNames = Array.isArray(data.filenames) ? data.filenames : [];
+  } catch (err) {
+    setMessage(`Unable to load existing files: ${err.message}`, true);
+    return;
+  }
+
+  const existingSet = new Set(existingNames);
+  const requiredBasenames = new Set(files.map((file) => getBasename(file)));
+
+  for (const required of REQUIRED_ALWAYS) {
+    if (!requiredBasenames.has(required)) {
+      setMessage(`Missing required file in selected folder: ${required}`, true);
+      return;
+    }
+  }
+
+  const eligible = [];
+  let skippedExisting = 0;
+  let skippedInvalid = 0;
+
+  for (const file of files) {
+    if (!validateFile(file, selectedDate.getTime())) {
+      skippedInvalid += 1;
+      continue;
+    }
+
+    const relativePath = getRelativePath(file);
+    if (!isRequired(getBasename(file)) && existingSet.has(relativePath)) {
+      skippedExisting += 1;
+      continue;
+    }
+
+    eligible.push(file);
+  }
+
+  if (eligible.length === 0) {
+    setMessage('No new valid files to upload after filtering.', true);
+    return;
+  }
+
+  if (eligible.length > MAX_UPLOAD_FILES) {
+    setMessage(
+      `Too many files selected after filtering (${eligible.length}). Please choose a later start date so no more than ${MAX_UPLOAD_FILES} files are uploaded at once.`,
+      true,
+    );
+    return;
+  }
+
+  preparedFiles = eligible;
+  preparedFolder = folder;
+  selectedDateMs = selectedDate.getTime();
+  uploadBtn.disabled = false;
+
+  summary.innerHTML = [
+    `<strong>Ready:</strong> ${eligible.length} files`,
+    `<br><strong>Skipped existing:</strong> ${skippedExisting}`,
+    `<br><strong>Skipped invalid:</strong> ${skippedInvalid}`,
+  ].join('');
+}
+
+function uploadPreparedFiles() {
+  if (preparedFiles.length === 0) {
+    setMessage('Nothing to upload. Use Scan first.', true);
+    return;
+  }
+
+  uploadBtn.disabled = true;
+  setMessage('Uploading...');
+
+  const form = new FormData();
+  form.append('folder', preparedFolder);
+  form.append('selectedDateMs', String(selectedDateMs));
+  for (const file of preparedFiles) {
+    form.append('files', file, getRelativePath(file));
+  }
+
+  const request = new XMLHttpRequest();
+  request.open('POST', '/api/upload');
+  request.setRequestHeader('Authorization', `Bearer ${token}`);
+
+  request.upload.onprogress = (event) => {
+    if (!event.lengthComputable) return;
+    const percent = Math.round((event.loaded / event.total) * 100);
+    progressBar.style.width = `${percent}%`;
+  };
+
+  request.onload = () => {
+    if (request.status >= 200 && request.status < 300) {
+      progressBar.style.width = '100%';
+      setMessage('Upload complete.');
+      preparedFiles = [];
+      uploadBtn.disabled = true;
+    } else {
+      let message = 'Upload failed';
       try {
-        const res = await fetch("/upload", {
-          method: "POST",
-          headers: { "Authorization": "Bearer " + token },
-          body: formData
-        });
-        if (!res.ok) throw new Error(await res.text());
-      } catch(err) {
-        console.error("Upload failed:", file.name, err);
-      }
+        const body = JSON.parse(request.responseText);
+        message = body.error || message;
+      } catch (_err) {}
 
-      completed++;
-      progressBar.style.width = ((completed / eligible.length) * 100) + "%";
+      setMessage(message, true);
+      uploadBtn.disabled = false;
     }
-  }
+  };
 
-  const queue = [...eligible];
-  await Promise.all(Array(CONCURRENCY).fill().map(() => worker(queue)));
+  request.onerror = () => {
+    setMessage('Network error during upload.', true);
+    uploadBtn.disabled = false;
+  };
 
-  alert("Upload complete!");
+  request.send(form);
 }
 
-// ---------------- DELETE USER DATA ----------------
-async function deleteUser() {
-  const username = document.getElementById("uploadUsername").value.trim();
-  if (!username) return alert("Enter a folder name to delete");
 
-  if (!confirm(`Are you sure you want to delete all data for user "${username}"?`)) return;
+async function proceedToOscar() {
+  if (!token) {
+    setMessage('Please log in before opening OSCAR.', true);
+    showLogin();
+    return;
+  }
+
+  const acknowledged = window.confirm(
+    'Please do NOT exit the OSCAR application INSIDE the browser window.  Simply close the browser window when you are done.\n\nIf you do exit OSCAR inside the browser window, OSCAR cannot be restarted and will be down for everyone.  Click OK to Acknowledge and Proceed.'
+  );
+  if (!acknowledged) return;
 
   try {
-    const res = await fetch("/delete-user", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + token
-      },
-      body: JSON.stringify({ username })
-    });
-    if (res.ok) {
-      alert(`User "${username}" data deleted.`);
-    } else {
-      const text = await res.text();
-      alert(`Failed to delete: ${text}`);
+    const result = await api('/api/oscar-launch', { method: 'POST' });
+    if (!result || typeof result.launchUrl !== 'string') {
+      throw new Error('Unable to open OSCAR right now.');
     }
-  } catch(err) {
-    console.error(err);
-    alert("Error deleting user data");
+    window.open(result.launchUrl, '_blank', 'noopener,noreferrer');
+  } catch (err) {
+    setMessage(`Unable to open OSCAR: ${err.message}`, true);
   }
 }
 
-// ---------------- Initialize start date max/min ----------------
-document.addEventListener("DOMContentLoaded", () => {
-  const startDateInput = document.getElementById("startDate");
-  const today = new Date();
-  const oneYearAgo = new Date();
-  oneYearAgo.setFullYear(today.getFullYear() - 1);
+async function deleteFolder() {
+  const folder = document.getElementById('folderName').value.trim();
+  if (!folderNameValid(folder)) {
+    setMessage('Enter a valid folder name to delete.', true);
+    return;
+  }
 
-  startDateInput.max = today.toISOString().split("T")[0];
-  startDateInput.min = oneYearAgo.toISOString().split("T")[0];
-  startDateInput.value = oneYearAgo.toISOString().split("T")[0];
+  if (!window.confirm(`Delete all uploaded data for folder "${folder}"?`)) return;
+
+  try {
+    await api(`/api/folders/${encodeURIComponent(folder)}`, { method: 'DELETE' });
+    setMessage(`Deleted uploaded data for folder "${folder}".`);
+  } catch (err) {
+    setMessage(`Delete failed: ${err.message}`, true);
+  }
+}
+
+document.getElementById('loginForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  login();
 });
+document.getElementById('logoutBtn').addEventListener('click', logout);
+document.getElementById('scanBtn').addEventListener('click', scanAndPrepare);
+document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);
+document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
+document.getElementById('oscarBtn').addEventListener('click', proceedToOscar);
+
+configureDateInput();
+loadRandomBanner(loginBanner);
+loadRandomBanner(uploadBanner);
+checkSession();
