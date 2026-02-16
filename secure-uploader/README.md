@@ -53,8 +53,8 @@ App URL: `https://localhost:50710`
 - Frontend compares filenames against server files for the target folder (no hashing).
 - Only new filenames are uploaded, except these are always uploaded every time:
   - `Identification.crc`
-  - `Identification.tgt`
   - `STR.edf`
+- `Identification.tgt` is optional: upload it when present, but it is not required.
 - Non-required files must be within selected date range and no older than 6 months.
 - Uploads are capped at 5,000 files per request; choose a later start date if scan finds more.
 - Users can delete all uploaded data for a folder.

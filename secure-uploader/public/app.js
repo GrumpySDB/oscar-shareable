@@ -1,4 +1,5 @@
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
+const OPTIONAL_ALWAYS = ['Identification.tgt'];
 const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 5000;
@@ -87,6 +88,10 @@ function isRequired(name) {
   return REQUIRED_ALWAYS.includes(name);
 }
 
+function isAlwaysIncluded(name) {
+  return isRequired(name) || OPTIONAL_ALWAYS.includes(name);
+}
+
 function getRelativePath(file) {
   return file.webkitRelativePath || file.name;
 }
@@ -127,7 +132,7 @@ function validateFile(file, startDateMs) {
   if (!ALLOWED_EXTENSIONS.has(extension)) return false;
   if (file.size > MAX_FILE_SIZE) return false;
 
-  if (isRequired(getBasename(file))) return true;
+  if (isAlwaysIncluded(getBasename(file))) return true;
 
   const inferredDate = extractDateFromPath(file);
   const modified = Number.isFinite(inferredDate) ? inferredDate : Number(file.lastModified || 0);
@@ -293,7 +298,7 @@ async function scanAndPrepare() {
     }
 
     const relativePath = getRelativePath(file);
-    if (!isRequired(getBasename(file)) && existingSet.has(relativePath)) {
+    if (!isAlwaysIncluded(getBasename(file)) && existingSet.has(relativePath)) {
       skippedExisting += 1;
       continue;
     }
