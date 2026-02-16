@@ -1,5 +1,6 @@
 services:
   uploader:
+    container_name: uploader
     build:
       context: .
     user: "911:911"
