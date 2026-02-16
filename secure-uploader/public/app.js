@@ -65,9 +65,10 @@ function configureDateInput() {
   const input = document.getElementById('startDate');
   const today = new Date();
   const min = getSixMonthsAgo();
-  input.max = today.toISOString().slice(0, 10);
+  const todayIso = today.toISOString().slice(0, 10);
+  input.max = todayIso;
   input.min = min.toISOString().slice(0, 10);
-  input.value = min.toISOString().slice(0, 10);
+  input.value = todayIso;
 }
 
 function folderNameValid(value) {
