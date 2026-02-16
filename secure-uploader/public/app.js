@@ -1,4 +1,4 @@
-const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
+const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
 const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 5000;

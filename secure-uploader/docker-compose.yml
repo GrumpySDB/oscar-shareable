@@ -13,7 +13,7 @@ services:
       UPLOAD_GID: 911
       OSCAR_BASE_URL: http://oscar:3000
     volumes:
-      - ./data/uploads:/app/data/uploads
+      - /var/www/data/uploads:/app/data/uploads
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -32,7 +32,7 @@ services:
     expose:
       - "3000"
     volumes:
-      - ./oscar-data:/config/Documents/OSCAR_Data:rw
-      - ./data/uploads:/config/SDCARD:ro
+      - /var/www/oscar-data:/config/Documents/OSCAR_Data:rw
+      - /var/www/data/uploads:/config/SDCARD:ro
     environment:
       TZ: "America/Toronto"
