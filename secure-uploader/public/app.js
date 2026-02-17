@@ -230,19 +230,25 @@ async function logout() {
     } catch (_err) {}
   }
 
-  preparedFiles = [];
-  uploadBtn.disabled = true;
-  summary.textContent = '';
-  progressBar.style.width = '0%';
+  resetPreparedState(true);
   setMessage('');
   showLogin();
 }
 
+function resetPreparedState(clearProgress = false) {
+  preparedFiles = [];
+  preparedFolder = '';
+  selectedDateMs = 0;
+  uploadBtn.disabled = true;
+  summary.textContent = '';
+  if (clearProgress) {
+    progressBar.style.width = '0%';
+  }
+}
+
 async function scanAndPrepare() {
   setMessage('');
-  summary.textContent = '';
-  uploadBtn.disabled = true;
-  progressBar.style.width = '0%';
+  resetPreparedState(true);
 
   const folder = document.getElementById('folderName').value.trim();
   if (!folderNameValid(folder)) {
@@ -282,7 +288,7 @@ async function scanAndPrepare() {
 
   for (const required of REQUIRED_ALWAYS) {
     if (!requiredBasenames.has(required)) {
-      setMessage(`Missing required file in selected folder: ${required}`, true);
+      setMessage(`Invalid data: missing required file ${required}.`, true);
       return;
     }
   }
@@ -306,8 +312,13 @@ async function scanAndPrepare() {
     eligible.push(file);
   }
 
+  const skippedTotal = skippedExisting + skippedInvalid;
   if (eligible.length === 0) {
-    setMessage('No new valid files to upload after filtering.', true);
+    summary.innerHTML = [
+      `<strong>Valid files to upload:</strong> 0`,
+      `<br><strong>Files skipped:</strong> ${skippedTotal}`,
+    ].join('');
+    setMessage('Invalid or duplicate SD card data detected. Upload is disabled.', true);
     return;
   }
 
@@ -325,15 +336,15 @@ async function scanAndPrepare() {
   uploadBtn.disabled = false;
 
   summary.innerHTML = [
-    `<strong>Ready:</strong> ${eligible.length} files`,
-    `<br><strong>Skipped existing:</strong> ${skippedExisting}`,
-    `<br><strong>Skipped invalid:</strong> ${skippedInvalid}`,
+    `<strong>Valid files to upload:</strong> ${eligible.length}`,
+    `<br><strong>Files skipped:</strong> ${skippedTotal}`,
   ].join('');
+  setMessage('Resmed SD card data detected.');
 }
 
 function uploadPreparedFiles() {
   if (preparedFiles.length === 0) {
-    setMessage('Nothing to upload. Use Scan first.', true);
+    setMessage('Nothing to upload. Select an SD card folder first.', true);
     return;
   }
 
@@ -361,8 +372,7 @@ function uploadPreparedFiles() {
     if (request.status >= 200 && request.status < 300) {
       progressBar.style.width = '100%';
       setMessage('Upload complete.');
-      preparedFiles = [];
-      uploadBtn.disabled = true;
+      resetPreparedState();
     } else {
       let message = 'Upload failed';
       try {
@@ -429,7 +439,15 @@ document.getElementById('loginForm').addEventListener('submit', (event) => {
   login();
 });
 document.getElementById('logoutBtn').addEventListener('click', logout);
-document.getElementById('scanBtn').addEventListener('click', scanAndPrepare);
+document.getElementById('directoryInput').addEventListener('change', () => {
+  scanAndPrepare();
+});
+document.getElementById('folderName').addEventListener('change', () => {
+  if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
+});
+document.getElementById('startDate').addEventListener('change', () => {
+  if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
+});
 document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);
 document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
 document.getElementById('oscarBtn').addEventListener('click', proceedToOscar);
