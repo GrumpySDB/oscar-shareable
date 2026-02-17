@@ -41,16 +41,15 @@
       <label for="directoryInput">SD Card Folder </label>
       <input id="directoryInput" type="file" webkitdirectory directory multiple />
 
-      <p class="subtle">Required on every upload: Identification.crc, STR.edf (Identification.tgt is optional)</p>
-      <button id="scanBtn">Scan & Prepare Upload</button>
-
-      <div id="summary" class="summary"></div>
+      <div id="summary" class="summary">
+        <div id="summaryCounts"></div>
+        <p id="summaryStatus" class="message"></p>
+      </div>
 
       <div class="progress-wrap" aria-label="overall upload progress">
         <div id="progressBar" class="progress-bar"></div>
       </div>
 
-      <p id="appMessage" class="message"></p>
 
       <button id="uploadBtn" disabled>Upload Selected Files</button>
       <button id="deleteBtn" class="danger">Delete Uploaded Data</button>
