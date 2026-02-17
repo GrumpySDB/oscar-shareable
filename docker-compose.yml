@@ -1,0 +1,59 @@
+services:
+  uploader:
+    container_name: uploader
+    build:
+      context: ./secure-uploader
+      args: 
+        UID: 911
+        GID: 911
+    user: "911:911"
+    ports:
+      - "50710:50710"
+    env_file:
+      - .env
+    environment:
+      HTTPS_PORT: 50710
+      UPLOAD_UID: 911
+      UPLOAD_GID: 911
+      OSCAR_BASE_URL: http://oscar:3000
+    volumes:
+      - uploads:/app/data/uploads
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /var/tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      - oscar
+
+
+  oscar:
+    build:
+      context: ./docker-oscar
+    container_name: oscar
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:3000:3000
+    volumes:
+      - /var/www/oscar-data:/config/Documents/OSCAR_Data:rw
+      - uploads:/config/SDCARD:rw
+    environment:
+      PUID: "911"
+      PGID: "911"
+      TZ: "America/Chicago"
+      TITLE: "OSCAR 1.7.0"
+      START_DOCKER: "false"
+      DISABLE_IPV6: "true"
+      NO_DECOR: "true"
+      NO_GAMEPAD: "true"
+      HARDEN_DESKTOP: "true"
+      HARDEN_OPENBOX: "true"
+      SELKIES_ENABLE_CURSORS: "true"
+
+volumes:
+  uploads:
