@@ -240,6 +240,17 @@ function resetPreparedState(clearProgress = false) {
   preparedFolder = '';
   selectedDateMs = 0;
   uploadBtn.disabled = true;
+  summary.textContent = '';
+  if (clearProgress) {
+    progressBar.style.width = '0%';
+  }
+}
+
+function resetPreparedState(clearProgress = false) {
+  preparedFiles = [];
+  preparedFolder = '';
+  selectedDateMs = 0;
+  uploadBtn.disabled = true;
   summaryCounts.textContent = '';
   if (clearProgress) {
     progressBar.style.width = '0%';
@@ -314,7 +325,7 @@ async function scanAndPrepare() {
 
   const skippedTotal = skippedExisting + skippedInvalid;
   if (eligible.length === 0) {
-    summaryCounts.innerHTML = [
+    summary.innerHTML = [
       `<strong>Valid files to upload:</strong> 0`,
       `<br><strong>Files skipped:</strong> ${skippedTotal}`,
     ].join('');
@@ -335,7 +346,7 @@ async function scanAndPrepare() {
   selectedDateMs = selectedDate.getTime();
   uploadBtn.disabled = false;
 
-  summaryCounts.innerHTML = [
+  summary.innerHTML = [
     `<strong>Valid files to upload:</strong> ${eligible.length}`,
     `<br><strong>Files skipped:</strong> ${skippedTotal}`,
   ].join('');
