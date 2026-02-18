@@ -1,12 +1,13 @@
 #!/bin/bash
 
-# default file copies first run
-if [[ ! -f /config/Documents/OSCAR_Data ]]; then
-  mkdir -p /config/Documents/OSCAR_Data
-  chown -R abc:abc /config/Documents/OSCAR_Data
-fi
+set -euo pipefail
 
-if [[ ! -f /config/SDCARD ]]; then
-  mkdir -p /config/SDCARD
-  chown -R abc:abc /config/SDCARD
-fi
+OSCAR_UID="${PUID:-911}"
+OSCAR_GID="${PGID:-911}"
+
+# Ensure writable data directories exist and are always owned by the runtime UID/GID.
+mkdir -p /config/Documents/OSCAR_Data
+mkdir -p /config/SDCARD
+
+chown -R "${OSCAR_UID}:${OSCAR_GID}" /config/Documents/OSCAR_Data
+chown -R "${OSCAR_UID}:${OSCAR_GID}" /config/SDCARD
