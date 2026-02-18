@@ -412,10 +412,6 @@ async function proceedToOscar() {
     return;
   }
 
-  const acknowledged = window.confirm(
-    'Please do NOT exit the OSCAR application INSIDE the browser window.  Simply close the browser window when you are done.\n\nIf you do exit OSCAR inside the browser window, OSCAR cannot be restarted and will be down for everyone.  Click OK to Acknowledge and Proceed.'
-  );
-  if (!acknowledged) return;
 
   try {
     const result = await api('/api/oscar-launch', { method: 'POST' });
