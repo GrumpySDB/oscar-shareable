@@ -12,8 +12,8 @@ let selectedDateMs = 0;
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
 const loginError = document.getElementById('loginError');
-const appMessage = document.getElementById('appMessage');
-const summary = document.getElementById('summary');
+const summaryCounts = document.getElementById('summaryCounts');
+const summaryStatus = document.getElementById('summaryStatus');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
 
@@ -52,8 +52,8 @@ function showApp() {
 }
 
 function setMessage(message, isError = false) {
-  appMessage.classList.toggle('error-state', Boolean(isError));
-  appMessage.textContent = message;
+  summaryStatus.classList.toggle('error-state', Boolean(isError));
+  summaryStatus.textContent = message;
 }
 
 function getSixMonthsAgo(referenceTime = Date.now()) {
@@ -241,6 +241,17 @@ function resetPreparedState(clearProgress = false) {
   selectedDateMs = 0;
   uploadBtn.disabled = true;
   summary.textContent = '';
+  if (clearProgress) {
+    progressBar.style.width = '0%';
+  }
+}
+
+function resetPreparedState(clearProgress = false) {
+  preparedFiles = [];
+  preparedFolder = '';
+  selectedDateMs = 0;
+  uploadBtn.disabled = true;
+  summaryCounts.textContent = '';
   if (clearProgress) {
     progressBar.style.width = '0%';
   }
