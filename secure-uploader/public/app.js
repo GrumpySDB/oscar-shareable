@@ -1,5 +1,5 @@
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
-const OPTIONAL_ALWAYS = ['Identification.tgt'];
+const OPTIONAL_ALWAYS = ['Identification.tgt', 'Identification.json'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 5000;
 
@@ -420,6 +420,7 @@ async function deleteFolder() {
 
   try {
     await api(`/api/folders/${encodeURIComponent(folder)}`, { method: 'DELETE' });
+    resetPreparedState(true);
     setMessage(`Deleted uploaded data for folder "${folder}".`);
   } catch (err) {
     setMessage(`Delete failed: ${err.message}`, true);
