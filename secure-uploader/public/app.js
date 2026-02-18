@@ -1,6 +1,5 @@
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
 const OPTIONAL_ALWAYS = ['Identification.tgt'];
-const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 5000;
 
@@ -127,9 +126,6 @@ function extractDateFromPath(file) {
 }
 
 function validateFile(file, startDateMs) {
-  const relativePath = getRelativePath(file);
-  const extension = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
-  if (!ALLOWED_EXTENSIONS.has(extension)) return false;
   if (file.size > MAX_FILE_SIZE) return false;
 
   if (isAlwaysIncluded(getBasename(file))) return true;
@@ -240,17 +236,6 @@ function resetPreparedState(clearProgress = false) {
   preparedFolder = '';
   selectedDateMs = 0;
   uploadBtn.disabled = true;
-  summary.textContent = '';
-  if (clearProgress) {
-    progressBar.style.width = '0%';
-  }
-}
-
-function resetPreparedState(clearProgress = false) {
-  preparedFiles = [];
-  preparedFolder = '';
-  selectedDateMs = 0;
-  uploadBtn.disabled = true;
   summaryCounts.textContent = '';
   if (clearProgress) {
     progressBar.style.width = '0%';
@@ -325,7 +310,7 @@ async function scanAndPrepare() {
 
   const skippedTotal = skippedExisting + skippedInvalid;
   if (eligible.length === 0) {
-    summary.innerHTML = [
+    summaryCounts.innerHTML = [
       `<strong>Valid files to upload:</strong> 0`,
       `<br><strong>Files skipped:</strong> ${skippedTotal}`,
     ].join('');
@@ -346,7 +331,7 @@ async function scanAndPrepare() {
   selectedDateMs = selectedDate.getTime();
   uploadBtn.disabled = false;
 
-  summary.innerHTML = [
+  summaryCounts.innerHTML = [
     `<strong>Valid files to upload:</strong> ${eligible.length}`,
     `<br><strong>Files skipped:</strong> ${skippedTotal}`,
   ].join('');
