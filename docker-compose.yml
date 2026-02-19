@@ -4,8 +4,8 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
     command: tunnel run
-    environment:
-      - TUNNEL_TOKEN=xxx
+    env_file:
+      - .env
     restart: unless-stopped
     networks:
       - internal
