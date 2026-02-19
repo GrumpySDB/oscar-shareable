@@ -29,8 +29,8 @@ services:
         UID: 911
         GID: 911
     user: "911:911"
-    ports:
-      - "443:50710"
+    expose:
+      - "50710"
     env_file:
       - .env
     environment:
@@ -89,4 +89,3 @@ volumes:
 networks:
   internal:
     driver: bridge
-
