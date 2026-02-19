@@ -6,5 +6,5 @@ ingress:
     service: https://nginx-internal:443
     originRequest:
       originServerName: sdbfriends.ca
+      httpHostHeader: sdbfriends.ca
   - service: http_status:404
-
