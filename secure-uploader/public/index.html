@@ -11,7 +11,7 @@
     <section id="loginCard" class="card">
       <img id="loginBanner" class="screen-banner hidden" alt="Random welcome image" />
       <h1>OSCAR Secure Uploader</h1>
-      <p class="subtle">Sign in to upload SD card data.</p>
+      <p class="subtle">Sign in to upload SD card or oximetry data.</p>
       <form id="loginForm" novalidate>
         <label for="username">Username</label>
         <input id="username" type="text" autocomplete="username" maxlength="128" />
@@ -25,11 +25,11 @@
     <section id="appCard" class="card hidden">
       <img id="uploadBanner" class="screen-banner hidden" alt="Random upload image" />
       <div class="header-row">
-        <h2>Upload SD Card Files</h2>
+        <h2>Upload SD Card or Oximetry Files</h2>
         <button id="logoutBtn" class="ghost">Logout</button>
       </div>
 
-      <label for="folderName">Folder Name</label>
+      <label for="folderName">Username (Will be used as your SDCard Folder Name)</label>
       <input id="folderName" type="text" placeholder="example-clinic-a" maxlength="64" />
 
       <label for="startDate">Start Date (max 6 months back)</label>
@@ -38,22 +38,20 @@
         <input id="startDate" type="date" />
       </div>
 
-      <label for="directoryInput">OSCAR SD Card Folder</label>
+      <label for="directoryInput">SD Card Folder </label>
       <input id="directoryInput" type="file" webkitdirectory directory multiple />
 
-      <p class="subtle">Required on every upload: Identification.crc, STR.edf (Identification.tgt is optional)</p>
-      <button id="scanBtn">Scan & Prepare Upload</button>
 
-      <div id="summary" class="summary"></div>
+      <div id="summaryCounts" class="summary"></div>
+      <div id="summaryStatus" class="message"></div>
 
       <div class="progress-wrap" aria-label="overall upload progress">
         <div id="progressBar" class="progress-bar"></div>
       </div>
 
-      <p id="appMessage" class="message"></p>
 
       <button id="uploadBtn" disabled>Upload Selected Files</button>
-      <button id="deleteBtn" class="danger">Delete Uploaded Folder Data</button>
+      <button id="deleteBtn" class="danger">Delete Uploaded Data</button>
       <button id="oscarBtn" class="oscar-cta" type="button">Proceed to OSCAR</button>
 
     </section>

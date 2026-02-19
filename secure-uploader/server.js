@@ -25,7 +25,6 @@ const OSCAR_BASE_URL = process.env.OSCAR_BASE_URL || 'http://oscar:3000';
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const USERNAME_MAX_LENGTH = 128;
 const PASSWORD_MAX_LENGTH = 256;
-const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
 const UPLOAD_ROOT = path.join(__dirname, 'data', 'uploads');
 const UPLOAD_UID = Number(process.env.UPLOAD_UID || 911);
@@ -573,11 +572,6 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       }
       dedupe.add(relativePath);
       file.safeRelativePath = relativePath;
-
-      const extension = path.extname(relativePath).toLowerCase();
-      if (!ALLOWED_EXTENSIONS.has(extension)) {
-        return res.status(400).json({ error: `Invalid file extension: ${relativePath}` });
-      }
 
       if (file.size > MAX_FILE_SIZE) {
         return res.status(400).json({ error: `File exceeds 10MB: ${relativePath}` });

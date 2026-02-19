@@ -49,7 +49,7 @@ App URL: `https://localhost:50710`
 > Because the certificate is self-signed, your browser will show a trust warning on first load.
 
 ## Workflow behavior
-- Frontend scans selected SD folder.
+- Frontend automatically scans selected SD folder as soon as it is chosen.
 - Frontend compares filenames against server files for the target folder (no hashing).
 - Only new filenames are uploaded, except these are always uploaded every time:
   - `Identification.crc`

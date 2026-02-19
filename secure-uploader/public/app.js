@@ -1,6 +1,5 @@
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
-const OPTIONAL_ALWAYS = ['Identification.tgt'];
-const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
+const OPTIONAL_ALWAYS = ['Identification.tgt', 'Identification.json'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 5000;
 
@@ -12,8 +11,8 @@ let selectedDateMs = 0;
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
 const loginError = document.getElementById('loginError');
-const appMessage = document.getElementById('appMessage');
-const summary = document.getElementById('summary');
+const summaryCounts = document.getElementById('summaryCounts');
+const summaryStatus = document.getElementById('summaryStatus');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
 
@@ -52,8 +51,8 @@ function showApp() {
 }
 
 function setMessage(message, isError = false) {
-  appMessage.classList.toggle('error-state', Boolean(isError));
-  appMessage.textContent = message;
+  summaryStatus.classList.toggle('error-state', Boolean(isError));
+  summaryStatus.textContent = message;
 }
 
 function getSixMonthsAgo(referenceTime = Date.now()) {
@@ -127,9 +126,6 @@ function extractDateFromPath(file) {
 }
 
 function validateFile(file, startDateMs) {
-  const relativePath = getRelativePath(file);
-  const extension = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
-  if (!ALLOWED_EXTENSIONS.has(extension)) return false;
   if (file.size > MAX_FILE_SIZE) return false;
 
   if (isAlwaysIncluded(getBasename(file))) return true;
@@ -230,19 +226,25 @@ async function logout() {
     } catch (_err) {}
   }
 
-  preparedFiles = [];
-  uploadBtn.disabled = true;
-  summary.textContent = '';
-  progressBar.style.width = '0%';
+  resetPreparedState(true);
   setMessage('');
   showLogin();
 }
 
+function resetPreparedState(clearProgress = false) {
+  preparedFiles = [];
+  preparedFolder = '';
+  selectedDateMs = 0;
+  uploadBtn.disabled = true;
+  summaryCounts.textContent = '';
+  if (clearProgress) {
+    progressBar.style.width = '0%';
+  }
+}
+
 async function scanAndPrepare() {
   setMessage('');
-  summary.textContent = '';
-  uploadBtn.disabled = true;
-  progressBar.style.width = '0%';
+  resetPreparedState(true);
 
   const folder = document.getElementById('folderName').value.trim();
   if (!folderNameValid(folder)) {
@@ -282,7 +284,7 @@ async function scanAndPrepare() {
 
   for (const required of REQUIRED_ALWAYS) {
     if (!requiredBasenames.has(required)) {
-      setMessage(`Missing required file in selected folder: ${required}`, true);
+      setMessage(`Invalid data: missing required file ${required}.`, true);
       return;
     }
   }
@@ -306,8 +308,13 @@ async function scanAndPrepare() {
     eligible.push(file);
   }
 
+  const skippedTotal = skippedExisting + skippedInvalid;
   if (eligible.length === 0) {
-    setMessage('No new valid files to upload after filtering.', true);
+    summaryCounts.innerHTML = [
+      `<strong>Valid files to upload:</strong> 0`,
+      `<br><strong>Files skipped:</strong> ${skippedTotal}`,
+    ].join('');
+    setMessage('Invalid or duplicate SD card data detected. Upload is disabled.', true);
     return;
   }
 
@@ -324,16 +331,16 @@ async function scanAndPrepare() {
   selectedDateMs = selectedDate.getTime();
   uploadBtn.disabled = false;
 
-  summary.innerHTML = [
-    `<strong>Ready:</strong> ${eligible.length} files`,
-    `<br><strong>Skipped existing:</strong> ${skippedExisting}`,
-    `<br><strong>Skipped invalid:</strong> ${skippedInvalid}`,
+  summaryCounts.innerHTML = [
+    `<strong>Valid files to upload:</strong> ${eligible.length}`,
+    `<br><strong>Files skipped:</strong> ${skippedTotal}`,
   ].join('');
+  setMessage('Resmed SD card data detected.');
 }
 
 function uploadPreparedFiles() {
   if (preparedFiles.length === 0) {
-    setMessage('Nothing to upload. Use Scan first.', true);
+    setMessage('Nothing to upload. Select an SD card folder first.', true);
     return;
   }
 
@@ -361,8 +368,7 @@ function uploadPreparedFiles() {
     if (request.status >= 200 && request.status < 300) {
       progressBar.style.width = '100%';
       setMessage('Upload complete.');
-      preparedFiles = [];
-      uploadBtn.disabled = true;
+      resetPreparedState();
     } else {
       let message = 'Upload failed';
       try {
@@ -391,10 +397,6 @@ async function proceedToOscar() {
     return;
   }
 
-  const acknowledged = window.confirm(
-    'Please do NOT exit the OSCAR application INSIDE the browser window.  Simply close the browser window when you are done.\n\nIf you do exit OSCAR inside the browser window, OSCAR cannot be restarted and will be down for everyone.  Click OK to Acknowledge and Proceed.'
-  );
-  if (!acknowledged) return;
 
   try {
     const result = await api('/api/oscar-launch', { method: 'POST' });
@@ -418,6 +420,7 @@ async function deleteFolder() {
 
   try {
     await api(`/api/folders/${encodeURIComponent(folder)}`, { method: 'DELETE' });
+    resetPreparedState(true);
     setMessage(`Deleted uploaded data for folder "${folder}".`);
   } catch (err) {
     setMessage(`Delete failed: ${err.message}`, true);
@@ -429,7 +432,15 @@ document.getElementById('loginForm').addEventListener('submit', (event) => {
   login();
 });
 document.getElementById('logoutBtn').addEventListener('click', logout);
-document.getElementById('scanBtn').addEventListener('click', scanAndPrepare);
+document.getElementById('directoryInput').addEventListener('change', () => {
+  scanAndPrepare();
+});
+document.getElementById('folderName').addEventListener('change', () => {
+  if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
+});
+document.getElementById('startDate').addEventListener('change', () => {
+  if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
+});
 document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);
 document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
 document.getElementById('oscarBtn').addEventListener('click', proceedToOscar);
