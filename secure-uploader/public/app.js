@@ -12,7 +12,7 @@ const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
 const loginError = document.getElementById('loginError');
 const appMessage = document.getElementById('appMessage');
-const summary = document.getElementById('summary');
+const summary = document.getElementById('summaryCounts');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
 
