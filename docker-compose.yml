@@ -37,7 +37,7 @@ services:
       HTTPS_PORT: 50710
       UPLOAD_UID: 911
       UPLOAD_GID: 911
-      OSCAR_BASE_URL: http://oscar:3030
+      OSCAR_BASE_URL: http://oscar:3000
     volumes:
       - uploads:/app/data/uploads
     restart: unless-stopped
