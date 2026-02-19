@@ -3,8 +3,7 @@ credentials-file: /etc/cloudflared/70d684e7-1694-4c9d-b943-1f2e96944556.json
 
 ingress:
   - hostname: sdbfriends.ca
-    service: https://nginx-internal:443
+    service: http://nginx-internal:80
     originRequest:
-      originServerName: sdbfriends.ca
       httpHostHeader: sdbfriends.ca
   - service: http_status:404
