@@ -7,6 +7,8 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
     networks:
       - internal
 

@@ -1,0 +1,11 @@
+  GNU nano 8.4                       config.yml                                 
+tunnel: 70d684e7-1694-4c9d-b943-1f2e96944556
+credentials-file: /etc/cloudflared/70d684e7-1694-4c9d-b943-1f2e96944556.json
+
+ingress:
+  - hostname: sdbfriends.ca
+    service: https://nginx-internal:443
+    originRequest:
+      originServerName: sdbfriends.ca
+  - service: http_status:404
+
