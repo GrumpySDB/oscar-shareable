@@ -1,0 +1,20 @@
+# Option A: ingest from Docker logs for the internal Nginx container.
+source: docker
+container_name:
+  - nginx-internal
+labels:
+  type: nginx
+
+---
+# Option B: ingest bind-mounted Nginx access logs from the host.
+filenames:
+  - /workspace/oscar-shareable/logs/nginx/access.log
+labels:
+  type: nginx
+
+---
+# Option B (optional): include Nginx error logs for troubleshooting.
+filenames:
+  - /workspace/oscar-shareable/logs/nginx/error.log
+labels:
+  type: nginx
