@@ -54,7 +54,7 @@ App URL: `https://localhost:50710`
 - Only new filenames are uploaded, except these are always uploaded every time:
   - `Identification.crc`
   - `STR.edf`
-- `Identification.tgt` is optional: upload it when present, but it is not required.
+- `Identification.tgt` and `journal.nl` are optional: upload them when present, but they are not required.
 - Non-required files must be within selected date range and no older than 6 months.
 - Uploads are capped at 5,000 files per request; choose a later start date if scan finds more.
 - If selected uploads exceed Cloudflare's per-request gateway limits, the frontend automatically splits uploads into multiple smaller batches.
