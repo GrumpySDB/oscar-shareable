@@ -1,5 +1,5 @@
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
-const OPTIONAL_ALWAYS = ['Identification.tgt', 'Identification.json'];
+const OPTIONAL_ALWAYS = ['Identification.tgt', 'Identification.json', 'journal.nl'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 5000;
 const CLOUDFLARE_UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
