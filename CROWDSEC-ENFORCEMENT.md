@@ -6,7 +6,7 @@ This stack uses **Cloudflare Tunnel** (`cloudflared`) as the only public ingress
 
 ### Preferred (enabled by default)
 - Deploy `crowdsec` (LAPI + parser engine) and `crowdsec-cloudflare-bouncer` in `docker-compose.yml`.
-- The Cloudflare bouncer uses a **least-privilege API token** (`CF_API_TOKEN`) and zone scoping (`CF_ZONE_ID`) to create CrowdSec-driven deny/challenge rules at Cloudflare edge.
+- The Cloudflare bouncer reads `crowdsec/bouncers/crowdsec-cloudflare-bouncer.yaml` (mounted at `/etc/crowdsec/bouncers/crowdsec-cloudflare-bouncer.yaml`) and uses a **least-privilege API token** (`CF_API_TOKEN`) plus account/zone scoping (`CF_ACCOUNT_ID`, `CF_ZONE_ID`) to create CrowdSec-driven deny/challenge rules at Cloudflare edge.
 - Default action is `managed_challenge` so suspicious traffic is challenged before reaching the tunnel origin.
 
 ### Optional defense-in-depth (disabled by default)
@@ -44,6 +44,7 @@ This stack uses **Cloudflare Tunnel** (`cloudflared`) as the only public ingress
 
 Add/set these in `.env`:
 - `CF_API_TOKEN`: Cloudflare token scoped to the target zone with only permissions needed to manage WAF/custom rules for decisions.
+- `CF_ACCOUNT_ID`: Cloudflare account ID that owns the target zone.
 - `CF_ZONE_ID`: target zone ID.
 - `CROWDSEC_BOUNCER_KEY`: API key registered in CrowdSec for Cloudflare bouncer.
 - `CROWDSEC_NGINX_BOUNCER_KEY`: API key for optional nginx bouncer.

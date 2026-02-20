@@ -2,6 +2,8 @@
 
 This repository now exposes Nginx logs on the host at `./logs/nginx` via Docker bind mount and provides host CrowdSec acquisition/collection config.
 
+For the containerized CrowdSec service in `docker-compose.yml`, `acquis.yaml` is bind-mounted directly to `/etc/crowdsec/acquis.yaml`. The base CrowdSec `config.yaml` is provided by the upstream image (it is no longer masked by a full `/etc/crowdsec` volume mount).
+
 ## 1) Log source setup
 
 Two supported ingestion paths are provided in `crowdsec/acquis.yaml`:
