@@ -57,6 +57,7 @@ App URL: `https://localhost:50710`
 - `Identification.tgt` is optional: upload it when present, but it is not required.
 - Non-required files must be within selected date range and no older than 6 months.
 - Uploads are capped at 5,000 files per request; choose a later start date if scan finds more.
+- If selected uploads exceed Cloudflare's per-request gateway limits, the frontend automatically splits uploads into multiple smaller batches.
 - Users can delete all uploaded data for a folder.
 
 ## Integrated OSCAR service

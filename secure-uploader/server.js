@@ -32,9 +32,11 @@ const UPLOAD_GID = Number(process.env.UPLOAD_GID || 911);
 const OSCAR_LAUNCH_TTL_SECONDS = 120;
 const OSCAR_SESSION_TTL_SECONDS = 8 * 60 * 60;
 const AUTH_SESSION_TTL_SECONDS = Number(process.env.AUTH_SESSION_TTL_SECONDS || 30 * 60);
+const UPLOAD_SESSION_TTL_MS = 30 * 60 * 1000;
 
 const activeAuthSessions = new Map();
 const consumedLaunchTokens = new Map();
+const pendingUploadSessions = new Map();
 
 let oscarTarget;
 try {
@@ -472,6 +474,40 @@ function sanitizeUploadRelativePath(value) {
   return segments.join('/');
 }
 
+function cleanupPendingUploadSessions() {
+  const now = Date.now();
+  for (const [sessionId, session] of pendingUploadSessions.entries()) {
+    if (session.expiresAt <= now) {
+      pendingUploadSessions.delete(sessionId);
+    }
+  }
+}
+
+function parseUploadBatchMetadata(body) {
+  const uploadSessionId = typeof body.uploadSessionId === 'string' ? body.uploadSessionId.trim() : '';
+  const totalBatches = Number(body.totalBatches ?? 1);
+  const batchIndex = Number(body.batchIndex ?? 0);
+
+  if (!Number.isInteger(totalBatches) || totalBatches < 1 || totalBatches > 200) {
+    return { error: 'Invalid total batches value' };
+  }
+  if (!Number.isInteger(batchIndex) || batchIndex < 0 || batchIndex >= totalBatches) {
+    return { error: 'Invalid batch index value' };
+  }
+  if (uploadSessionId.length > 128) {
+    return { error: 'Invalid upload session id' };
+  }
+  if (totalBatches > 1 && uploadSessionId.length === 0) {
+    return { error: 'Missing upload session id for multi-batch upload' };
+  }
+
+  return {
+    uploadSessionId,
+    totalBatches,
+    batchIndex,
+  };
+}
+
 app.post('/api/login', authLimiter, (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const username = sanitizeCredentialInput(body.username, {
@@ -553,10 +589,65 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     const files = Array.isArray(req.files) ? req.files : [];
     if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
 
+    const uploadMeta = parseUploadBatchMetadata(req.body || {});
+    if (uploadMeta.error) {
+      return res.status(400).json({ error: uploadMeta.error });
+    }
+
+    const {
+      uploadSessionId,
+      totalBatches,
+      batchIndex,
+    } = uploadMeta;
+
+    cleanupPendingUploadSessions();
+
+    let uploadSession = null;
+    if (totalBatches > 1) {
+      uploadSession = pendingUploadSessions.get(uploadSessionId);
+      if (!uploadSession) {
+        if (batchIndex !== 0) {
+          return res.status(400).json({ error: 'Upload session not found or expired. Restart upload.' });
+        }
+        uploadSession = {
+          folder,
+          selectedDate,
+          totalBatches,
+          nextBatchIndex: 0,
+          seenRequired: new Set(),
+          seenPaths: new Set(),
+          expiresAt: Date.now() + UPLOAD_SESSION_TTL_MS,
+        };
+        pendingUploadSessions.set(uploadSessionId, uploadSession);
+      }
+
+      if (
+        uploadSession.folder !== folder
+        || uploadSession.selectedDate !== selectedDate
+        || uploadSession.totalBatches !== totalBatches
+      ) {
+        return res.status(400).json({ error: 'Upload session metadata mismatch. Restart upload.' });
+      }
+
+      if (uploadSession.nextBatchIndex !== batchIndex) {
+        return res.status(400).json({ error: `Unexpected batch order. Expected batch ${uploadSession.nextBatchIndex + 1}.` });
+      }
+
+      uploadSession.expiresAt = Date.now() + UPLOAD_SESSION_TTL_MS;
+    }
+
     const incomingBasenames = files.map((file) => path.basename(file.originalname));
-    for (const requiredName of REQUIRED_ALWAYS) {
-      if (!incomingBasenames.includes(requiredName)) {
-        return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+    if (uploadSession) {
+      for (const basename of incomingBasenames) {
+        if (REQUIRED_ALWAYS.includes(basename)) {
+          uploadSession.seenRequired.add(basename);
+        }
+      }
+    } else {
+      for (const requiredName of REQUIRED_ALWAYS) {
+        if (!incomingBasenames.includes(requiredName)) {
+          return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+        }
       }
     }
 
@@ -569,6 +660,9 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
 
       if (dedupe.has(relativePath)) {
         return res.status(400).json({ error: `Duplicate filename in upload: ${relativePath}` });
+      }
+      if (uploadSession && uploadSession.seenPaths.has(relativePath)) {
+        return res.status(400).json({ error: `Duplicate filename across batches: ${relativePath}` });
       }
       dedupe.add(relativePath);
       file.safeRelativePath = relativePath;
@@ -593,9 +687,28 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       }
       await fsp.writeFile(destination, file.buffer, { mode: 0o640 });
       await ensureOwnership(destination);
+
+      if (uploadSession) {
+        uploadSession.seenPaths.add(file.safeRelativePath);
+      }
     }
 
-    return res.json({ uploaded: files.length });
+    if (uploadSession) {
+      const isFinalBatch = batchIndex === totalBatches - 1;
+      uploadSession.nextBatchIndex += 1;
+
+      if (isFinalBatch) {
+        for (const requiredName of REQUIRED_ALWAYS) {
+          if (!uploadSession.seenRequired.has(requiredName)) {
+            pendingUploadSessions.delete(uploadSessionId);
+            return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+          }
+        }
+        pendingUploadSessions.delete(uploadSessionId);
+      }
+    }
+
+    return res.json({ uploaded: files.length, batchIndex, totalBatches });
   } catch (error) {
     return res.status(500).json({ error: 'Upload failed', detail: error.message });
   }
