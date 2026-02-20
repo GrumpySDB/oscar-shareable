@@ -19,24 +19,6 @@ services:
     networks:
       - internal
 
-  crowdsec-cloudflare-bouncer:
-    image: crowdsecurity/cloudflare-bouncer:latest
-    container_name: crowdsec-cloudflare-bouncer
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      CROWDSEC_BOUNCER_KEY: ${CROWDSEC_BOUNCER_KEY}
-      CF_API_TOKEN: ${CF_API_TOKEN}
-      CF_ACCOUNT_ID: ${CF_ACCOUNT_ID}
-      CF_ZONE_ID: ${CF_ZONE_ID}
-    volumes:
-      - ./crowdsec/bouncers/crowdsec-cloudflare-bouncer.yaml:/etc/crowdsec/bouncers/crowdsec-cloudflare-bouncer.yaml:ro
-    depends_on:
-      - crowdsec
-    networks:
-      - internal
-
   crowdsec-nginx-bouncer:
     image: fbonalair/crowdsec-bouncer-nginx:latest
     container_name: crowdsec-nginx-bouncer
@@ -51,8 +33,6 @@ services:
       - crowdsec
     networks:
       - internal
-    profiles:
-      - defense-in-depth
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -113,7 +93,7 @@ services:
       - nginx
       - cloudflared
       - crowdsec
-      - crowdsec-cloudflare-bouncer
+      - crowdsec-nginx-bouncer
     networks:
       - internal
 
