@@ -1,5 +1,61 @@
 services:
 
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: crowdsec
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      COLLECTIONS: "crowdsecurity/nginx crowdsecurity/http-cve"
+      GID: "998"
+      CUSTOM_HOSTNAME: "oscar-shareable"
+    volumes:
+      - crowdsec-db:/var/lib/crowdsec/data
+      - crowdsec-config:/etc/crowdsec
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "8080"
+    networks:
+      - internal
+
+  crowdsec-cloudflare-bouncer:
+    image: crowdsecurity/cloudflare-bouncer:latest
+    container_name: crowdsec-cloudflare-bouncer
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      CROWDSEC_LAPI_URL: http://crowdsec:8080
+      CROWDSEC_AGENT_HOST: crowdsec:8080
+      CROWDSEC_AGENT_KEY: ${CROWDSEC_BOUNCER_KEY}
+      BOUNCER_API_TOKEN: ${CF_API_TOKEN}
+      BOUNCER_ZONE_ID: ${CF_ZONE_ID}
+      BOUNCER_DNS_NAME: app.sdbfriends.ca
+      BOUNCER_DEFAULT_ACTION: managed_challenge
+      BOUNCER_UPDATE_FREQUENCY: 10s
+    depends_on:
+      - crowdsec
+    networks:
+      - internal
+
+  crowdsec-nginx-bouncer:
+    image: fbonalair/crowdsec-bouncer-nginx:latest
+    container_name: crowdsec-nginx-bouncer
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      CROWDSEC_LAPI_URL: http://crowdsec:8080
+      CROWDSEC_API_KEY: ${CROWDSEC_NGINX_BOUNCER_KEY}
+      CROWDSEC_APPSEC_ENABLED: "false"
+    depends_on:
+      - crowdsec
+    networks:
+      - internal
+    profiles:
+      - defense-in-depth
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
@@ -58,6 +114,8 @@ services:
       - oscar
       - nginx
       - cloudflared
+      - crowdsec
+      - crowdsec-cloudflare-bouncer
     networks:
       - internal
 
@@ -89,6 +147,8 @@ services:
 
 volumes:
   uploads:
+  crowdsec-db:
+  crowdsec-config:
 
 networks:
   internal:
