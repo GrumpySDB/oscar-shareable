@@ -12,7 +12,7 @@ services:
       CUSTOM_HOSTNAME: "oscar-shareable"
     volumes:
       - crowdsec-db:/var/lib/crowdsec/data
-      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - crowdsec-config:/etc/crowdsec
       - /var/run/docker.sock:/var/run/docker.sock:ro
     expose:
       - "8080"
@@ -26,12 +26,14 @@ services:
     env_file:
       - .env
     environment:
-      CROWDSEC_BOUNCER_KEY: ${CROWDSEC_BOUNCER_KEY}
-      CF_API_TOKEN: ${CF_API_TOKEN}
-      CF_ACCOUNT_ID: ${CF_ACCOUNT_ID}
-      CF_ZONE_ID: ${CF_ZONE_ID}
-    volumes:
-      - ./crowdsec/bouncers/crowdsec-cloudflare-bouncer.yaml:/etc/crowdsec/bouncers/crowdsec-cloudflare-bouncer.yaml:ro
+      CROWDSEC_LAPI_URL: http://crowdsec:8080
+      CROWDSEC_AGENT_HOST: crowdsec:8080
+      CROWDSEC_AGENT_KEY: ${CROWDSEC_BOUNCER_KEY}
+      BOUNCER_API_TOKEN: ${CF_API_TOKEN}
+      BOUNCER_ZONE_ID: ${CF_ZONE_ID}
+      BOUNCER_DNS_NAME: app.sdbfriends.ca
+      BOUNCER_DEFAULT_ACTION: managed_challenge
+      BOUNCER_UPDATE_FREQUENCY: 10s
     depends_on:
       - crowdsec
     networks:
@@ -146,6 +148,7 @@ services:
 volumes:
   uploads:
   crowdsec-db:
+  crowdsec-config:
 
 networks:
   internal:
