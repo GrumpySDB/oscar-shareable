@@ -19,6 +19,21 @@ services:
     networks:
       - internal
 
+  crowdsec-nginx-bouncer:
+    image: fbonalair/crowdsec-bouncer-nginx:latest
+    container_name: crowdsec-nginx-bouncer
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      CROWDSEC_LAPI_URL: http://crowdsec:8080
+      CROWDSEC_API_KEY: ${CROWDSEC_NGINX_BOUNCER_KEY}
+      CROWDSEC_APPSEC_ENABLED: "false"
+    depends_on:
+      - crowdsec
+    networks:
+      - internal
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
@@ -32,14 +47,8 @@ services:
       - internal
 
   nginx:
-    build:
-      context: ./nginx
-    image: oscar-nginx-crowdsec:local
+    image: nginx:stable-alpine
     container_name: nginx-internal
-    env_file:
-      - .env
-    environment:
-      CROWDSEC_LAPI_URL: http://crowdsec:8080
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/nginx/certs:ro
@@ -48,8 +57,6 @@ services:
       - "80"
       - "443"
     restart: unless-stopped
-    depends_on:
-      - crowdsec
     networks:
       - internal
   uploader:
@@ -86,6 +93,7 @@ services:
       - nginx
       - cloudflared
       - crowdsec
+      - crowdsec-nginx-bouncer
     networks:
       - internal
 
