@@ -11,6 +11,12 @@ services:
       - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
     networks:
       - internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+
 
   nginx:
     image: nginx:stable-alpine
@@ -24,6 +30,10 @@ services:
     restart: unless-stopped
     networks:
       - internal
+    security_opt:
+      - no-new-privileges:true
+
+
   uploader:
     container_name: uploader
     build:
@@ -84,6 +94,8 @@ services:
       SELKIES_ENABLE_CURSORS: "true"
     networks:
       - internal
+    security_opt:
+      - no-new-privileges:true
 
 
 volumes:
