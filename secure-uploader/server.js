@@ -261,20 +261,20 @@ function requireOscarSession(req, res, next) {
   const cookies = parseCookies(req);
   const sessionToken = cookies.get('oscar_session');
   if (!sessionToken) {
-    return res.status(401).send('Unauthorized');
+    return res.redirect('/');
   }
 
   try {
     const payload = jwt.verify(sessionToken, JWT_SECRET);
     if (payload.scope !== 'oscar' || !isAuthSessionActive(payload)) {
-      return res.status(401).send('Unauthorized');
+      return res.redirect('/');
     }
     if (payload.fp !== buildRequestFingerprint(req)) {
-      return res.status(401).send('Unauthorized');
+      return res.redirect('/');
     }
     return next();
   } catch (_err) {
-    return res.status(401).send('Unauthorized');
+    return res.redirect('/');
   }
 }
 
@@ -736,7 +736,7 @@ app.delete('/api/folders/:folder', authMiddleware, async (req, res) => {
 app.get('/oscar/login', (req, res) => {
   const launchToken = typeof req.query.token === 'string' ? req.query.token : '';
   if (!launchToken) {
-    return res.status(401).send('Unauthorized');
+    return res.redirect('/');
   }
 
   try {
@@ -752,14 +752,14 @@ app.get('/oscar/login', (req, res) => {
       || !isAuthSessionActive(payload)
       || payload.fp !== buildRequestFingerprint(req)
     ) {
-      return res.status(401).send('Unauthorized');
+      return res.redirect('/');
     }
 
     consumedLaunchTokens.set(payload.jti, Date.now() + (OSCAR_LAUNCH_TTL_SECONDS * 1000));
     issueOscarSessionCookie(res, { ownerId: payload.sub, sid: payload.sid, fingerprint: payload.fp });
     return res.redirect('/oscar/');
   } catch (_err) {
-    return res.status(401).send('Unauthorized');
+    return res.redirect('/');
   }
 });
 
