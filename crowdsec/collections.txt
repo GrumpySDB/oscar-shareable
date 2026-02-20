@@ -1,0 +1,3 @@
+crowdsecurity/nginx
+crowdsecurity/http-cve
+crowdsecurity/base-http-scenarios
