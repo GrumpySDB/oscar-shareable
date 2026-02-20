@@ -5,8 +5,8 @@ This stack uses **Cloudflare Tunnel** (`cloudflared`) as the only public ingress
 ## Strategy decision
 
 ### Primary enforcement (enabled by default)
-- Deploy `crowdsec` (LAPI + parser engine) and a locally built Nginx image (with Lua + CrowdSec bouncer files) in `docker-compose.yml`.
-- The embedded Nginx Lua bouncer calls CrowdSec LAPI (`http://crowdsec:8080`) and enforces local block/challenge behavior at the Nginx layer.
+- Deploy `crowdsec` (LAPI + parser engine) and `crowdsec-nginx-bouncer` in `docker-compose.yml`.
+- The Nginx bouncer pulls decisions from CrowdSec LAPI (`http://crowdsec:8080`) and enforces local block/challenge behavior at the Nginx layer.
 - This avoids Cloudflare API/WAF dependencies that are not available in Cloudflare free-tier plans.
 
 ## Fail-open / fail-closed behavior
@@ -33,11 +33,11 @@ Add/set these in `.env`:
 
 1. Start services:
    ```bash
-   docker compose up -d crowdsec cloudflared nginx uploader oscar
+   docker compose up -d crowdsec crowdsec-nginx-bouncer cloudflared nginx uploader oscar
    ```
 2. Register bouncer key (if not pre-provisioned) in CrowdSec:
    ```bash
-   docker compose exec crowdsec cscli bouncers add nginx-internal -k "$CROWDSEC_NGINX_BOUNCER_KEY"
+   docker compose exec crowdsec cscli bouncers add nginx-bouncer -k "$CROWDSEC_NGINX_BOUNCER_KEY"
    ```
 3. Inject a test decision for a known test IP:
    ```bash
