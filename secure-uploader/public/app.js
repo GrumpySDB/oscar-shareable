@@ -2,6 +2,8 @@ const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
 const OPTIONAL_ALWAYS = ['Identification.tgt', 'Identification.json'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 5000;
+const CLOUDFLARE_UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
+const SAFE_BATCH_LIMIT_BYTES = 90 * 1024 * 1024;
 
 let token = sessionStorage.getItem('authToken') || null;
 let preparedFiles = [];
@@ -338,55 +340,125 @@ async function scanAndPrepare() {
   setMessage('Resmed SD card data detected.');
 }
 
-function uploadPreparedFiles() {
-  if (preparedFiles.length === 0) {
-    setMessage('Nothing to upload. Select an SD card folder first.', true);
-    return;
+function createUploadBatches(files) {
+  const batches = [];
+  let currentBatch = [];
+  let currentSize = 0;
+
+  for (const file of files) {
+    const fileSize = Number(file.size || 0);
+    const exceedsCurrent = currentBatch.length > 0 && (currentSize + fileSize) > SAFE_BATCH_LIMIT_BYTES;
+    if (exceedsCurrent) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentSize = 0;
+    }
+
+    currentBatch.push(file);
+    currentSize += fileSize;
   }
 
-  uploadBtn.disabled = true;
-  setMessage('Uploading...');
+  if (currentBatch.length > 0) batches.push(currentBatch);
+  return batches;
+}
 
-  const form = new FormData();
-  form.append('folder', preparedFolder);
-  form.append('selectedDateMs', String(selectedDateMs));
-  for (const file of preparedFiles) {
-    form.append('files', file, getRelativePath(file));
-  }
+function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes }) {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append('folder', preparedFolder);
+    form.append('selectedDateMs', String(selectedDateMs));
+    form.append('uploadSessionId', sessionId);
+    form.append('batchIndex', String(batchIndex));
+    form.append('totalBatches', String(totalBatches));
+    for (const file of files) {
+      form.append('files', file, getRelativePath(file));
+    }
 
-  const request = new XMLHttpRequest();
-  request.open('POST', '/api/upload');
-  request.setRequestHeader('Authorization', `Bearer ${token}`);
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/upload');
+    request.setRequestHeader('Authorization', `Bearer ${token}`);
 
-  request.upload.onprogress = (event) => {
-    if (!event.lengthComputable) return;
-    const percent = Math.round((event.loaded / event.total) * 100);
-    progressBar.style.width = `${percent}%`;
-  };
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable || totalBatches <= 0) return;
+      const priorBatches = (batchIndex / totalBatches) * 100;
+      const withinBatch = (event.loaded / event.total) * (100 / totalBatches);
+      const percent = Math.min(99, Math.round(priorBatches + withinBatch));
+      progressBar.style.width = `${percent}%`;
 
-  request.onload = () => {
-    if (request.status >= 200 && request.status < 300) {
-      progressBar.style.width = '100%';
-      setMessage('Upload complete.');
-      resetPreparedState();
-    } else {
+      const loadedMb = (event.loaded / (1024 * 1024)).toFixed(1);
+      const batchMb = (event.total / (1024 * 1024)).toFixed(1);
+      const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
+      setMessage(`Uploading batch ${batchIndex + 1}/${totalBatches} (${loadedMb}/${batchMb} MB, total ${totalMb} MB)...`);
+    };
+
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        resolve();
+        return;
+      }
+
       let message = 'Upload failed';
       try {
         const body = JSON.parse(request.responseText);
         message = body.error || message;
       } catch (_err) {}
 
-      setMessage(message, true);
-      uploadBtn.disabled = false;
+      if (request.status === 413) {
+        message = 'Upload rejected by gateway size limit. Reduce batch size and retry.';
+      }
+
+      reject(new Error(message));
+    };
+
+    request.onerror = () => {
+      reject(new Error('Network error during upload.'));
+    };
+
+    request.send(form);
+  });
+}
+
+async function uploadPreparedFiles() {
+  if (preparedFiles.length === 0) {
+    setMessage('Nothing to upload. Select an SD card folder first.', true);
+    return;
+  }
+
+  uploadBtn.disabled = true;
+
+  const totalBytes = preparedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
+  const totalMb = totalBytes / (1024 * 1024);
+  const requiresChunking = totalBytes > CLOUDFLARE_UPLOAD_LIMIT_BYTES;
+  const batches = createUploadBatches(preparedFiles);
+  const sessionId = (window.crypto && window.crypto.randomUUID)
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  if (requiresChunking) {
+    setMessage(`Selected files total ${totalMb.toFixed(1)} MB, above Cloudflare's 100 MB request limit. Upload will run in ${batches.length} batches.`);
+  } else {
+    setMessage(`Uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)...`);
+  }
+
+  try {
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const batch = batches[batchIndex];
+      await uploadBatch({
+        files: batch,
+        batchIndex,
+        totalBatches: batches.length,
+        sessionId,
+        totalBytes,
+      });
     }
-  };
 
-  request.onerror = () => {
-    setMessage('Network error during upload.', true);
+    progressBar.style.width = '100%';
+    setMessage('Upload complete.');
+    resetPreparedState();
+  } catch (error) {
+    setMessage(error.message, true);
     uploadBtn.disabled = false;
-  };
-
-  request.send(form);
+  }
 }
 
 
