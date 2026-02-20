@@ -28,6 +28,7 @@ HTTPS_PORT=50710
 SSL_KEY_PATH=/app/certs/key.pem
 SSL_CERT_PATH=/app/certs/cert.pem
 OSCAR_BASE_URL=http://oscar:3000
+OSCAR_DNS_FAMILY=4
 AUTH_SESSION_TTL_SECONDS=1800
 ```
 
@@ -68,3 +69,4 @@ App URL: `https://localhost:50710`
 - Requests under `/oscar/*` bypass the uploader's Helmet CSP so OSCAR can serve its own scripts/styles without browser CSP violations.
 - The proxy rewrites OSCAR's `Content-Security-Policy` `frame-ancestors` directive to `'self'` so the embedded VNC view can load under the shared app origin.
 - WebSocket upgrades under `/oscar/*` are now proxied (with the same gate cookie check), which restores OSCAR audio/socket connectivity.
+- If your Docker network resolves `oscar` to an unreachable IPv6 address first, set `OSCAR_DNS_FAMILY=4` so the proxy always connects over IPv4.

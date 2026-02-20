@@ -21,6 +21,7 @@ const APP_USERNAME = process.env.APP_USERNAME;
 const APP_PASSWORD = process.env.APP_PASSWORD;
 const REQUIRE_DOCKER = String(process.env.REQUIRE_DOCKER || 'true').toLowerCase() === 'true';
 const OSCAR_BASE_URL = process.env.OSCAR_BASE_URL || 'http://oscar:3000';
+const OSCAR_DNS_FAMILY = Number(process.env.OSCAR_DNS_FAMILY || 4);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const USERNAME_MAX_LENGTH = 128;
@@ -48,6 +49,11 @@ try {
 
 if (oscarTarget.protocol !== 'http:' && oscarTarget.protocol !== 'https:') {
   console.error(`OSCAR_BASE_URL protocol must be http or https. Received: ${oscarTarget.protocol}`);
+  process.exit(1);
+}
+
+if (![0, 4, 6].includes(OSCAR_DNS_FAMILY)) {
+  console.error(`OSCAR_DNS_FAMILY must be 0, 4, or 6. Received: ${OSCAR_DNS_FAMILY}`);
   process.exit(1);
 }
 
@@ -320,6 +326,7 @@ function proxyOscarRequest(req, res) {
     protocol: oscarTarget.protocol,
     hostname: oscarTarget.hostname,
     port: oscarTarget.port || (oscarTarget.protocol === 'https:' ? 443 : 80),
+    family: OSCAR_DNS_FAMILY,
     method: req.method,
     path: oscarPath,
     headers: buildOscarProxyHeaders(req),
@@ -349,7 +356,8 @@ function proxyOscarRequest(req, res) {
     proxyRes.pipe(res);
   });
 
-  proxyReq.on('error', () => {
+  proxyReq.on('error', (error) => {
+    console.error(`OSCAR proxy request failed for ${req.method} ${oscarPath}: ${error.message}`);
     if (!res.headersSent) {
       res.status(502).send('Unable to connect to OSCAR service');
     }
@@ -365,6 +373,7 @@ function proxyOscarWebSocket(req, socket, head) {
     protocol: oscarTarget.protocol,
     hostname: oscarTarget.hostname,
     port: targetPort,
+    family: OSCAR_DNS_FAMILY,
     path: oscarPath,
     method: 'GET',
     headers: buildOscarProxyHeaders(req, { isWebSocket: true }),
@@ -402,7 +411,8 @@ function proxyOscarWebSocket(req, socket, head) {
     socket.end();
   });
 
-  proxyReq.on('error', () => {
+  proxyReq.on('error', (error) => {
+    console.error(`OSCAR websocket proxy failed for ${oscarPath}: ${error.message}`);
     socket.destroy();
   });
 
