@@ -2,8 +2,8 @@ tunnel: 70d684e7-1694-4c9d-b943-1f2e96944556
 credentials-file: /etc/cloudflared/70d684e7-1694-4c9d-b943-1f2e96944556.json
 
 ingress:
-  - hostname: sdbfriends.ca
+  - hostname: app.sdbfriends.ca
     service: http://nginx-internal:80
     originRequest:
-      httpHostHeader: sdbfriends.ca
+      httpHostHeader: app.sdbfriends.ca
   - service: http_status:404
