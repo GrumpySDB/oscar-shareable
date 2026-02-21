@@ -130,7 +130,6 @@ button.ghost {
   padding: 0.5rem 0.9rem;
   border-radius: 10px;
   border: 1px solid #d5def7;
-  background: #eef2ff;
   color: var(--text);
   font-weight: 600;
   text-decoration: none;
@@ -139,11 +138,45 @@ button.ghost {
   justify-content: center;
 }
 
+.header-link-btn {
+  gap: 0.45rem;
+  background: linear-gradient(180deg, #f6f9ff 0%, #e7eeff 100%);
+  border-color: #c5d3ff;
+  color: #1a3d9f;
+  box-shadow: 0 6px 14px rgba(36, 87, 245, 0.12);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.header-link-btn::before {
+  content: "?";
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+button.ghost {
+  background: #eef2ff;
+}
+
 .header-link-btn:hover,
 .header-link-btn:focus,
 button.ghost:hover,
 button.ghost:focus {
   background: #e3eaff;
+}
+
+.header-link-btn:hover,
+.header-link-btn:focus {
+  border-color: #adc2ff;
+  box-shadow: 0 9px 18px rgba(36, 87, 245, 0.2);
+  transform: translateY(-1px);
 }
 
 button.danger {
