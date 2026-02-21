@@ -14,6 +14,22 @@ Hardened web app for uploading OSCAR SD card files through Docker.
 - Upload directory ownership is enforced to `911:911` by startup/runtime checks in the uploader container.
 - Server refuses to run if upload directory ownership is not `911:911`.
 
+## Cloudflare tunnel and end-to-end encryption considerations
+- Cloudflare Tunnel protects transport, but Cloudflare still terminates TLS at its edge for normal proxied HTTP(S) traffic.
+- If your goal is to prevent Cloudflare from decrypting file contents, use client-side encryption in the browser **before upload** so only ciphertext traverses the tunnel.
+- With that model, your origin server receives encrypted blobs and can only decrypt them if it has the keys.
+- To keep Cloudflare blind to data, decryption keys must never be sent to Cloudflare and should be managed outside the tunnel path.
+
+### Practical model for this app
+1. Browser encrypts each selected file with a per-upload symmetric key (e.g., AES-GCM via WebCrypto).
+2. Browser uploads ciphertext plus metadata (nonce/IV, algorithm version, optional wrapped key).
+3. Origin receives ciphertext from Cloudflare Tunnel.
+4. Decrypt at trusted origin boundary (or in a separate trusted decrypt service) and then pass plaintext to OSCAR.
+
+### Important trade-offs
+- This is not pure end-to-end encryption if the server decrypts for OSCAR; it is best described as **application-layer encryption through Cloudflare**.
+- If you need strict E2EE where server cannot decrypt, OSCAR ingestion workflow must be redesigned because OSCAR needs plaintext files.
+
 ## Required environment variables
 Create a `.env` file:
 
