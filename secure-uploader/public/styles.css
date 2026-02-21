@@ -242,3 +242,55 @@ button.oscar-cta:hover {
 .policy-card {
   line-height: 1.6;
 }
+
+
+.footer-sep {
+  color: var(--muted);
+  margin: 0 0.45rem;
+}
+
+.help-container {
+  padding-top: 2.5rem;
+  padding-bottom: 2.5rem;
+}
+
+.help-card {
+  width: min(1020px, 100%);
+  line-height: 1.55;
+}
+
+.help-section {
+  margin-top: 1.5rem;
+}
+
+.help-image {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f8faff;
+  margin: 0.6rem 0 0.9rem;
+}
+
+.help-example {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f9fbff;
+  padding: 0.8rem 1rem;
+}
+
+.help-example h3 {
+  margin: 0 0 0.5rem;
+}
+
+.help-example pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 0.95rem;
+}
+
+.warning-panel {
+  border: 1px solid #f0d48b;
+  background: #fff9ea;
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+}

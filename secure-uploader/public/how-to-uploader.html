@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How to Use the OSCAR Uploader</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="container help-container">
+    <article class="card help-card">
+      <h1>How to Use the OSCAR Uploader</h1>
+      <p class="subtle">Follow these steps to upload your SD card data and import it into OSCAR.</p>
+
+      <section class="help-section">
+        <h2>1) Upload from your SD card root folder</h2>
+        <ol>
+          <li>In the uploader, first enter your <strong>Username (folder name)</strong>.</li>
+          <li>Then click the <strong>Browse</strong> button for <strong>SD Card Folder</strong>.</li>
+          <li>Select your SD card's <strong>root folder</strong> (not a subfolder).</li>
+        </ol>
+        <p>
+          The root folder must contain the always required files:
+          <strong>Identification.crc</strong> and <strong>STR.edf</strong>.
+        </p>
+        <img class="help-image" src="/images/help-sd-root.svg" alt="Example of selecting an SD card root folder that includes Identification.crc and STR.edf" />
+        <div class="help-example">
+          <h3>Example SD card root structure</h3>
+          <pre>SDCARD/
+├── Identification.crc   (required)
+├── STR.edf              (required)
+├── DATALOG/
+└── SETTINGS/</pre>
+        </div>
+      </section>
+
+      <section class="help-section">
+        <h2>2) Proceed to OSCAR and open Profile</h2>
+        <p>
+          Click <strong>Proceed to OSCAR</strong>. Once OSCAR opens, you may need to click the <strong>Profile</strong>
+          tab at the top of the window.
+        </p>
+        <img class="help-image" src="/images/help-profile-tab.svg" alt="OSCAR top tabs with Profile highlighted" />
+      </section>
+
+      <section class="help-section">
+        <h2>3) Create a new profile</h2>
+        <ol>
+          <li>Click <strong>New Profile</strong>.</li>
+          <li>Set your <strong>username</strong>.</li>
+          <li>Set your <strong>time zone</strong>.</li>
+          <li>If you want, add an optional profile password.</li>
+          <li>Click <strong>Next</strong> until the profile is created.</li>
+        </ol>
+        <img class="help-image" src="/images/help-new-profile.svg" alt="New profile form showing user name, timezone, and optional password" />
+      </section>
+
+      <section class="help-section">
+        <h2>4) Import your uploaded SD card data</h2>
+        <ol>
+          <li>Click <strong>Import SD Card</strong>.</li>
+          <li>Click <strong>Choose a Folder</strong>.</li>
+          <li>Navigate to: <strong>config &gt; SDCARD &gt; your username &gt; your uploaded folder</strong>.</li>
+          <li>Select your uploaded folder, then click <strong>Choose</strong>.</li>
+        </ol>
+        <img class="help-image" src="/images/help-import-folder.svg" alt="Folder chooser showing config/SDCARD/user-name/uploaded-folder" />
+      </section>
+
+      <section class="help-section">
+        <h2>5) Review your data</h2>
+        <p>After import, click <strong>Daily View</strong> and navigate through your data.</p>
+      </section>
+
+      <section class="help-section warning-panel">
+        <h2>Important service note</h2>
+        <p>
+          The service is currently <strong>not optimized for multiple users accessing OSCAR at once</strong>.
+          If another user connects while you are in the OSCAR window, you may become disconnected.
+          If this happens, wait a few minutes and then access OSCAR again.
+        </p>
+        <p>
+          If you run into issues or have feedback, please reach out to your administrator.
+        </p>
+      </section>
+
+      <p><a href="/" class="policy-link">Return to uploader</a></p>
+    </article>
+  </main>
+</body>
+</html>
