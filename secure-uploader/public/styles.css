@@ -116,12 +116,34 @@ button:disabled {
   cursor: not-allowed;
 }
 
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.header-link-btn,
 button.ghost {
   width: auto;
   margin-top: 0;
   padding: 0.5rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid #d5def7;
   background: #eef2ff;
   color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-link-btn:hover,
+.header-link-btn:focus,
+button.ghost:hover,
+button.ghost:focus {
+  background: #e3eaff;
 }
 
 button.danger {
@@ -218,8 +240,28 @@ button.oscar-cta:hover {
 
 
 .page-footer {
-  text-align: center;
   margin: -1rem 0 2rem;
+  display: flex;
+  justify-content: center;
+}
+
+.page-footer-inline {
+  margin-top: 1.5rem;
+  margin-bottom: 0;
+}
+
+.footer-links {
+  width: fit-content;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f3f7ff 100%);
 }
 
 .policy-link {
@@ -293,4 +335,16 @@ button.oscar-cta:hover {
   background: #fff9ea;
   border-radius: 12px;
   padding: 0.8rem 1rem;
+}
+
+
+@media (max-width: 600px) {
+  .header-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .footer-links {
+    border-radius: 14px;
+  }
 }
