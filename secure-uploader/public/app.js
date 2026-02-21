@@ -1,7 +1,9 @@
-const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
-const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
+const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
+const OPTIONAL_ALWAYS = ['Identification.tgt', 'Identification.json', 'journal.nl'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 5000;
+const CLOUDFLARE_UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
+const SAFE_BATCH_LIMIT_BYTES = 90 * 1024 * 1024;
 
 let token = sessionStorage.getItem('authToken') || null;
 let preparedFiles = [];
@@ -50,9 +52,28 @@ function showApp() {
   appCard.classList.remove('hidden');
 }
 
-function setMessage(message, isError = false) {
-  appMessage.classList.toggle('error-state', Boolean(isError));
-  appMessage.textContent = message;
+function setMessage(message, isError = false, details = '') {
+  const normalizedMessage = typeof message === 'string' ? message.trim() : '';
+  const normalizedDetails = typeof details === 'string' ? details.trim() : '';
+  const hasMessage = Boolean(normalizedMessage) || Boolean(normalizedDetails);
+
+  statusPanel.classList.toggle('has-message', hasMessage);
+  statusMessage.classList.toggle('error-state', Boolean(isError));
+  statusMessage.textContent = '';
+
+  if (!hasMessage) return;
+
+  const title = document.createElement('strong');
+  title.textContent = normalizedMessage;
+  statusMessage.appendChild(title);
+
+  if (normalizedDetails) {
+    statusMessage.appendChild(document.createElement('br'));
+    const detailText = document.createElement('span');
+    detailText.className = 'status-details';
+    detailText.textContent = normalizedDetails;
+    statusMessage.appendChild(detailText);
+  }
 }
 
 function getSixMonthsAgo(referenceTime = Date.now()) {
@@ -65,9 +86,10 @@ function configureDateInput() {
   const input = document.getElementById('startDate');
   const today = new Date();
   const min = getSixMonthsAgo();
-  input.max = today.toISOString().slice(0, 10);
+  const todayIso = today.toISOString().slice(0, 10);
+  input.max = todayIso;
   input.min = min.toISOString().slice(0, 10);
-  input.value = min.toISOString().slice(0, 10);
+  input.value = todayIso;
 }
 
 function folderNameValid(value) {
@@ -84,6 +106,10 @@ function sanitizeUsernameInput(value) {
 
 function isRequired(name) {
   return REQUIRED_ALWAYS.includes(name);
+}
+
+function isAlwaysIncluded(name) {
+  return isRequired(name) || OPTIONAL_ALWAYS.includes(name);
 }
 
 function getRelativePath(file) {
@@ -121,12 +147,9 @@ function extractDateFromPath(file) {
 }
 
 function validateFile(file, startDateMs) {
-  const relativePath = getRelativePath(file);
-  const extension = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
-  if (!ALLOWED_EXTENSIONS.has(extension)) return false;
   if (file.size > MAX_FILE_SIZE) return false;
 
-  if (isRequired(getBasename(file))) return true;
+  if (isAlwaysIncluded(getBasename(file))) return true;
 
   const inferredDate = extractDateFromPath(file);
   const modified = Number.isFinite(inferredDate) ? inferredDate : Number(file.lastModified || 0);
@@ -210,22 +233,38 @@ async function login() {
   }
 }
 
-function logout() {
+async function logout() {
+  const currentToken = token;
   token = null;
   sessionStorage.removeItem('authToken');
-  preparedFiles = [];
-  uploadBtn.disabled = true;
-  summary.textContent = '';
-  progressBar.style.width = '0%';
+
+  if (currentToken) {
+    try {
+      await fetch('/api/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${currentToken}` },
+      });
+    } catch (_err) {}
+  }
+
+  resetPreparedState(true);
   setMessage('');
   showLogin();
 }
 
+function resetPreparedState(clearProgress = false) {
+  preparedFiles = [];
+  preparedFolder = '';
+  selectedDateMs = 0;
+  uploadBtn.disabled = true;
+  if (clearProgress) {
+    progressBar.style.width = '0%';
+  }
+}
+
 async function scanAndPrepare() {
   setMessage('');
-  summary.textContent = '';
-  uploadBtn.disabled = true;
-  progressBar.style.width = '0%';
+  resetPreparedState(true);
 
   const folder = document.getElementById('folderName').value.trim();
   if (!folderNameValid(folder)) {
@@ -265,7 +304,7 @@ async function scanAndPrepare() {
 
   for (const required of REQUIRED_ALWAYS) {
     if (!requiredBasenames.has(required)) {
-      setMessage(`Missing required file in selected folder: ${required}`, true);
+      setMessage(`Invalid data: missing required file ${required}.`, true);
       return;
     }
   }
@@ -281,7 +320,7 @@ async function scanAndPrepare() {
     }
 
     const relativePath = getRelativePath(file);
-    if (!isRequired(getBasename(file)) && existingSet.has(relativePath)) {
+    if (!isAlwaysIncluded(getBasename(file)) && existingSet.has(relativePath)) {
       skippedExisting += 1;
       continue;
     }
@@ -289,8 +328,13 @@ async function scanAndPrepare() {
     eligible.push(file);
   }
 
+  const skippedTotal = skippedExisting + skippedInvalid;
   if (eligible.length === 0) {
-    setMessage('No new valid files to upload after filtering.', true);
+    setMessage(
+      'Invalid or duplicate SD card data detected. Upload is disabled.',
+      true,
+      `Valid files to upload: 0 • Files skipped: ${skippedTotal}`,
+    );
     return;
   }
 
@@ -307,63 +351,132 @@ async function scanAndPrepare() {
   selectedDateMs = selectedDate.getTime();
   uploadBtn.disabled = false;
 
-  summary.innerHTML = [
-    `<strong>Ready:</strong> ${eligible.length} files`,
-    `<br><strong>Skipped existing:</strong> ${skippedExisting}`,
-    `<br><strong>Skipped invalid:</strong> ${skippedInvalid}`,
-  ].join('');
+  setMessage(
+    'Resmed SD card data detected.',
+    false,
+    `Valid files to upload: ${eligible.length} • Files skipped: ${skippedTotal}`,
+  );
 }
 
-function uploadPreparedFiles() {
-  if (preparedFiles.length === 0) {
-    setMessage('Nothing to upload. Use Scan first.', true);
-    return;
+function createUploadBatches(files) {
+  const batches = [];
+  let currentBatch = [];
+  let currentSize = 0;
+
+  for (const file of files) {
+    const fileSize = Number(file.size || 0);
+    const exceedsCurrent = currentBatch.length > 0 && (currentSize + fileSize) > SAFE_BATCH_LIMIT_BYTES;
+    if (exceedsCurrent) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentSize = 0;
+    }
+
+    currentBatch.push(file);
+    currentSize += fileSize;
   }
 
-  uploadBtn.disabled = true;
-  setMessage('Uploading...');
+  if (currentBatch.length > 0) batches.push(currentBatch);
+  return batches;
+}
 
-  const form = new FormData();
-  form.append('folder', preparedFolder);
-  form.append('selectedDateMs', String(selectedDateMs));
-  for (const file of preparedFiles) {
-    form.append('files', file, getRelativePath(file));
-  }
+function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes }) {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append('folder', preparedFolder);
+    form.append('selectedDateMs', String(selectedDateMs));
+    form.append('uploadSessionId', sessionId);
+    form.append('batchIndex', String(batchIndex));
+    form.append('totalBatches', String(totalBatches));
+    for (const file of files) {
+      form.append('files', file, getRelativePath(file));
+    }
 
-  const request = new XMLHttpRequest();
-  request.open('POST', '/api/upload');
-  request.setRequestHeader('Authorization', `Bearer ${token}`);
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/upload');
+    request.setRequestHeader('Authorization', `Bearer ${token}`);
 
-  request.upload.onprogress = (event) => {
-    if (!event.lengthComputable) return;
-    const percent = Math.round((event.loaded / event.total) * 100);
-    progressBar.style.width = `${percent}%`;
-  };
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable || totalBatches <= 0) return;
+      const priorBatches = (batchIndex / totalBatches) * 100;
+      const withinBatch = (event.loaded / event.total) * (100 / totalBatches);
+      const percent = Math.min(99, Math.round(priorBatches + withinBatch));
+      progressBar.style.width = `${percent}%`;
 
-  request.onload = () => {
-    if (request.status >= 200 && request.status < 300) {
-      progressBar.style.width = '100%';
-      setMessage('Upload complete.');
-      preparedFiles = [];
-      uploadBtn.disabled = true;
-    } else {
+      const loadedMb = (event.loaded / (1024 * 1024)).toFixed(1);
+      const batchMb = (event.total / (1024 * 1024)).toFixed(1);
+      const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
+      setMessage(`Uploading batch ${batchIndex + 1}/${totalBatches} (${loadedMb}/${batchMb} MB, total ${totalMb} MB)...`);
+    };
+
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        resolve();
+        return;
+      }
+
       let message = 'Upload failed';
       try {
         const body = JSON.parse(request.responseText);
         message = body.error || message;
       } catch (_err) {}
 
-      setMessage(message, true);
-      uploadBtn.disabled = false;
+      if (request.status === 413) {
+        message = 'Upload rejected by gateway size limit. Reduce batch size and retry.';
+      }
+
+      reject(new Error(message));
+    };
+
+    request.onerror = () => {
+      reject(new Error('Network error during upload.'));
+    };
+
+    request.send(form);
+  });
+}
+
+async function uploadPreparedFiles() {
+  if (preparedFiles.length === 0) {
+    setMessage('Nothing to upload. Select an SD card folder first.', true);
+    return;
+  }
+
+  uploadBtn.disabled = true;
+
+  const totalBytes = preparedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
+  const totalMb = totalBytes / (1024 * 1024);
+  const requiresChunking = totalBytes > CLOUDFLARE_UPLOAD_LIMIT_BYTES;
+  const batches = createUploadBatches(preparedFiles);
+  const sessionId = (window.crypto && window.crypto.randomUUID)
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  if (requiresChunking) {
+    setMessage(`Selected files total ${totalMb.toFixed(1)} MB, above Cloudflare's 100 MB request limit. Upload will run in ${batches.length} batches.`);
+  } else {
+    setMessage(`Uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)...`);
+  }
+
+  try {
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const batch = batches[batchIndex];
+      await uploadBatch({
+        files: batch,
+        batchIndex,
+        totalBatches: batches.length,
+        sessionId,
+        totalBytes,
+      });
     }
-  };
 
-  request.onerror = () => {
-    setMessage('Network error during upload.', true);
+    progressBar.style.width = '100%';
+    setMessage('Upload complete.');
+    resetPreparedState();
+  } catch (error) {
+    setMessage(error.message, true);
     uploadBtn.disabled = false;
-  };
-
-  request.send(form);
+  }
 }
 
 
@@ -374,10 +487,6 @@ async function proceedToOscar() {
     return;
   }
 
-  const acknowledged = window.confirm(
-    'Please do NOT exit the OSCAR application INSIDE the browser window.  Simply close the browser window when you are done.\n\nIf you do exit OSCAR inside the browser window, OSCAR cannot be restarted and will be down for everyone.  Click OK to Acknowledge and Proceed.'
-  );
-  if (!acknowledged) return;
 
   try {
     const result = await api('/api/oscar-launch', { method: 'POST' });
@@ -401,6 +510,7 @@ async function deleteFolder() {
 
   try {
     await api(`/api/folders/${encodeURIComponent(folder)}`, { method: 'DELETE' });
+    resetPreparedState(true);
     setMessage(`Deleted uploaded data for folder "${folder}".`);
   } catch (err) {
     setMessage(`Delete failed: ${err.message}`, true);
@@ -412,7 +522,15 @@ document.getElementById('loginForm').addEventListener('submit', (event) => {
   login();
 });
 document.getElementById('logoutBtn').addEventListener('click', logout);
-document.getElementById('scanBtn').addEventListener('click', scanAndPrepare);
+document.getElementById('directoryInput').addEventListener('change', () => {
+  scanAndPrepare();
+});
+document.getElementById('folderName').addEventListener('change', () => {
+  if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
+});
+document.getElementById('startDate').addEventListener('change', () => {
+  if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
+});
 document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);
 document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
 document.getElementById('oscarBtn').addEventListener('click', proceedToOscar);

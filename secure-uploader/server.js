@@ -13,8 +13,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
 const app = express();
-const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.PORT || 3443);
-const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.PORT || 50710);
 const SSL_KEY_PATH = process.env.SSL_KEY_PATH || path.join(__dirname, 'certs', 'key.pem');
 const SSL_CERT_PATH = process.env.SSL_CERT_PATH || path.join(__dirname, 'certs', 'cert.pem');
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -22,17 +21,23 @@ const APP_USERNAME = process.env.APP_USERNAME;
 const APP_PASSWORD = process.env.APP_PASSWORD;
 const REQUIRE_DOCKER = String(process.env.REQUIRE_DOCKER || 'true').toLowerCase() === 'true';
 const OSCAR_BASE_URL = process.env.OSCAR_BASE_URL || 'http://oscar:3000';
+const OSCAR_DNS_FAMILY = Number(process.env.OSCAR_DNS_FAMILY || 4);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const USERNAME_MAX_LENGTH = 128;
 const PASSWORD_MAX_LENGTH = 256;
-const ALLOWED_EXTENSIONS = new Set(['.crc', '.tgt', '.edf']);
-const REQUIRED_ALWAYS = ['Identification.crc', 'Identification.tgt', 'STR.edf'];
+const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
 const UPLOAD_ROOT = path.join(__dirname, 'data', 'uploads');
 const UPLOAD_UID = Number(process.env.UPLOAD_UID || 911);
 const UPLOAD_GID = Number(process.env.UPLOAD_GID || 911);
 const OSCAR_LAUNCH_TTL_SECONDS = 120;
 const OSCAR_SESSION_TTL_SECONDS = 8 * 60 * 60;
+const AUTH_SESSION_TTL_SECONDS = Number(process.env.AUTH_SESSION_TTL_SECONDS || 30 * 60);
+const UPLOAD_SESSION_TTL_MS = 30 * 60 * 1000;
+
+const activeAuthSessions = new Map();
+const consumedLaunchTokens = new Map();
+const pendingUploadSessions = new Map();
 
 let oscarTarget;
 try {
@@ -42,8 +47,24 @@ try {
   process.exit(1);
 }
 
+if (oscarTarget.protocol !== 'http:' && oscarTarget.protocol !== 'https:') {
+  console.error(`OSCAR_BASE_URL protocol must be http or https. Received: ${oscarTarget.protocol}`);
+  process.exit(1);
+}
+
+if (![0, 4, 6].includes(OSCAR_DNS_FAMILY)) {
+  console.error(`OSCAR_DNS_FAMILY must be 0, 4, or 6. Received: ${OSCAR_DNS_FAMILY}`);
+  process.exit(1);
+}
+
 if (REQUIRE_DOCKER && !fs.existsSync('/.dockerenv')) {
   console.error('Refusing to start outside Docker (REQUIRE_DOCKER=true).');
+  process.exit(1);
+}
+
+
+if (!Number.isFinite(AUTH_SESSION_TTL_SECONDS) || AUTH_SESSION_TTL_SECONDS < 60) {
+  console.error('AUTH_SESSION_TTL_SECONDS must be a numeric value of at least 60 seconds.');
   process.exit(1);
 }
 
@@ -157,11 +178,49 @@ function authMiddleware(req, res, next) {
   const token = header.slice(7);
   try {
     const payload = jwt.verify(token, JWT_SECRET);
+    if (!isAuthSessionActive(payload)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
     req.auth = payload;
     return next();
   } catch (_err) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+}
+
+function cleanupExpiredSessions(referenceTime = Date.now()) {
+  for (const [sid, session] of activeAuthSessions.entries()) {
+    if (!session || !Number.isFinite(session.expiresAt) || session.expiresAt <= referenceTime) {
+      activeAuthSessions.delete(sid);
+    }
+  }
+}
+
+function cleanupConsumedLaunchTokens(referenceTime = Date.now()) {
+  for (const [jti, expiresAt] of consumedLaunchTokens.entries()) {
+    if (!Number.isFinite(expiresAt) || expiresAt <= referenceTime) {
+      consumedLaunchTokens.delete(jti);
+    }
+  }
+}
+
+function registerAuthSession({ sid, sub, now = Date.now() }) {
+  const expiresAt = now + (AUTH_SESSION_TTL_SECONDS * 1000);
+  activeAuthSessions.set(sid, { sub, expiresAt });
+}
+
+function isAuthSessionActive(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  if (typeof payload.sid !== 'string' || typeof payload.sub !== 'string') return false;
+  cleanupExpiredSessions();
+  const session = activeAuthSessions.get(payload.sid);
+  return Boolean(session && session.sub === payload.sub);
+}
+
+function buildRequestFingerprint(req) {
+  const userAgent = String(req.headers['user-agent'] || '');
+  const acceptLanguage = String(req.headers['accept-language'] || '');
+  return crypto.createHash('sha256').update(`${userAgent}\n${acceptLanguage}`).digest('base64url');
 }
 
 function parseCookies(req) {
@@ -179,37 +238,43 @@ function parseCookies(req) {
   return map;
 }
 
-function issueOscarSessionCookie(res, ownerId) {
-  const token = jwt.sign({ sub: ownerId, scope: 'oscar' }, JWT_SECRET, {
+function issueOscarSessionCookie(res, { ownerId, sid, fingerprint }) {
+  const token = jwt.sign({ sub: ownerId, sid, fp: fingerprint, scope: 'oscar' }, JWT_SECRET, {
     expiresIn: OSCAR_SESSION_TTL_SECONDS,
   });
-  const isProd = process.env.NODE_ENV === 'production';
   const cookieParts = [
     `oscar_session=${encodeURIComponent(token)}`,
     'Path=/',
     `Max-Age=${OSCAR_SESSION_TTL_SECONDS}`,
     'HttpOnly',
     'SameSite=Strict',
+    'Secure',
   ];
-  if (isProd) cookieParts.push('Secure');
   res.setHeader('Set-Cookie', cookieParts.join('; '));
+}
+
+function clearOscarSessionCookie(res) {
+  res.setHeader('Set-Cookie', 'oscar_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure');
 }
 
 function requireOscarSession(req, res, next) {
   const cookies = parseCookies(req);
   const sessionToken = cookies.get('oscar_session');
   if (!sessionToken) {
-    return res.status(401).send('Unauthorized');
+    return res.redirect('/');
   }
 
   try {
     const payload = jwt.verify(sessionToken, JWT_SECRET);
-    if (payload.scope !== 'oscar') {
-      return res.status(401).send('Unauthorized');
+    if (payload.scope !== 'oscar' || !isAuthSessionActive(payload)) {
+      return res.redirect('/');
+    }
+    if (payload.fp !== buildRequestFingerprint(req)) {
+      return res.redirect('/');
     }
     return next();
   } catch (_err) {
-    return res.status(401).send('Unauthorized');
+    return res.redirect('/');
   }
 }
 
@@ -221,18 +286,50 @@ function getOscarTargetPath(incomingPath) {
   return rawPath || '/';
 }
 
+
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function buildOscarProxyHeaders(req, { isWebSocket = false } = {}) {
+  const headers = {};
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
+    headers[name] = value;
+  }
+
+  headers.host = oscarTarget.host;
+  headers['x-forwarded-for'] = req.ip || req.socket.remoteAddress || '';
+  headers['x-forwarded-proto'] = 'https';
+  if (req.headers.host) {
+    headers['x-forwarded-host'] = req.headers.host;
+  }
+
+  if (isWebSocket) {
+    headers.connection = 'Upgrade';
+    headers.upgrade = 'websocket';
+  }
+
+  return headers;
+}
+
 function proxyOscarRequest(req, res) {
   const oscarPath = getOscarTargetPath(req.originalUrl);
   const options = {
     protocol: oscarTarget.protocol,
     hostname: oscarTarget.hostname,
     port: oscarTarget.port || (oscarTarget.protocol === 'https:' ? 443 : 80),
+    family: OSCAR_DNS_FAMILY,
     method: req.method,
     path: oscarPath,
-    headers: {
-      ...req.headers,
-      host: oscarTarget.host,
-    },
+    headers: buildOscarProxyHeaders(req),
   };
 
   delete options.headers.authorization;
@@ -259,7 +356,8 @@ function proxyOscarRequest(req, res) {
     proxyRes.pipe(res);
   });
 
-  proxyReq.on('error', () => {
+  proxyReq.on('error', (error) => {
+    console.error(`OSCAR proxy request failed for ${req.method} ${oscarPath}: ${error.message}`);
     if (!res.headersSent) {
       res.status(502).send('Unable to connect to OSCAR service');
     }
@@ -275,14 +373,10 @@ function proxyOscarWebSocket(req, socket, head) {
     protocol: oscarTarget.protocol,
     hostname: oscarTarget.hostname,
     port: targetPort,
+    family: OSCAR_DNS_FAMILY,
     path: oscarPath,
     method: 'GET',
-    headers: {
-      ...req.headers,
-      host: oscarTarget.host,
-      connection: 'Upgrade',
-      upgrade: 'websocket',
-    },
+    headers: buildOscarProxyHeaders(req, { isWebSocket: true }),
   };
 
   const requestLib = oscarTarget.protocol === 'https:' ? https : http;
@@ -317,7 +411,8 @@ function proxyOscarWebSocket(req, socket, head) {
     socket.end();
   });
 
-  proxyReq.on('error', () => {
+  proxyReq.on('error', (error) => {
+    console.error(`OSCAR websocket proxy failed for ${oscarPath}: ${error.message}`);
     socket.destroy();
   });
 
@@ -389,6 +484,40 @@ function sanitizeUploadRelativePath(value) {
   return segments.join('/');
 }
 
+function cleanupPendingUploadSessions() {
+  const now = Date.now();
+  for (const [sessionId, session] of pendingUploadSessions.entries()) {
+    if (session.expiresAt <= now) {
+      pendingUploadSessions.delete(sessionId);
+    }
+  }
+}
+
+function parseUploadBatchMetadata(body) {
+  const uploadSessionId = typeof body.uploadSessionId === 'string' ? body.uploadSessionId.trim() : '';
+  const totalBatches = Number(body.totalBatches ?? 1);
+  const batchIndex = Number(body.batchIndex ?? 0);
+
+  if (!Number.isInteger(totalBatches) || totalBatches < 1 || totalBatches > 200) {
+    return { error: 'Invalid total batches value' };
+  }
+  if (!Number.isInteger(batchIndex) || batchIndex < 0 || batchIndex >= totalBatches) {
+    return { error: 'Invalid batch index value' };
+  }
+  if (uploadSessionId.length > 128) {
+    return { error: 'Invalid upload session id' };
+  }
+  if (totalBatches > 1 && uploadSessionId.length === 0) {
+    return { error: 'Missing upload session id for multi-batch upload' };
+  }
+
+  return {
+    uploadSessionId,
+    totalBatches,
+    batchIndex,
+  };
+}
+
 app.post('/api/login', authLimiter, (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const username = sanitizeCredentialInput(body.username, {
@@ -409,8 +538,17 @@ app.post('/api/login', authLimiter, (req, res) => {
   }
 
   const sessionId = crypto.randomUUID();
-  const token = jwt.sign({ sub: username, sid: sessionId }, JWT_SECRET, { expiresIn: '8h' });
+  registerAuthSession({ sid: sessionId, sub: username });
+  const token = jwt.sign({ sub: username, sid: sessionId }, JWT_SECRET, { expiresIn: AUTH_SESSION_TTL_SECONDS });
   return res.json({ token });
+});
+
+app.post('/api/logout', authMiddleware, (req, res) => {
+  if (req.auth && typeof req.auth.sid === 'string') {
+    activeAuthSessions.delete(req.auth.sid);
+  }
+  clearOscarSessionCookie(res);
+  return res.status(204).end();
 });
 
 app.get('/api/session', authMiddleware, (_req, res) => {
@@ -418,8 +556,15 @@ app.get('/api/session', authMiddleware, (_req, res) => {
 });
 
 app.post('/api/oscar-launch', authMiddleware, (req, res) => {
-  const ownerId = String(req.auth.sid || req.auth.sub || 'unknown');
-  const launchToken = jwt.sign({ sub: ownerId, purpose: 'oscar-launch' }, JWT_SECRET, {
+  const ownerId = String(req.auth.sub || 'unknown');
+  const launchTokenId = crypto.randomUUID();
+  const launchToken = jwt.sign({
+    sub: ownerId,
+    sid: req.auth.sid,
+    fp: buildRequestFingerprint(req),
+    jti: launchTokenId,
+    purpose: 'oscar-launch',
+  }, JWT_SECRET, {
     expiresIn: OSCAR_LAUNCH_TTL_SECONDS,
   });
   res.json({ launchUrl: `/oscar/login?token=${encodeURIComponent(launchToken)}` });
@@ -454,10 +599,65 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     const files = Array.isArray(req.files) ? req.files : [];
     if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
 
+    const uploadMeta = parseUploadBatchMetadata(req.body || {});
+    if (uploadMeta.error) {
+      return res.status(400).json({ error: uploadMeta.error });
+    }
+
+    const {
+      uploadSessionId,
+      totalBatches,
+      batchIndex,
+    } = uploadMeta;
+
+    cleanupPendingUploadSessions();
+
+    let uploadSession = null;
+    if (totalBatches > 1) {
+      uploadSession = pendingUploadSessions.get(uploadSessionId);
+      if (!uploadSession) {
+        if (batchIndex !== 0) {
+          return res.status(400).json({ error: 'Upload session not found or expired. Restart upload.' });
+        }
+        uploadSession = {
+          folder,
+          selectedDate,
+          totalBatches,
+          nextBatchIndex: 0,
+          seenRequired: new Set(),
+          seenPaths: new Set(),
+          expiresAt: Date.now() + UPLOAD_SESSION_TTL_MS,
+        };
+        pendingUploadSessions.set(uploadSessionId, uploadSession);
+      }
+
+      if (
+        uploadSession.folder !== folder
+        || uploadSession.selectedDate !== selectedDate
+        || uploadSession.totalBatches !== totalBatches
+      ) {
+        return res.status(400).json({ error: 'Upload session metadata mismatch. Restart upload.' });
+      }
+
+      if (uploadSession.nextBatchIndex !== batchIndex) {
+        return res.status(400).json({ error: `Unexpected batch order. Expected batch ${uploadSession.nextBatchIndex + 1}.` });
+      }
+
+      uploadSession.expiresAt = Date.now() + UPLOAD_SESSION_TTL_MS;
+    }
+
     const incomingBasenames = files.map((file) => path.basename(file.originalname));
-    for (const requiredName of REQUIRED_ALWAYS) {
-      if (!incomingBasenames.includes(requiredName)) {
-        return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+    if (uploadSession) {
+      for (const basename of incomingBasenames) {
+        if (REQUIRED_ALWAYS.includes(basename)) {
+          uploadSession.seenRequired.add(basename);
+        }
+      }
+    } else {
+      for (const requiredName of REQUIRED_ALWAYS) {
+        if (!incomingBasenames.includes(requiredName)) {
+          return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+        }
       }
     }
 
@@ -471,13 +671,11 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       if (dedupe.has(relativePath)) {
         return res.status(400).json({ error: `Duplicate filename in upload: ${relativePath}` });
       }
+      if (uploadSession && uploadSession.seenPaths.has(relativePath)) {
+        return res.status(400).json({ error: `Duplicate filename across batches: ${relativePath}` });
+      }
       dedupe.add(relativePath);
       file.safeRelativePath = relativePath;
-
-      const extension = path.extname(relativePath).toLowerCase();
-      if (!ALLOWED_EXTENSIONS.has(extension)) {
-        return res.status(400).json({ error: `Invalid file extension: ${relativePath}` });
-      }
 
       if (file.size > MAX_FILE_SIZE) {
         return res.status(400).json({ error: `File exceeds 10MB: ${relativePath}` });
@@ -499,9 +697,28 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       }
       await fsp.writeFile(destination, file.buffer, { mode: 0o640 });
       await ensureOwnership(destination);
+
+      if (uploadSession) {
+        uploadSession.seenPaths.add(file.safeRelativePath);
+      }
     }
 
-    return res.json({ uploaded: files.length });
+    if (uploadSession) {
+      const isFinalBatch = batchIndex === totalBatches - 1;
+      uploadSession.nextBatchIndex += 1;
+
+      if (isFinalBatch) {
+        for (const requiredName of REQUIRED_ALWAYS) {
+          if (!uploadSession.seenRequired.has(requiredName)) {
+            pendingUploadSessions.delete(uploadSessionId);
+            return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+          }
+        }
+        pendingUploadSessions.delete(uploadSessionId);
+      }
+    }
+
+    return res.json({ uploaded: files.length, batchIndex, totalBatches });
   } catch (error) {
     return res.status(500).json({ error: 'Upload failed', detail: error.message });
   }
@@ -519,24 +736,43 @@ app.delete('/api/folders/:folder', authMiddleware, async (req, res) => {
 app.get('/oscar/login', (req, res) => {
   const launchToken = typeof req.query.token === 'string' ? req.query.token : '';
   if (!launchToken) {
-    return res.status(401).send('Unauthorized');
+    return res.redirect('/');
   }
 
   try {
+    cleanupConsumedLaunchTokens();
     const payload = jwt.verify(launchToken, JWT_SECRET);
-    if (payload.purpose !== 'oscar-launch' || typeof payload.sub !== 'string') {
-      return res.status(401).send('Unauthorized');
+    if (
+      payload.purpose !== 'oscar-launch'
+      || typeof payload.sub !== 'string'
+      || typeof payload.sid !== 'string'
+      || typeof payload.fp !== 'string'
+      || typeof payload.jti !== 'string'
+      || consumedLaunchTokens.has(payload.jti)
+      || !isAuthSessionActive(payload)
+      || payload.fp !== buildRequestFingerprint(req)
+    ) {
+      return res.redirect('/');
     }
 
-    issueOscarSessionCookie(res, payload.sub);
+    consumedLaunchTokens.set(payload.jti, Date.now() + (OSCAR_LAUNCH_TTL_SECONDS * 1000));
+    issueOscarSessionCookie(res, { ownerId: payload.sub, sid: payload.sid, fingerprint: payload.fp });
     return res.redirect('/oscar/');
   } catch (_err) {
-    return res.status(401).send('Unauthorized');
+    return res.redirect('/');
   }
 });
 
 app.use('/oscar', requireOscarSession, proxyOscarRequest);
 app.use('/websockify', requireOscarSession, proxyOscarRequest);
+
+app.get('/privacy-security-policy', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacy-security-policy.html'));
+});
+
+app.get('/how-to-uploader', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'how-to-uploader.html'));
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/{*splat}', (_req, res) => {
@@ -590,7 +826,11 @@ httpsServer.on('upgrade', (req, socket, head) => {
 
   try {
     const payload = jwt.verify(sessionToken, JWT_SECRET);
-    if (payload.scope !== 'oscar') {
+    if (payload.scope !== 'oscar' || !isAuthSessionActive(payload)) {
+      socket.destroy();
+      return;
+    }
+    if (payload.fp !== buildRequestFingerprint(req)) {
       socket.destroy();
       return;
     }
@@ -605,16 +845,3 @@ httpsServer.on('upgrade', (req, socket, head) => {
 httpsServer.listen(HTTPS_PORT, () => {
   console.log(`OSCAR uploader running on https://0.0.0.0:${HTTPS_PORT}`);
 });
-
-http
-  .createServer((req, res) => {
-    const hostHeader = String(req.headers.host || '');
-    const host = hostHeader ? hostHeader.replace(/:\d+$/, '') : 'localhost';
-    const httpsPortSuffix = HTTPS_PORT === 443 ? '' : `:${HTTPS_PORT}`;
-    const location = `https://${host}${httpsPortSuffix}${req.url || '/'}`;
-    res.writeHead(308, { Location: location });
-    res.end();
-  })
-  .listen(HTTP_PORT, () => {
-    console.log(`HTTP redirector running on http://0.0.0.0:${HTTP_PORT}`);
-  });

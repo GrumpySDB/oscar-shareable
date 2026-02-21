@@ -26,20 +26,24 @@
       <img id="uploadBanner" class="screen-banner hidden" alt="Random upload image" />
       <div class="header-row">
         <h2>Upload SD Card Files</h2>
-        <button id="logoutBtn" class="ghost">Logout</button>
+        <div class="header-actions">
+          <a href="/how-to-uploader" class="header-link-btn">Help</a>
+          <button id="logoutBtn" class="ghost">Logout</button>
+        </div>
       </div>
 
-      <label for="folderName">Folder Name</label>
+      <label for="folderName">Username (Will be used as your SDCard Folder Name)</label>
       <input id="folderName" type="text" placeholder="example-clinic-a" maxlength="64" />
 
       <label for="startDate">Start Date (max 6 months back)</label>
-      <input id="startDate" type="date" />
+      <div class="date-input-wrap">
+        <span class="date-icon" aria-hidden="true">📅</span>
+        <input id="startDate" type="date" />
+      </div>
 
-      <label for="directoryInput">OSCAR SD Card Folder</label>
+      <label for="directoryInput">SD Card Folder </label>
       <input id="directoryInput" type="file" webkitdirectory directory multiple />
 
-      <p class="subtle">Required on every upload: Identification.crc, Identification.tgt, STR.edf</p>
-      <button id="scanBtn">Scan & Prepare Upload</button>
 
       <div id="summary" class="summary">
         <div id="summaryCounts"></div>
@@ -51,11 +55,21 @@
       </div>
 
       <button id="uploadBtn" disabled>Upload Selected Files</button>
-      <button id="deleteBtn" class="danger">Delete Uploaded Folder Data</button>
+      <button id="deleteBtn" class="danger">Delete Uploaded Data</button>
       <button id="oscarBtn" class="oscar-cta" type="button">Proceed to OSCAR</button>
 
     </section>
   </main>
+
+  <footer class="page-footer">
+    <nav class="footer-links" aria-label="Footer links">
+      <a href="/how-to-uploader" class="policy-link">How to Use the Uploader</a>
+      <span class="footer-sep">•</span>
+      <a href="/privacy-security-policy" class="policy-link">Privacy and Security Policy</a>
+      <span class="footer-sep">•</span>
+      <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank" rel="noopener noreferrer">View Source on GitHub</a>
+    </nav>
+  </footer>
 
   <script src="/app.js" defer></script>
 </body>

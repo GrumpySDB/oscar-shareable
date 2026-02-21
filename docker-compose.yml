@@ -1,0 +1,106 @@
+services:
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    command: tunnel run
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: nginx-internal
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    expose:
+      - "80"
+      - "443"
+    restart: unless-stopped
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+
+
+  uploader:
+    container_name: uploader
+    build:
+      context: ./secure-uploader
+      args: 
+        UID: 911
+        GID: 911
+    user: "911:911"
+    expose:
+      - "50710"
+    env_file:
+      - .env
+    environment:
+      HTTPS_PORT: 50710
+      UPLOAD_UID: 911
+      UPLOAD_GID: 911
+      OSCAR_BASE_URL: http://oscar:3000
+    volumes:
+      - uploads:/app/data/uploads
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /var/tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      - oscar
+      - nginx
+      - cloudflared
+    networks:
+      - internal
+
+  oscar:
+    build:
+      context: ./docker-oscar
+    container_name: oscar
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:3030:3000
+    volumes:
+      - /var/www/oscar-data:/config/Documents/OSCAR_Data:rw
+      - uploads:/config/SDCARD:rw
+    environment:
+      PUID: "911"
+      PGID: "911"
+      TZ: "America/Chicago"
+      TITLE: "OSCAR 1.7.0"
+      START_DOCKER: "false"
+      DISABLE_IPV6: "true"
+      NO_DECOR: "true"
+      NO_GAMEPAD: "true"
+      HARDEN_DESKTOP: "true"
+      HARDEN_OPENBOX: "true"
+      SELKIES_ENABLE_CURSORS: "true"
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+
+
+volumes:
+  uploads:
+
+networks:
+  internal:
+    driver: bridge
