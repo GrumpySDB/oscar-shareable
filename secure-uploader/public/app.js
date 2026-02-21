@@ -13,6 +13,7 @@ let selectedDateMs = 0;
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
 const loginError = document.getElementById('loginError');
+const statusPanel = document.getElementById('statusPanel');
 const summaryCounts = document.getElementById('summaryCounts');
 const summaryStatus = document.getElementById('summaryStatus');
 const progressBar = document.getElementById('progressBar');
@@ -53,6 +54,8 @@ function showApp() {
 }
 
 function setMessage(message, isError = false) {
+  const hasMessage = Boolean(message);
+  statusPanel.classList.toggle('has-message', hasMessage);
   summaryStatus.classList.toggle('error-state', Boolean(isError));
   summaryStatus.textContent = message;
 }
@@ -239,6 +242,7 @@ function resetPreparedState(clearProgress = false) {
   selectedDateMs = 0;
   uploadBtn.disabled = true;
   summaryCounts.textContent = '';
+  statusPanel.classList.remove('has-summary');
   if (clearProgress) {
     progressBar.style.width = '0%';
   }
@@ -316,6 +320,7 @@ async function scanAndPrepare() {
       `<strong>Valid files to upload:</strong> 0`,
       `<br><strong>Files skipped:</strong> ${skippedTotal}`,
     ].join('');
+    statusPanel.classList.add('has-summary');
     setMessage('Invalid or duplicate SD card data detected. Upload is disabled.', true);
     return;
   }
@@ -337,6 +342,7 @@ async function scanAndPrepare() {
     `<strong>Valid files to upload:</strong> ${eligible.length}`,
     `<br><strong>Files skipped:</strong> ${skippedTotal}`,
   ].join('');
+  statusPanel.classList.add('has-summary');
   setMessage('Resmed SD card data detected.');
 }
 
