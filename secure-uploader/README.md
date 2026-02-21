@@ -21,10 +21,10 @@ Hardened web app for uploading OSCAR SD card files through Docker.
 - To keep Cloudflare blind to data, decryption keys must never be sent to Cloudflare and should be managed outside the tunnel path.
 
 ### Practical model for this app
-1. Browser encrypts each selected file with a per-upload symmetric key (e.g., AES-GCM via WebCrypto).
-2. Browser uploads ciphertext plus metadata (nonce/IV, algorithm version, optional wrapped key).
-3. Origin receives ciphertext from Cloudflare Tunnel.
-4. Decrypt at trusted origin boundary (or in a separate trusted decrypt service) and then pass plaintext to OSCAR.
+1. Browser encrypts each upload batch with a per-batch AES-256-GCM key (WebCrypto).
+2. Browser wraps that batch key with the server RSA-OAEP public key from `/api/upload-encryption-key`.
+3. Browser uploads only ciphertext files plus metadata (`wrappedKey`, `fileMetadata`, `keyId`).
+4. Origin unwraps and decrypts after the tunnel, then writes plaintext files for OSCAR ingestion.
 
 ### Important trade-offs
 - This is not pure end-to-end encryption if the server decrypts for OSCAR; it is best described as **application-layer encryption through Cloudflare**.

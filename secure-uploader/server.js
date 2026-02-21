@@ -24,6 +24,7 @@ const OSCAR_BASE_URL = process.env.OSCAR_BASE_URL || 'http://oscar:3000';
 const OSCAR_DNS_FAMILY = Number(process.env.OSCAR_DNS_FAMILY || 4);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const ENCRYPTED_FILE_SIZE_LIMIT = MAX_FILE_SIZE + 1024;
 const USERNAME_MAX_LENGTH = 128;
 const PASSWORD_MAX_LENGTH = 256;
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
@@ -38,6 +39,16 @@ const UPLOAD_SESSION_TTL_MS = 30 * 60 * 1000;
 const activeAuthSessions = new Map();
 const consumedLaunchTokens = new Map();
 const pendingUploadSessions = new Map();
+
+const uploadEncryptionKeyPair = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+});
+const UPLOAD_ENCRYPTION_KEY_ID = crypto.createHash('sha256')
+  .update(uploadEncryptionKeyPair.publicKey)
+  .digest('base64url')
+  .slice(0, 16);
 
 let oscarTarget;
 try {
@@ -423,7 +434,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   preservePath: true,
   limits: {
-    fileSize: MAX_FILE_SIZE,
+    fileSize: ENCRYPTED_FILE_SIZE_LIMIT,
     files: 5000,
   },
 });
@@ -491,6 +502,97 @@ function cleanupPendingUploadSessions() {
       pendingUploadSessions.delete(sessionId);
     }
   }
+}
+
+function parseEncryptedUploadPayload(body, files) {
+  const wrappedKey = typeof body.wrappedKey === 'string' ? body.wrappedKey.trim() : '';
+  const keyId = typeof body.keyId === 'string' ? body.keyId.trim() : '';
+  const metadataRaw = typeof body.fileMetadata === 'string' ? body.fileMetadata : '';
+
+  if (!wrappedKey && !keyId && !metadataRaw) {
+    return { enabled: false };
+  }
+
+  if (!wrappedKey || !keyId || !metadataRaw) {
+    return { error: 'Incomplete encryption metadata' };
+  }
+
+  if (keyId !== UPLOAD_ENCRYPTION_KEY_ID) {
+    return { error: 'Unknown encryption key id' };
+  }
+
+  let metadata;
+  try {
+    metadata = JSON.parse(metadataRaw);
+  } catch (_error) {
+    return { error: 'Invalid encryption metadata' };
+  }
+
+  if (!Array.isArray(metadata) || metadata.length !== files.length) {
+    return { error: 'Encryption metadata must match uploaded file count' };
+  }
+
+  let aesKey;
+  try {
+    const wrapped = Buffer.from(wrappedKey, 'base64');
+    aesKey = crypto.privateDecrypt({
+      key: uploadEncryptionKeyPair.privateKey,
+      oaepHash: 'sha256',
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+    }, wrapped);
+  } catch (_error) {
+    return { error: 'Unable to unwrap upload key' };
+  }
+
+  if (aesKey.length !== 32) {
+    return { error: 'Invalid upload key length' };
+  }
+
+  const byEncryptedName = new Map();
+  for (const item of metadata) {
+    if (!item || typeof item !== 'object') return { error: 'Invalid file metadata entry' };
+    const encryptedName = typeof item.encryptedName === 'string' ? item.encryptedName : '';
+    const relativePath = sanitizeUploadRelativePath(item.relativePath);
+    const ivRaw = typeof item.iv === 'string' ? item.iv : '';
+    if (!encryptedName || !relativePath || !ivRaw) {
+      return { error: 'Invalid file metadata entry' };
+    }
+
+    let iv;
+    try {
+      iv = Buffer.from(ivRaw, 'base64');
+    } catch (_error) {
+      return { error: 'Invalid encryption IV encoding' };
+    }
+
+    if (iv.length !== 12) {
+      return { error: 'Invalid encryption IV length' };
+    }
+
+    if (byEncryptedName.has(encryptedName)) {
+      return { error: 'Duplicate encrypted filename metadata' };
+    }
+
+    byEncryptedName.set(encryptedName, { relativePath, iv });
+  }
+
+  return {
+    enabled: true,
+    aesKey,
+    byEncryptedName,
+  };
+}
+
+function decryptUploadedBuffer(buffer, aesKey, iv) {
+  if (!Buffer.isBuffer(buffer) || buffer.length <= 16) {
+    throw new Error('Encrypted payload is invalid');
+  }
+
+  const authTag = buffer.subarray(buffer.length - 16);
+  const ciphertext = buffer.subarray(0, buffer.length - 16);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
 function parseUploadBatchMetadata(body) {
@@ -570,6 +672,14 @@ app.post('/api/oscar-launch', authMiddleware, (req, res) => {
   res.json({ launchUrl: `/oscar/login?token=${encodeURIComponent(launchToken)}` });
 });
 
+app.get('/api/upload-encryption-key', authMiddleware, (_req, res) => {
+  res.json({
+    keyId: UPLOAD_ENCRYPTION_KEY_ID,
+    algorithm: 'RSA-OAEP-256/AES-256-GCM',
+    publicKeyPem: uploadEncryptionKeyPair.publicKey,
+  });
+});
+
 app.get('/api/folders/:folder/files', authMiddleware, async (req, res) => {
   const folder = sanitizeFolderName(req.params.folder);
   if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
@@ -646,24 +756,32 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       uploadSession.expiresAt = Date.now() + UPLOAD_SESSION_TTL_MS;
     }
 
-    const incomingBasenames = files.map((file) => path.basename(file.originalname));
-    if (uploadSession) {
-      for (const basename of incomingBasenames) {
-        if (REQUIRED_ALWAYS.includes(basename)) {
-          uploadSession.seenRequired.add(basename);
-        }
-      }
-    } else {
-      for (const requiredName of REQUIRED_ALWAYS) {
-        if (!incomingBasenames.includes(requiredName)) {
-          return res.status(400).json({ error: `Missing required file: ${requiredName}` });
-        }
-      }
+    const encryptedPayload = parseEncryptedUploadPayload(req.body || {}, files);
+    if (encryptedPayload.error) {
+      return res.status(400).json({ error: encryptedPayload.error });
     }
 
     const dedupe = new Set();
+    const resolvedBasenames = [];
     for (const file of files) {
-      const relativePath = sanitizeUploadRelativePath(file.originalname);
+      let relativePath;
+      let decryptedBuffer = file.buffer;
+
+      if (encryptedPayload.enabled) {
+        const metadata = encryptedPayload.byEncryptedName.get(file.originalname);
+        if (!metadata) {
+          return res.status(400).json({ error: `Missing encryption metadata for ${file.originalname}` });
+        }
+        relativePath = metadata.relativePath;
+        try {
+          decryptedBuffer = decryptUploadedBuffer(file.buffer, encryptedPayload.aesKey, metadata.iv);
+        } catch (_error) {
+          return res.status(400).json({ error: `Unable to decrypt file: ${relativePath}` });
+        }
+      } else {
+        relativePath = sanitizeUploadRelativePath(file.originalname);
+      }
+
       if (!relativePath) {
         return res.status(400).json({ error: `Invalid file path: ${file.originalname}` });
       }
@@ -674,11 +792,27 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       if (uploadSession && uploadSession.seenPaths.has(relativePath)) {
         return res.status(400).json({ error: `Duplicate filename across batches: ${relativePath}` });
       }
+      if (decryptedBuffer.length > MAX_FILE_SIZE) {
+        return res.status(400).json({ error: `File exceeds 10MB: ${relativePath}` });
+      }
+
       dedupe.add(relativePath);
       file.safeRelativePath = relativePath;
+      file.decryptedBuffer = decryptedBuffer;
+      resolvedBasenames.push(path.basename(relativePath));
+    }
 
-      if (file.size > MAX_FILE_SIZE) {
-        return res.status(400).json({ error: `File exceeds 10MB: ${relativePath}` });
+    if (uploadSession) {
+      for (const basename of resolvedBasenames) {
+        if (REQUIRED_ALWAYS.includes(basename)) {
+          uploadSession.seenRequired.add(basename);
+        }
+      }
+    } else {
+      for (const requiredName of REQUIRED_ALWAYS) {
+        if (!resolvedBasenames.includes(requiredName)) {
+          return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+        }
       }
     }
 
@@ -695,7 +829,7 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       if (fs.existsSync(destination)) {
         await ensureOwnership(destination);
       }
-      await fsp.writeFile(destination, file.buffer, { mode: 0o640 });
+      await fsp.writeFile(destination, file.decryptedBuffer, { mode: 0o640 });
       await ensureOwnership(destination);
 
       if (uploadSession) {
@@ -774,7 +908,7 @@ app.get('/{*splat}', (_req, res) => {
 app.use((err, _req, res, _next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'File exceeds 10MB limit' });
+      return res.status(400).json({ error: 'File exceeds encrypted upload payload limit' });
     }
     if (err.code === 'LIMIT_FILE_COUNT') {
       return res.status(400).json({ error: 'Too many files in one upload (max 5000)' });
