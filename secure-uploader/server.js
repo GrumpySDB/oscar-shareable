@@ -770,6 +770,10 @@ app.get('/privacy-security-policy', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'privacy-security-policy.html'));
 });
 
+app.get('/how-to-uploader', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'how-to-uploader.html'));
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/{*splat}', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
