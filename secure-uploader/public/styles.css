@@ -216,3 +216,29 @@ button.oscar-cta:hover {
   background: #0b6738;
 }
 
+
+.page-footer {
+  text-align: center;
+  margin: -1rem 0 2rem;
+}
+
+.policy-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.policy-link:hover,
+.policy-link:focus {
+  text-decoration: underline;
+}
+
+.policy-container {
+  min-height: 100vh;
+  padding-top: 2.5rem;
+  padding-bottom: 2.5rem;
+}
+
+.policy-card {
+  line-height: 1.6;
+}

@@ -766,6 +766,10 @@ app.get('/oscar/login', (req, res) => {
 app.use('/oscar', requireOscarSession, proxyOscarRequest);
 app.use('/websockify', requireOscarSession, proxyOscarRequest);
 
+app.get('/privacy-security-policy', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacy-security-policy.html'));
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/{*splat}', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
