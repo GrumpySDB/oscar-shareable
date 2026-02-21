@@ -13,8 +13,8 @@ let selectedDateMs = 0;
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
 const loginError = document.getElementById('loginError');
-const statusPanel = document.getElementById('statusPanel');
-const statusMessage = document.getElementById('statusMessage');
+const appMessage = document.getElementById('appMessage');
+const summary = document.getElementById('summaryCounts');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
 

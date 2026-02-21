@@ -211,6 +211,14 @@ button.danger {
   display: block;
 }
 
+.summary .message {
+  margin-top: 0.6rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .progress-wrap {
   width: 100%;
   height: 14px;
@@ -236,13 +244,6 @@ button.danger {
   min-height: 0;
   display: none;
   color: var(--success);
-  font-weight: 600;
-  margin-top: 0;
-  line-height: 1.4;
-}
-
-.status-panel.has-message .status-message {
-  display: block;
 }
 
 .status-message .status-details {
@@ -268,117 +269,4 @@ button.oscar-cta {
 
 button.oscar-cta:hover {
   background: #0b6738;
-}
-
-
-.page-footer {
-  margin: 0 auto 2rem;
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  padding: 0 1rem;
-}
-
-.footer-links {
-  width: fit-content;
-  max-width: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.55rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: linear-gradient(180deg, #fbfdff 0%, #f3f7ff 100%);
-  box-shadow: 0 10px 24px rgba(36, 87, 245, 0.08);
-}
-
-.policy-link {
-  color: #1f4dd3;
-  font-weight: 600;
-  text-decoration: none;
-  padding: 0.3rem 0.5rem;
-  border-radius: 8px;
-  transition: background-color 0.16s ease, color 0.16s ease;
-}
-
-.policy-link:hover,
-.policy-link:focus {
-  color: #143aab;
-  background: #e8efff;
-}
-
-.policy-container {
-  padding-top: 2.5rem;
-  padding-bottom: 2.5rem;
-}
-
-.policy-card {
-  line-height: 1.6;
-}
-
-
-.footer-sep {
-  color: #8895af;
-  margin: 0 0.1rem;
-  font-size: 0.9rem;
-}
-
-.help-container {
-  padding-top: 2.5rem;
-  padding-bottom: 2.5rem;
-}
-
-.help-card {
-  width: min(1020px, 100%);
-  line-height: 1.55;
-}
-
-.help-section {
-  margin-top: 1.5rem;
-}
-
-.help-image {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: #f8faff;
-  margin: 0.6rem 0 0.9rem;
-}
-
-.help-example {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: #f9fbff;
-  padding: 0.8rem 1rem;
-}
-
-.help-example h3 {
-  margin: 0 0 0.5rem;
-}
-
-.help-example pre {
-  margin: 0;
-  white-space: pre-wrap;
-  font-size: 0.95rem;
-}
-
-.warning-panel {
-  border: 1px solid #f0d48b;
-  background: #fff9ea;
-  border-radius: 12px;
-  padding: 0.8rem 1rem;
-}
-
-
-@media (max-width: 600px) {
-  .header-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .footer-links {
-    border-radius: 14px;
-  }
 }
