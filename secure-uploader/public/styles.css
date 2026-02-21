@@ -182,6 +182,13 @@ button.ghost:focus {
   transform: translateY(-1px);
 }
 
+.header-link-btn:focus-visible,
+button.ghost:focus-visible,
+.policy-link:focus-visible {
+  outline: 2px solid #9fb6ff;
+  outline-offset: 2px;
+}
+
 button.danger {
   background: var(--danger);
 }
@@ -269,4 +276,50 @@ button.oscar-cta {
 
 button.oscar-cta:hover {
   background: #0b6738;
+}
+
+.page-footer {
+  margin-top: auto;
+  padding: 1.1rem 1rem 1.5rem;
+}
+
+.footer-links {
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 0.7rem 0.95rem;
+  border: 1px solid #d8e2fb;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f7faff 0%, #edf3ff 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  box-shadow: 0 8px 18px rgba(36, 87, 245, 0.08);
+}
+
+.policy-link {
+  color: #2348ab;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.92rem;
+  border-radius: 8px;
+  padding: 0.2rem 0.45rem;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.policy-link:hover {
+  background: #e4ecff;
+  color: #1a3d9f;
+}
+
+.footer-sep {
+  color: #8094c6;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 560px) {
+  .footer-sep {
+    display: none;
+  }
 }
