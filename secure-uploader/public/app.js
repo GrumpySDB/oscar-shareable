@@ -13,8 +13,8 @@ let selectedDateMs = 0;
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
 const loginError = document.getElementById('loginError');
-const summaryCounts = document.getElementById('summaryCounts');
-const summaryStatus = document.getElementById('summaryStatus');
+const statusPanel = document.getElementById('statusPanel');
+const statusMessage = document.getElementById('statusMessage');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
 
@@ -52,9 +52,49 @@ function showApp() {
   appCard.classList.remove('hidden');
 }
 
+let summaryMarkup = '';
+let currentMessage = '';
+let currentMessageIsError = false;
+
+function renderStatusPanel() {
+  const hasContent = Boolean(summaryMarkup) || Boolean(currentMessage);
+  statusPanel.classList.toggle('has-content', hasContent);
+  statusPanel.classList.toggle('error-state', Boolean(currentMessageIsError));
+
+  statusMessage.replaceChildren();
+
+  if (summaryMarkup) {
+    const summary = document.createElement('div');
+    summary.className = 'status-summary';
+    summary.innerHTML = summaryMarkup;
+    statusMessage.appendChild(summary);
+  }
+
+  if (currentMessage) {
+    const message = document.createElement('p');
+    message.className = 'status-text';
+    message.textContent = currentMessage;
+    statusMessage.appendChild(message);
+  }
+}
+
 function setMessage(message, isError = false) {
-  summaryStatus.classList.toggle('error-state', Boolean(isError));
-  summaryStatus.textContent = message;
+  currentMessage = message;
+  currentMessageIsError = Boolean(isError);
+  renderStatusPanel();
+}
+
+function setSummary(validFiles, skippedFiles) {
+  summaryMarkup = [
+    `<strong>Valid files to upload:</strong> ${validFiles}`,
+    `<br><strong>Files skipped:</strong> ${skippedFiles}`,
+  ].join('');
+  renderStatusPanel();
+}
+
+function clearSummary() {
+  summaryMarkup = '';
+  renderStatusPanel();
 }
 
 function getSixMonthsAgo(referenceTime = Date.now()) {
@@ -238,7 +278,7 @@ function resetPreparedState(clearProgress = false) {
   preparedFolder = '';
   selectedDateMs = 0;
   uploadBtn.disabled = true;
-  summaryCounts.textContent = '';
+  clearSummary();
   if (clearProgress) {
     progressBar.style.width = '0%';
   }
@@ -312,10 +352,7 @@ async function scanAndPrepare() {
 
   const skippedTotal = skippedExisting + skippedInvalid;
   if (eligible.length === 0) {
-    summaryCounts.innerHTML = [
-      `<strong>Valid files to upload:</strong> 0`,
-      `<br><strong>Files skipped:</strong> ${skippedTotal}`,
-    ].join('');
+    setSummary(0, skippedTotal);
     setMessage('Invalid or duplicate SD card data detected. Upload is disabled.', true);
     return;
   }
@@ -333,10 +370,7 @@ async function scanAndPrepare() {
   selectedDateMs = selectedDate.getTime();
   uploadBtn.disabled = false;
 
-  summaryCounts.innerHTML = [
-    `<strong>Valid files to upload:</strong> ${eligible.length}`,
-    `<br><strong>Files skipped:</strong> ${skippedTotal}`,
-  ].join('');
+  setSummary(eligible.length, skippedTotal);
   setMessage('Resmed SD card data detected.');
 }
 

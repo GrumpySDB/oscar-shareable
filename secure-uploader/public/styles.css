@@ -140,13 +140,39 @@ button.danger {
   margin: 0.4rem 0 0.6rem;
 }
 
-.summary {
+.status-panel {
+  display: none;
   margin-top: 1rem;
-  background: #f8faff;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 0.8rem;
-  min-height: 44px;
+  border-radius: 12px;
+  padding: 0.85rem 0.9rem;
+  background: linear-gradient(180deg, #fbfdff 0%, #f6f9ff 100%);
+}
+
+.status-panel.has-content {
+  display: block;
+}
+
+.status-message {
+  line-height: 1.4;
+}
+
+.status-summary {
+  color: var(--text);
+}
+
+.status-text {
+  margin: 0;
+  color: var(--success);
+  font-weight: 600;
+}
+
+.status-summary + .status-text {
+  margin-top: 0.55rem;
+}
+
+.status-panel.error-state .status-text {
+  color: var(--danger);
 }
 
 .progress-wrap {
@@ -170,19 +196,6 @@ button.danger {
   min-height: 20px;
 }
 
-.message {
-  margin-top: 0.7rem;
-  min-height: 20px;
-  color: var(--success);
-  padding: 0.6rem 0.75rem;
-  border-radius: 10px;
-}
-
-.message.error-state {
-  color: var(--danger);
-  background: #fff2f2;
-  border: 1px solid #f0cccc;
-}
 button.oscar-cta {
   background: #0e7a43;
   font-size: 1.1rem;
