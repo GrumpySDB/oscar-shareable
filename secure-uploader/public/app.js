@@ -328,8 +328,8 @@ function resetPreparedState(clearProgress = false) {
 function getUploadCompleteMessage() {
   const destinationFolder = document.getElementById('folderName').value.trim() || preparedFolder;
   if (preparedUploadType === 'sdcard') {
-    const uploadedFolder = destinationFolder || preparedSourceRootFolder || preparedFolder;
-    return `Upload Complete.  Import your SD Card data from config>SDCARD>${destinationFolder}>${preparedFolder}`;
+    const uploadedFolder = preparedSourceRootFolder || preparedFolder || destinationFolder;
+    return `Upload Complete.  Import your SD Card data from config>SDCARD>${destinationFolder}>${uploadedFolder}`;
   }
 
   return `Upload Complete.  Import your Oximetry data from config>SDCARD>${destinationFolder}>Oximetry`;
@@ -470,8 +470,19 @@ async function scanAndPrepare() {
 
   const skippedTotal = skippedExisting + skippedInvalid;
   if (eligible.length === 0) {
+    if (uploadType !== 'sdcard' && skippedExisting > 0 && skippedInvalid === 0) {
+      setMessage(
+        'No new oximetry files to upload. Existing files were skipped.',
+        false,
+        `Valid files to upload: 0 • Files skipped: ${skippedTotal}`,
+      );
+      return;
+    }
+
     setMessage(
-      'Invalid or duplicate SD card data detected. Upload is disabled.',
+      uploadType === 'sdcard'
+        ? 'Invalid or duplicate SD card data detected. Upload is disabled.'
+        : 'Invalid or duplicate oximetry data detected. Upload is disabled.',
       true,
       `Valid files to upload: 0 • Files skipped: ${skippedTotal}`,
     );
