@@ -535,7 +535,7 @@ function isSpo2Filename(name) {
   return /^.+\.spo2$/i.test(trimmed);
 }
 
-function mapToOximetryPath(uploadType, relativePath) {
+function mapToOximetryPath(uploadType, relativePath, wellueDbParents = null) {
   const segments = relativePath.split('/');
   const basename = segments[segments.length - 1] || '';
 
@@ -555,6 +555,9 @@ function mapToOximetryPath(uploadType, relativePath) {
   const folderName = segments[segments.length - 2];
   if (!isNumericFolderName(folderName)) return null;
 
+  const datasetParent = segments.slice(0, -2).join('/');
+  if (!(wellueDbParents instanceof Set) || !wellueDbParents.has(datasetParent)) return null;
+
   return path.posix.join('Oximetry', folderName, basename);
 }
 
@@ -562,10 +565,42 @@ function hasWellueDatabaseFile(files) {
   return files.some((file) => {
     const relativePath = sanitizeUploadRelativePath(file.originalname);
     if (!relativePath) return false;
-    const segments = relativePath.split('/');
+    const segments = relativePath.split('/').filter(Boolean);
     const basename = segments[segments.length - 1] || '';
     return basename.toLowerCase() === 'db_o2.db';
   });
+}
+
+function getWellueDbParentPaths(files) {
+  const dbParents = new Set();
+  for (const file of files) {
+    const relativePath = sanitizeUploadRelativePath(file.originalname);
+    if (!relativePath) continue;
+    const segments = relativePath.split('/').filter(Boolean);
+    const basename = segments[segments.length - 1] || '';
+    if (basename.toLowerCase() !== 'db_o2.db') continue;
+    dbParents.add(segments.slice(0, -1).join('/'));
+  }
+  return dbParents;
+}
+
+function inferUploadType(uploadType, files) {
+  if (uploadType !== 'sdcard') return uploadType;
+  const hasRequiredSdcard = files.some((file) => {
+    const basename = path.basename(file.originalname || '');
+    return REQUIRED_ALWAYS.includes(basename);
+  });
+  if (hasRequiredSdcard) return uploadType;
+
+  const hasSpo2 = files.some((file) => isSpo2Filename(path.basename(file.originalname || '')));
+  if (hasSpo2) return 'spo2';
+
+  const hasWellueDb = hasWellueDatabaseFile(files);
+  if (hasWellueDb) {
+    return 'wellue-spo2';
+  }
+
+  return uploadType;
 }
 
 app.post('/api/login', authLimiter, (req, res) => {
@@ -637,14 +672,7 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     if (!folder) return res.status(400).json({ error: 'Invalid folder name' });
 
     const selectedDate = Number(req.body.selectedDateMs);
-    if (!Number.isFinite(selectedDate)) return res.status(400).json({ error: 'Invalid selected date' });
-
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-    const minDate = getSixMonthsAgo().getTime();
-    if (selectedDate < minDate || selectedDate > today.getTime()) {
-      return res.status(400).json({ error: 'Selected date out of range' });
-    }
+    const normalizedSelectedDate = Number.isFinite(selectedDate) ? selectedDate : 0;
 
     const files = Array.isArray(req.files) ? req.files : [];
     if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
@@ -660,6 +688,19 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       batchIndex,
       uploadType,
     } = uploadMeta;
+    const effectiveUploadType = inferUploadType(uploadType, files);
+
+    if (effectiveUploadType === 'sdcard') {
+      if (!Number.isFinite(selectedDate)) return res.status(400).json({ error: 'Invalid selected date' });
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      const minDate = getSixMonthsAgo().getTime();
+      if (selectedDate < minDate || selectedDate > today.getTime()) {
+        return res.status(400).json({ error: 'Selected date out of range' });
+      }
+    }
+
+    const batchWellueDbParents = getWellueDbParentPaths(files);
 
     const folderPath = path.join(UPLOAD_ROOT, folder);
     let existingFiles = [];
@@ -677,12 +718,13 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
         }
         uploadSession = {
           folder,
-          selectedDate,
+          selectedDate: normalizedSelectedDate,
           totalBatches,
-          uploadType,
+          uploadType: effectiveUploadType,
           nextBatchIndex: 0,
           seenRequired: new Set(),
           seenPaths: new Set(),
+          seenWellueDbParents: new Set(),
           expiresAt: Date.now() + UPLOAD_SESSION_TTL_MS,
         };
         pendingUploadSessions.set(uploadSessionId, uploadSession);
@@ -690,9 +732,9 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
 
       if (
         uploadSession.folder !== folder
-        || uploadSession.selectedDate !== selectedDate
+        || uploadSession.selectedDate !== normalizedSelectedDate
         || uploadSession.totalBatches !== totalBatches
-        || uploadSession.uploadType !== uploadType
+        || uploadSession.uploadType !== effectiveUploadType
       ) {
         return res.status(400).json({ error: 'Upload session metadata mismatch. Restart upload.' });
       }
@@ -705,7 +747,7 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     }
 
     const incomingBasenames = files.map((file) => path.basename(file.originalname));
-    if (uploadType === 'sdcard') {
+    if (effectiveUploadType === 'sdcard') {
       if (uploadSession) {
         for (const basename of incomingBasenames) {
           if (REQUIRED_ALWAYS.includes(basename)) {
@@ -721,6 +763,13 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       }
     }
 
+    const effectiveWellueDbParents = new Set(batchWellueDbParents);
+    if (uploadSession && effectiveUploadType === 'wellue-spo2') {
+      for (const parentPath of uploadSession.seenWellueDbParents) {
+        effectiveWellueDbParents.add(parentPath);
+      }
+    }
+
     const dedupe = new Set();
     for (const file of files) {
       const relativePath = sanitizeUploadRelativePath(file.originalname);
@@ -728,7 +777,7 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
         return res.status(400).json({ error: `Invalid file path: ${file.originalname}` });
       }
 
-      let destinationPath = mapToOximetryPath(uploadType, relativePath);
+      let destinationPath = mapToOximetryPath(effectiveUploadType, relativePath, effectiveWellueDbParents);
       if (!destinationPath) {
         continue;
       }
@@ -741,9 +790,9 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
         return res.status(400).json({ error: `Duplicate filename across batches: ${destinationPath}` });
       }
 
-      const maxSize = uploadType === 'sdcard' ? MAX_FILE_SIZE : OXIMETRY_MAX_FILE_SIZE;
+      const maxSize = effectiveUploadType === 'sdcard' ? MAX_FILE_SIZE : OXIMETRY_MAX_FILE_SIZE;
       if (file.size > maxSize) {
-        if (uploadType === 'sdcard') {
+        if (effectiveUploadType === 'sdcard') {
           return res.status(400).json({ error: `File exceeds 10MB: ${destinationPath}` });
         }
         continue;
@@ -778,12 +827,18 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       }
     }
 
+    if (uploadSession && effectiveUploadType === 'wellue-spo2') {
+      for (const parentPath of batchWellueDbParents) {
+        uploadSession.seenWellueDbParents.add(parentPath);
+      }
+    }
+
     if (uploadSession) {
       const isFinalBatch = batchIndex === totalBatches - 1;
       uploadSession.nextBatchIndex += 1;
 
       if (isFinalBatch) {
-        if (uploadType === 'sdcard') {
+        if (effectiveUploadType === 'sdcard') {
           for (const requiredName of REQUIRED_ALWAYS) {
             if (!uploadSession.seenRequired.has(requiredName)) {
               pendingUploadSessions.delete(uploadSessionId);
