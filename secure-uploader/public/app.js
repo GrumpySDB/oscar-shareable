@@ -326,9 +326,9 @@ function resetPreparedState(clearProgress = false) {
 }
 
 function getUploadCompleteMessage() {
-  const destinationFolder = preparedFolder || document.getElementById('folderName').value.trim();
+  const destinationFolder = document.getElementById('folderName').value.trim() || preparedFolder;
   if (preparedUploadType === 'sdcard') {
-    const uploadedFolder = preparedSourceRootFolder || preparedFolder;
+    const uploadedFolder = destinationFolder || preparedSourceRootFolder || preparedFolder;
     return `Upload Complete.  Import your SD Card data from config>SDCARD>${destinationFolder}>${uploadedFolder}`;
   }
 
