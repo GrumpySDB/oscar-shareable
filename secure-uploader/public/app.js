@@ -117,11 +117,24 @@ function isAlwaysIncluded(name) {
 }
 
 function getRelativePath(file) {
-  return file.webkitRelativePath || file.name;
+  const rawPath = String(file?.webkitRelativePath || file?.name || '').trim();
+  const slashNormalized = rawPath.replace(/\\/g, '/');
+  return slashNormalized.replace(/^\.\//, '');
 }
 
 function getBasename(file) {
-  return file.name;
+  const relativePath = getRelativePath(file);
+  const segments = relativePath.split('/').filter(Boolean);
+  if (segments.length > 0) {
+    return segments[segments.length - 1];
+  }
+  return String(file?.name || '').split(/[\\/]/).pop() || '';
+}
+
+function isSpo2Filename(name) {
+  if (typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  return /^.+\.spo2$/i.test(trimmed);
 }
 
 
@@ -305,7 +318,7 @@ async function scanAndPrepare() {
   }
 
   const existingSet = new Set(existingNames);
-  const hasSpo2 = files.some((file) => getBasename(file).toLowerCase().endsWith('.spo2'));
+  const hasSpo2 = files.some((file) => isSpo2Filename(getBasename(file)));
   const dbO2Files = files.filter((file) => getBasename(file).toLowerCase() === 'db_o2.db');
   const isWellueOximetry = dbO2Files.length > 0;
 
@@ -358,7 +371,7 @@ async function scanAndPrepare() {
     }
 
     if (uploadType === 'spo2') {
-      if (!basename.toLowerCase().endsWith('.spo2') || file.size > OXIMETRY_MAX_FILE_SIZE) {
+      if (!isSpo2Filename(basename) || file.size > OXIMETRY_MAX_FILE_SIZE) {
         skippedInvalid += 1;
         continue;
       }
