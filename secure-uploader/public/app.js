@@ -1,6 +1,7 @@
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
 const OPTIONAL_ALWAYS = ['Identification.tgt', 'Identification.json', 'journal.nl'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const OXIMETRY_MAX_FILE_SIZE = 200 * 1024;
 const MAX_UPLOAD_FILES = 5000;
 const CLOUDFLARE_UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
 const SAFE_BATCH_LIMIT_BYTES = 90 * 1024 * 1024;
@@ -9,6 +10,7 @@ let token = sessionStorage.getItem('authToken') || null;
 let preparedFiles = [];
 let preparedFolder = '';
 let selectedDateMs = 0;
+let preparedUploadType = 'sdcard';
 
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
@@ -256,6 +258,7 @@ function resetPreparedState(clearProgress = false) {
   preparedFiles = [];
   preparedFolder = '';
   selectedDateMs = 0;
+  preparedUploadType = 'sdcard';
   uploadBtn.disabled = true;
   if (clearProgress) {
     progressBar.style.width = '0%';
@@ -300,12 +303,32 @@ async function scanAndPrepare() {
   }
 
   const existingSet = new Set(existingNames);
-  const requiredBasenames = new Set(files.map((file) => getBasename(file)));
+  const hasSpo2 = files.some((file) => getBasename(file).toLowerCase().endsWith('.spo2'));
+  const dbO2Files = files.filter((file) => getBasename(file).toLowerCase() === 'db_o2.db');
+  const isWellueOximetry = dbO2Files.length > 0;
 
-  for (const required of REQUIRED_ALWAYS) {
-    if (!requiredBasenames.has(required)) {
-      setMessage(`Invalid data: missing required file ${required}.`, true);
+  let uploadType = 'sdcard';
+  if (isWellueOximetry) {
+    uploadType = 'wellue-spo2';
+  } else if (hasSpo2) {
+    uploadType = 'spo2';
+  }
+
+  if (uploadType !== 'sdcard') {
+    const hasExistingSdData = REQUIRED_ALWAYS.every((requiredName) => existingSet.has(requiredName));
+    if (!hasExistingSdData) {
+      setMessage('Please upload SD card data before uploading oximetry data.', true);
       return;
+    }
+  }
+
+  if (uploadType === 'sdcard') {
+    const requiredBasenames = new Set(files.map((file) => getBasename(file)));
+    for (const required of REQUIRED_ALWAYS) {
+      if (!requiredBasenames.has(required)) {
+        setMessage(`Invalid data: missing required file ${required}.`, true);
+        return;
+      }
     }
   }
 
@@ -314,13 +337,59 @@ async function scanAndPrepare() {
   let skippedInvalid = 0;
 
   for (const file of files) {
-    if (!validateFile(file, selectedDate.getTime())) {
+    const relativePath = getRelativePath(file);
+    const basename = getBasename(file);
+
+    if (uploadType === 'sdcard') {
+      if (!validateFile(file, selectedDate.getTime())) {
+        skippedInvalid += 1;
+        continue;
+      }
+
+      if (!isAlwaysIncluded(basename) && existingSet.has(relativePath)) {
+        skippedExisting += 1;
+        continue;
+      }
+
+      eligible.push(file);
+      continue;
+    }
+
+    if (uploadType === 'spo2') {
+      if (!basename.toLowerCase().endsWith('.spo2') || file.size > OXIMETRY_MAX_FILE_SIZE) {
+        skippedInvalid += 1;
+        continue;
+      }
+
+      const destinationPath = `Oximetry/${basename}`;
+      if (existingSet.has(destinationPath)) {
+        skippedExisting += 1;
+        continue;
+      }
+
+      eligible.push(file);
+      continue;
+    }
+
+    const relativeParts = relativePath.split('/');
+    const fileName = relativeParts[relativeParts.length - 1] || '';
+    const parent = relativeParts.slice(0, -2).join('/');
+    const directFolder = relativeParts.length >= 2 ? relativeParts[relativeParts.length - 2] : '';
+    const hasExtension = fileName.includes('.');
+    const isInNumberedFolder = /^\d+$/.test(directFolder);
+    const dbSiblingExists = dbO2Files.some((dbFile) => {
+      const dbParts = getRelativePath(dbFile).split('/');
+      const dbParent = dbParts.slice(0, -1).join('/');
+      return dbParent === parent;
+    });
+
+    if (!isInNumberedFolder || !dbSiblingExists || hasExtension || file.size > OXIMETRY_MAX_FILE_SIZE || basename.toLowerCase() === 'db_o2.db') {
       skippedInvalid += 1;
       continue;
     }
 
-    const relativePath = getRelativePath(file);
-    if (!isAlwaysIncluded(getBasename(file)) && existingSet.has(relativePath)) {
+    const destinationPath = `Oximetry/${directFolder}/${fileName}`;
+    if (existingSet.has(destinationPath)) {
       skippedExisting += 1;
       continue;
     }
@@ -349,13 +418,16 @@ async function scanAndPrepare() {
   preparedFiles = eligible;
   preparedFolder = folder;
   selectedDateMs = selectedDate.getTime();
+  preparedUploadType = uploadType;
   uploadBtn.disabled = false;
 
-  setMessage(
-    'Resmed SD card data detected.',
-    false,
-    `Valid files to upload: ${eligible.length} • Files skipped: ${skippedTotal}`,
-  );
+  const detectionMessage = uploadType === 'spo2'
+    ? 'SPO2 Data Detected'
+    : uploadType === 'wellue-spo2'
+      ? 'Wellue/Viatom SPO2 Data Detected'
+      : 'Resmed SD card data detected.';
+
+  setMessage(detectionMessage, false, `Valid files to upload: ${eligible.length} • Files skipped: ${skippedTotal}`);
 }
 
 function createUploadBatches(files) {
@@ -385,6 +457,7 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes })
     const form = new FormData();
     form.append('folder', preparedFolder);
     form.append('selectedDateMs', String(selectedDateMs));
+    form.append('uploadType', preparedUploadType);
     form.append('uploadSessionId', sessionId);
     form.append('batchIndex', String(batchIndex));
     form.append('totalBatches', String(totalBatches));

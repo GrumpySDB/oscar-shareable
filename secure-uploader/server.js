@@ -24,6 +24,7 @@ const OSCAR_BASE_URL = process.env.OSCAR_BASE_URL || 'http://oscar:3000';
 const OSCAR_DNS_FAMILY = Number(process.env.OSCAR_DNS_FAMILY || 4);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const OXIMETRY_MAX_FILE_SIZE = 200 * 1024;
 const USERNAME_MAX_LENGTH = 128;
 const PASSWORD_MAX_LENGTH = 256;
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
@@ -497,7 +498,11 @@ function parseUploadBatchMetadata(body) {
   const uploadSessionId = typeof body.uploadSessionId === 'string' ? body.uploadSessionId.trim() : '';
   const totalBatches = Number(body.totalBatches ?? 1);
   const batchIndex = Number(body.batchIndex ?? 0);
+  const uploadType = typeof body.uploadType === 'string' ? body.uploadType.trim() : 'sdcard';
 
+  if (!['sdcard', 'spo2', 'wellue-spo2'].includes(uploadType)) {
+    return { error: 'Invalid upload type' };
+  }
   if (!Number.isInteger(totalBatches) || totalBatches < 1 || totalBatches > 200) {
     return { error: 'Invalid total batches value' };
   }
@@ -515,7 +520,62 @@ function parseUploadBatchMetadata(body) {
     uploadSessionId,
     totalBatches,
     batchIndex,
+    uploadType,
   };
+}
+
+
+function hasSdCardData(existingFileNames) {
+  const set = new Set(existingFileNames);
+  return REQUIRED_ALWAYS.every((name) => set.has(name));
+}
+
+function isNumericFolderName(segment) {
+  return /^\d+$/.test(segment);
+}
+
+function mapToOximetryPath(uploadType, relativePath) {
+  const segments = relativePath.split('/');
+  const basename = segments[segments.length - 1] || '';
+
+  if (uploadType === 'spo2') {
+    if (!basename.toLowerCase().endsWith('.spo2')) return null;
+    return path.posix.join('Oximetry', basename);
+  }
+
+  if (uploadType !== 'wellue-spo2') {
+    return relativePath;
+  }
+
+  if (basename.toLowerCase() === 'db_o2.db') return null;
+  if (basename.includes('.')) return null;
+  if (segments.length < 2) return null;
+
+  const folderName = segments[segments.length - 2];
+  if (!isNumericFolderName(folderName)) return null;
+
+  return path.posix.join('Oximetry', folderName, basename);
+}
+
+function isValidWellueFile(files, file) {
+  const relativePath = sanitizeUploadRelativePath(file.originalname);
+  if (!relativePath) return false;
+
+  const segments = relativePath.split('/');
+  if (segments.length < 2) return false;
+
+  const parentPath = segments.slice(0, -2).join('/');
+  const folderName = segments[segments.length - 2];
+  if (!isNumericFolderName(folderName)) return false;
+
+  return files.some((candidate) => {
+    const candidatePath = sanitizeUploadRelativePath(candidate.originalname);
+    if (!candidatePath) return false;
+    const candidateSegments = candidatePath.split('/');
+    const candidateParent = candidateSegments.slice(0, -1).join('/');
+    const candidateBase = candidateSegments[candidateSegments.length - 1] || '';
+    return candidateBase.toLowerCase() === 'db_o2.db' && candidateParent === parentPath;
+  });
 }
 
 app.post('/api/login', authLimiter, (req, res) => {
@@ -608,7 +668,18 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       uploadSessionId,
       totalBatches,
       batchIndex,
+      uploadType,
     } = uploadMeta;
+
+    const folderPath = path.join(UPLOAD_ROOT, folder);
+    let existingFiles = [];
+    if (fs.existsSync(folderPath)) {
+      existingFiles = await listFilenames(folderPath);
+    }
+
+    if (uploadType !== 'sdcard' && !hasSdCardData(existingFiles)) {
+      return res.status(400).json({ error: 'Please upload SD card data before uploading oximetry data.' });
+    }
 
     cleanupPendingUploadSessions();
 
@@ -623,6 +694,7 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
           folder,
           selectedDate,
           totalBatches,
+          uploadType,
           nextBatchIndex: 0,
           seenRequired: new Set(),
           seenPaths: new Set(),
@@ -635,6 +707,7 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
         uploadSession.folder !== folder
         || uploadSession.selectedDate !== selectedDate
         || uploadSession.totalBatches !== totalBatches
+        || uploadSession.uploadType !== uploadType
       ) {
         return res.status(400).json({ error: 'Upload session metadata mismatch. Restart upload.' });
       }
@@ -647,16 +720,18 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     }
 
     const incomingBasenames = files.map((file) => path.basename(file.originalname));
-    if (uploadSession) {
-      for (const basename of incomingBasenames) {
-        if (REQUIRED_ALWAYS.includes(basename)) {
-          uploadSession.seenRequired.add(basename);
+    if (uploadType === 'sdcard') {
+      if (uploadSession) {
+        for (const basename of incomingBasenames) {
+          if (REQUIRED_ALWAYS.includes(basename)) {
+            uploadSession.seenRequired.add(basename);
+          }
         }
-      }
-    } else {
-      for (const requiredName of REQUIRED_ALWAYS) {
-        if (!incomingBasenames.includes(requiredName)) {
-          return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+      } else {
+        for (const requiredName of REQUIRED_ALWAYS) {
+          if (!incomingBasenames.includes(requiredName)) {
+            return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+          }
         }
       }
     }
@@ -668,26 +743,44 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
         return res.status(400).json({ error: `Invalid file path: ${file.originalname}` });
       }
 
-      if (dedupe.has(relativePath)) {
-        return res.status(400).json({ error: `Duplicate filename in upload: ${relativePath}` });
+      let destinationPath = mapToOximetryPath(uploadType, relativePath);
+      if (!destinationPath) {
+        continue;
       }
-      if (uploadSession && uploadSession.seenPaths.has(relativePath)) {
-        return res.status(400).json({ error: `Duplicate filename across batches: ${relativePath}` });
-      }
-      dedupe.add(relativePath);
-      file.safeRelativePath = relativePath;
 
-      if (file.size > MAX_FILE_SIZE) {
-        return res.status(400).json({ error: `File exceeds 10MB: ${relativePath}` });
+      if (uploadType === 'wellue-spo2' && !isValidWellueFile(files, file)) {
+        continue;
       }
+
+      if (dedupe.has(destinationPath)) {
+        return res.status(400).json({ error: `Duplicate filename in upload: ${destinationPath}` });
+      }
+      if (uploadSession && uploadSession.seenPaths.has(destinationPath)) {
+        return res.status(400).json({ error: `Duplicate filename across batches: ${destinationPath}` });
+      }
+
+      const maxSize = uploadType === 'sdcard' ? MAX_FILE_SIZE : OXIMETRY_MAX_FILE_SIZE;
+      if (file.size > maxSize) {
+        if (uploadType === 'sdcard') {
+          return res.status(400).json({ error: `File exceeds 10MB: ${destinationPath}` });
+        }
+        continue;
+      }
+
+      dedupe.add(destinationPath);
+      file.safeRelativePath = destinationPath;
     }
 
-    const folderPath = path.join(UPLOAD_ROOT, folder);
+    if (dedupe.size === 0) {
+      return res.status(400).json({ error: 'No valid files uploaded for this upload type.' });
+    }
+
     await fsp.mkdir(folderPath, { recursive: true, mode: 0o750 });
     await ensureOwnership(UPLOAD_ROOT);
     await ensureOwnership(folderPath);
 
     for (const file of files) {
+      if (!file.safeRelativePath) continue;
       const destination = path.join(folderPath, file.safeRelativePath);
       const destinationDir = path.dirname(destination);
       await fsp.mkdir(destinationDir, { recursive: true, mode: 0o750 });
@@ -708,17 +801,20 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       uploadSession.nextBatchIndex += 1;
 
       if (isFinalBatch) {
-        for (const requiredName of REQUIRED_ALWAYS) {
-          if (!uploadSession.seenRequired.has(requiredName)) {
-            pendingUploadSessions.delete(uploadSessionId);
-            return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+        if (uploadType === 'sdcard') {
+          for (const requiredName of REQUIRED_ALWAYS) {
+            if (!uploadSession.seenRequired.has(requiredName)) {
+              pendingUploadSessions.delete(uploadSessionId);
+              return res.status(400).json({ error: `Missing required file: ${requiredName}` });
+            }
           }
         }
         pendingUploadSessions.delete(uploadSessionId);
       }
     }
 
-    return res.json({ uploaded: files.length, batchIndex, totalBatches });
+    const uploadedCount = files.filter((file) => Boolean(file.safeRelativePath)).length;
+    return res.json({ uploaded: uploadedCount, batchIndex, totalBatches });
   } catch (error) {
     return res.status(500).json({ error: 'Upload failed', detail: error.message });
   }
