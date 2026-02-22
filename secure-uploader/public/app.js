@@ -329,7 +329,7 @@ function getUploadCompleteMessage() {
   const destinationFolder = document.getElementById('folderName').value.trim() || preparedFolder;
   if (preparedUploadType === 'sdcard') {
     const uploadedFolder = destinationFolder || preparedSourceRootFolder || preparedFolder;
-    return `Upload Complete.  Import your SD Card data from config>SDCARD>${destinationFolder}>${uploadedFolder}`;
+    return `Upload Complete.  Import your SD Card data from config>SDCARD>${destinationFolder}>${preparedFolder}`;
   }
 
   return `Upload Complete.  Import your Oximetry data from config>SDCARD>${destinationFolder}>Oximetry`;
