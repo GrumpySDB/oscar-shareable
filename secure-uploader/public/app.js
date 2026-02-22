@@ -15,9 +15,9 @@ let preparedUploadType = 'sdcard';
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
 const loginError = document.getElementById('loginError');
-const statusPanel = document.getElementById('summary');
-const statusMessage = document.getElementById('appMessage');
-const appMessage = document.getElementById('appMessage');
+const statusPanel = document.getElementById('summary') || document.getElementById('statusPanel');
+const statusMessage = document.getElementById('appMessage') || document.getElementById('statusMessage');
+const appMessage = statusMessage;
 const summary = document.getElementById('summaryCounts');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
@@ -57,6 +57,8 @@ function showApp() {
 }
 
 function setMessage(message, isError = false, details = '') {
+  if (!statusPanel || !statusMessage) return;
+
   const normalizedMessage = typeof message === 'string' ? message.trim() : '';
   const normalizedDetails = typeof details === 'string' ? details.trim() : '';
   const hasMessage = Boolean(normalizedMessage) || Boolean(normalizedDetails);
