@@ -14,6 +14,7 @@ let preparedSourceRootFolder = '';
 let selectedDateMs = 0;
 let preparedUploadType = 'sdcard';
 let preparedWellueDbParents = [];
+let tinfoilHatModeEnabled = false;
 
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
@@ -319,6 +320,7 @@ function resetPreparedState(clearProgress = false) {
   selectedDateMs = 0;
   preparedUploadType = 'sdcard';
   preparedWellueDbParents = [];
+  tinfoilHatModeEnabled = document.getElementById('encryptionToggle')?.checked === true;
   uploadBtn.disabled = true;
   if (clearProgress) {
     progressBar.style.width = '0%';
@@ -514,6 +516,58 @@ async function scanAndPrepare() {
   setMessage(detectionMessage, false, `Valid files to upload: ${eligible.length} • Files skipped: ${skippedTotal}`);
 }
 
+
+function pemToArrayBuffer(pem) {
+  const base64 = String(pem || '').replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+/g, '');
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function getEncryptionPublicKey() {
+  const result = await api('/api/encryption-public-key');
+  if (!result || typeof result.publicKeyPem !== 'string') {
+    throw new Error('Unable to initialize Tinfoil Hat Mode encryption key.');
+  }
+  return window.crypto.subtle.importKey(
+    'spki',
+    pemToArrayBuffer(result.publicKeyPem),
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    false,
+    ['encrypt'],
+  );
+}
+
+async function buildEncryptedBatchPayload(files) {
+  const encryptionKey = await getEncryptionPublicKey();
+  const envelope = {};
+  const encryptedFiles = [];
+
+  for (const file of files) {
+    const plaintext = await file.arrayBuffer();
+    const aesKeyBytes = window.crypto.getRandomValues(new Uint8Array(32));
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const aesKey = await window.crypto.subtle.importKey('raw', aesKeyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+    const encrypted = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, plaintext);
+    const encryptedBytes = new Uint8Array(encrypted);
+    const tag = encryptedBytes.slice(encryptedBytes.length - 16);
+    const cipherText = encryptedBytes.slice(0, encryptedBytes.length - 16);
+    const wrappedKey = await window.crypto.subtle.encrypt({ name: 'RSA-OAEP' }, encryptionKey, aesKeyBytes);
+    const relativePath = getRelativePath(file);
+
+    envelope[relativePath] = {
+      wrappedKey: btoa(String.fromCharCode(...new Uint8Array(wrappedKey))),
+      iv: btoa(String.fromCharCode(...iv)),
+      tag: btoa(String.fromCharCode(...tag)),
+    };
+
+    encryptedFiles.push(new File([cipherText], relativePath, { type: 'application/octet-stream', lastModified: file.lastModified }));
+  }
+
+  return { encryptedFiles, envelope };
+}
+
 function createUploadBatches(files) {
   const batches = [];
   let currentBatch = [];
@@ -536,7 +590,7 @@ function createUploadBatches(files) {
   return batches;
 }
 
-function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes }) {
+function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, tinfoilHatMode, encryptionEnvelope }) {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     form.append('folder', preparedFolder);
@@ -548,6 +602,10 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes })
     form.append('uploadSessionId', sessionId);
     form.append('batchIndex', String(batchIndex));
     form.append('totalBatches', String(totalBatches));
+    form.append('tinfoilHatMode', tinfoilHatMode ? 'true' : 'false');
+    if (tinfoilHatMode && encryptionEnvelope) {
+      form.append('encryptionEnvelope', JSON.stringify(encryptionEnvelope));
+    }
     for (const file of files) {
       form.append('files', file, getRelativePath(file));
     }
@@ -615,18 +673,28 @@ async function uploadPreparedFiles() {
   if (requiresChunking) {
     setMessage(`Selected files total ${totalMb.toFixed(1)} MB, above Cloudflare's 100 MB request limit. Upload will run in ${batches.length} batches.`);
   } else {
-    setMessage(`Uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)...`);
+    setMessage(`Uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)${tinfoilHatModeEnabled ? ' with Tinfoil Hat Mode enabled' : ''}...`);
   }
 
   try {
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
       const batch = batches[batchIndex];
+      let filesToUpload = batch;
+      let encryptionEnvelope = null;
+      if (tinfoilHatModeEnabled) {
+        const encryptedPayload = await buildEncryptedBatchPayload(batch);
+        filesToUpload = encryptedPayload.encryptedFiles;
+        encryptionEnvelope = encryptedPayload.envelope;
+      }
+
       await uploadBatch({
-        files: batch,
+        files: filesToUpload,
         batchIndex,
         totalBatches: batches.length,
         sessionId,
         totalBytes,
+        tinfoilHatMode: tinfoilHatModeEnabled,
+        encryptionEnvelope,
       });
     }
 
@@ -690,6 +758,9 @@ document.getElementById('folderName').addEventListener('change', () => {
 });
 document.getElementById('startDate').addEventListener('change', () => {
   if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
+});
+document.getElementById('encryptionToggle').addEventListener('change', () => {
+  tinfoilHatModeEnabled = document.getElementById('encryptionToggle').checked;
 });
 document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);
 document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
