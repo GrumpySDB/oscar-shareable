@@ -92,10 +92,12 @@ function configureDateInput() {
   const input = document.getElementById('startDate');
   const today = new Date();
   const min = getSixMonthsAgo();
+  const defaultDate = new Date(today);
+  defaultDate.setDate(defaultDate.getDate() - 7);
   const todayIso = today.toISOString().slice(0, 10);
   input.max = todayIso;
   input.min = min.toISOString().slice(0, 10);
-  input.value = todayIso;
+  input.value = defaultDate.toISOString().slice(0, 10);
 }
 
 function folderNameValid(value) {
@@ -299,16 +301,6 @@ async function scanAndPrepare() {
   }
 
   const selectedDate = new Date(document.getElementById('startDate').value);
-  if (Number.isNaN(selectedDate.getTime())) {
-    setMessage('Please select a valid start date.', true);
-    return;
-  }
-
-  const now = Date.now();
-  if (selectedDate.getTime() < getSixMonthsAgo(now).getTime() || selectedDate.getTime() > now) {
-    setMessage('Start date must be within the past 6 months.', true);
-    return;
-  }
 
   let existingNames = [];
   try {
@@ -332,6 +324,17 @@ async function scanAndPrepare() {
   }
 
   if (uploadType === 'sdcard') {
+    if (Number.isNaN(selectedDate.getTime())) {
+      setMessage('Please select a valid start date.', true);
+      return;
+    }
+
+    const now = Date.now();
+    if (selectedDate.getTime() < getSixMonthsAgo(now).getTime() || selectedDate.getTime() > now) {
+      setMessage('Start date must be within the past 6 months.', true);
+      return;
+    }
+
     const requiredBasenames = new Set(files.map((file) => getBasename(file)));
     for (const required of REQUIRED_ALWAYS) {
       if (!requiredBasenames.has(required)) {
@@ -386,13 +389,11 @@ async function scanAndPrepare() {
     const directFolder = relativeParts.length >= 2 ? relativeParts[relativeParts.length - 2] : '';
     const hasExtension = fileName.includes('.');
     const isInNumberedFolder = /^\d+$/.test(directFolder);
-    const currentFolderPath = relativeParts.slice(0, -1).join('/');
     const dbSiblingExists = dbO2Files.some((dbFile) => {
       const dbParts = getRelativePath(dbFile).split('/');
       const dbParent = dbParts.slice(0, -1).join('/');
-      return dbParent === parent || dbParent === currentFolderPath;
+      return dbParent === parent;
     });
-
     if (!isInNumberedFolder || !dbSiblingExists || hasExtension || file.size > OXIMETRY_MAX_FILE_SIZE || basename.toLowerCase() === 'db_o2.db') {
       skippedInvalid += 1;
       continue;
