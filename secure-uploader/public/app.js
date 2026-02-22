@@ -386,10 +386,11 @@ async function scanAndPrepare() {
     const directFolder = relativeParts.length >= 2 ? relativeParts[relativeParts.length - 2] : '';
     const hasExtension = fileName.includes('.');
     const isInNumberedFolder = /^\d+$/.test(directFolder);
+    const currentFolderPath = relativeParts.slice(0, -1).join('/');
     const dbSiblingExists = dbO2Files.some((dbFile) => {
       const dbParts = getRelativePath(dbFile).split('/');
       const dbParent = dbParts.slice(0, -1).join('/');
-      return dbParent === parent;
+      return dbParent === parent || dbParent === currentFolderPath;
     });
 
     if (!isInNumberedFolder || !dbSiblingExists || hasExtension || file.size > OXIMETRY_MAX_FILE_SIZE || basename.toLowerCase() === 'db_o2.db') {
