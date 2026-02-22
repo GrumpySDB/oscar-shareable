@@ -332,7 +332,8 @@ async function scanAndPrepare() {
   }
 
   if (uploadType !== 'sdcard') {
-    const hasExistingSdData = REQUIRED_ALWAYS.every((requiredName) => existingSet.has(requiredName));
+    const existingBasenames = new Set(existingNames.map((name) => getBasename(String(name || ''))));
+    const hasExistingSdData = REQUIRED_ALWAYS.every((requiredName) => existingBasenames.has(requiredName));
     if (!hasExistingSdData) {
       setMessage('Please upload SD card data before uploading oximetry data.', true);
       return;

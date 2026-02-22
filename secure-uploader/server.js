@@ -526,8 +526,11 @@ function parseUploadBatchMetadata(body) {
 
 
 function hasSdCardData(existingFileNames) {
-  const set = new Set(existingFileNames);
-  return REQUIRED_ALWAYS.every((name) => set.has(name));
+  const basenames = new Set();
+  for (const existingName of existingFileNames) {
+    basenames.add(path.posix.basename(existingName));
+  }
+  return REQUIRED_ALWAYS.every((name) => basenames.has(name));
 }
 
 function isNumericFolderName(segment) {
