@@ -499,6 +499,34 @@ function parseUploadBatchMetadata(body) {
   const totalBatches = Number(body.totalBatches ?? 1);
   const batchIndex = Number(body.batchIndex ?? 0);
   const uploadType = typeof body.uploadType === 'string' ? body.uploadType.trim() : 'sdcard';
+  const rawWellueDbParents = typeof body.wellueDbParents === 'string' ? body.wellueDbParents : '[]';
+
+  let wellueDbParents = [];
+  try {
+    const parsed = JSON.parse(rawWellueDbParents);
+    if (!Array.isArray(parsed)) {
+      return { error: 'Invalid wellue db parent list' };
+    }
+    if (parsed.length > 1024) {
+      return { error: 'Too many wellue db parents' };
+    }
+    wellueDbParents = parsed;
+  } catch (_error) {
+    return { error: 'Invalid wellue db parent list' };
+  }
+
+  const sanitizedWellueDbParents = [];
+  for (const value of wellueDbParents) {
+    if (typeof value !== 'string') {
+      return { error: 'Invalid wellue db parent value' };
+    }
+    const sanitized = sanitizeUploadRelativePath(value);
+    if (!sanitized) {
+      return { error: 'Invalid wellue db parent value' };
+    }
+    if (sanitizedWellueDbParents.includes(sanitized)) continue;
+    sanitizedWellueDbParents.push(sanitized);
+  }
 
   if (!['sdcard', 'spo2', 'wellue-spo2'].includes(uploadType)) {
     return { error: 'Invalid upload type' };
@@ -521,6 +549,7 @@ function parseUploadBatchMetadata(body) {
     totalBatches,
     batchIndex,
     uploadType,
+    wellueDbParents: sanitizedWellueDbParents,
   };
 }
 
@@ -687,6 +716,7 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       totalBatches,
       batchIndex,
       uploadType,
+      wellueDbParents,
     } = uploadMeta;
     const effectiveUploadType = inferUploadType(uploadType, files);
 
@@ -763,7 +793,10 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       }
     }
 
-    const effectiveWellueDbParents = new Set(batchWellueDbParents);
+    const effectiveWellueDbParents = new Set(wellueDbParents);
+    for (const parentPath of batchWellueDbParents) {
+      effectiveWellueDbParents.add(parentPath);
+    }
     if (uploadSession && effectiveUploadType === 'wellue-spo2') {
       for (const parentPath of uploadSession.seenWellueDbParents) {
         effectiveWellueDbParents.add(parentPath);
