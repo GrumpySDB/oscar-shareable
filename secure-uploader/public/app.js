@@ -11,6 +11,7 @@ let preparedFiles = [];
 let preparedFolder = '';
 let selectedDateMs = 0;
 let preparedUploadType = 'sdcard';
+let preparedWellueDbParents = [];
 
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
@@ -278,6 +279,7 @@ function resetPreparedState(clearProgress = false) {
   preparedFolder = '';
   selectedDateMs = 0;
   preparedUploadType = 'sdcard';
+  preparedWellueDbParents = [];
   uploadBtn.disabled = true;
   if (clearProgress) {
     progressBar.style.width = '0%';
@@ -315,6 +317,14 @@ async function scanAndPrepare() {
   const hasSpo2 = files.some((file) => isSpo2Filename(getBasename(file)));
   const dbO2Files = files.filter((file) => getBasename(file).toLowerCase() === 'db_o2.db');
   const isWellueOximetry = dbO2Files.length > 0;
+  const wellueDbParents = Array.from(new Set(
+    dbO2Files
+      .map((file) => {
+        const parts = getRelativePath(file).split('/');
+        return parts.slice(0, -1).join('/');
+      })
+      .filter(Boolean),
+  ));
 
   let uploadType = 'sdcard';
   if (isWellueOximetry) {
@@ -430,6 +440,7 @@ async function scanAndPrepare() {
   preparedFolder = folder;
   selectedDateMs = selectedDate.getTime();
   preparedUploadType = uploadType;
+  preparedWellueDbParents = uploadType === 'wellue-spo2' ? wellueDbParents : [];
   uploadBtn.disabled = false;
 
   const detectionMessage = uploadType === 'spo2'
@@ -469,6 +480,9 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes })
     form.append('folder', preparedFolder);
     form.append('selectedDateMs', String(selectedDateMs));
     form.append('uploadType', preparedUploadType);
+    if (preparedUploadType === 'wellue-spo2' && preparedWellueDbParents.length > 0) {
+      form.append('wellueDbParents', JSON.stringify(preparedWellueDbParents));
+    }
     form.append('uploadSessionId', sessionId);
     form.append('batchIndex', String(batchIndex));
     form.append('totalBatches', String(totalBatches));
