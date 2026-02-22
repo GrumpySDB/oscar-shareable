@@ -534,12 +534,18 @@ function isNumericFolderName(segment) {
   return /^\d+$/.test(segment);
 }
 
+function isSpo2Filename(name) {
+  if (typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  return /^.+\.spo2$/i.test(trimmed);
+}
+
 function mapToOximetryPath(uploadType, relativePath) {
   const segments = relativePath.split('/');
   const basename = segments[segments.length - 1] || '';
 
   if (uploadType === 'spo2') {
-    if (!basename.toLowerCase().endsWith('.spo2')) return null;
+    if (!isSpo2Filename(basename)) return null;
     return path.posix.join('Oximetry', basename);
   }
 
