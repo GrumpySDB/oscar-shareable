@@ -7,8 +7,10 @@ const CLOUDFLARE_UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
 const SAFE_BATCH_LIMIT_BYTES = 90 * 1024 * 1024;
 
 let token = sessionStorage.getItem('authToken') || null;
+let currentUsername = '';
 let preparedFiles = [];
 let preparedFolder = '';
+let preparedSourceRootFolder = '';
 let selectedDateMs = 0;
 let preparedUploadType = 'sdcard';
 let preparedWellueDbParents = [];
@@ -113,6 +115,38 @@ function sanitizeUsernameInput(value) {
   return normalized;
 }
 
+function decodeJwtPayload(jwtToken) {
+  if (typeof jwtToken !== 'string') return null;
+  const parts = jwtToken.split('.');
+  if (parts.length < 2) return null;
+  const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+  const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
+  try {
+    const json = atob(padded);
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function getUsernameFromToken(jwtToken) {
+  const payload = decodeJwtPayload(jwtToken);
+  return payload && typeof payload.sub === 'string' ? payload.sub : '';
+}
+
+function getSelectedRootFolderName(files) {
+  if (!Array.isArray(files)) return '';
+
+  for (const file of files) {
+    const relativePath = getRelativePath(file);
+    const segments = relativePath.split('/').filter(Boolean);
+    if (segments.length > 1) return segments[0];
+  }
+
+  return '';
+}
+
 function isRequired(name) {
   return REQUIRED_ALWAYS.includes(name);
 }
@@ -211,9 +245,11 @@ async function checkSession() {
 
   try {
     await api('/api/session');
+    currentUsername = getUsernameFromToken(token);
     showApp();
   } catch (_err) {
     token = null;
+    currentUsername = '';
     sessionStorage.removeItem('authToken');
     showLogin();
   }
@@ -246,6 +282,7 @@ async function login() {
     });
 
     token = result.token;
+    currentUsername = username;
     sessionStorage.setItem('authToken', token);
     showApp();
   } catch (err) {
@@ -258,6 +295,7 @@ async function login() {
 async function logout() {
   const currentToken = token;
   token = null;
+  currentUsername = '';
   sessionStorage.removeItem('authToken');
 
   if (currentToken) {
@@ -277,6 +315,7 @@ async function logout() {
 function resetPreparedState(clearProgress = false) {
   preparedFiles = [];
   preparedFolder = '';
+  preparedSourceRootFolder = '';
   selectedDateMs = 0;
   preparedUploadType = 'sdcard';
   preparedWellueDbParents = [];
@@ -284,6 +323,15 @@ function resetPreparedState(clearProgress = false) {
   if (clearProgress) {
     progressBar.style.width = '0%';
   }
+}
+
+function getUploadCompleteMessage() {
+  if (preparedUploadType === 'sdcard') {
+    const uploadedFolder = preparedSourceRootFolder || preparedFolder;
+    return `Upload Complete.  Import your SD Card data from config>SDCARD>${currentUsername}>${uploadedFolder}`;
+  }
+
+  return `Upload Complete.  Import your Oximetry data from config>SDCARD>${currentUsername}>Oximetry`;
 }
 
 async function scanAndPrepare() {
@@ -302,6 +350,7 @@ async function scanAndPrepare() {
     return;
   }
 
+  const selectedRootFolder = getSelectedRootFolderName(files);
   const selectedDate = new Date(document.getElementById('startDate').value);
 
   let existingNames = [];
@@ -438,6 +487,7 @@ async function scanAndPrepare() {
 
   preparedFiles = eligible;
   preparedFolder = folder;
+  preparedSourceRootFolder = selectedRootFolder;
   selectedDateMs = selectedDate.getTime();
   preparedUploadType = uploadType;
   preparedWellueDbParents = uploadType === 'wellue-spo2' ? wellueDbParents : [];
@@ -569,7 +619,7 @@ async function uploadPreparedFiles() {
     }
 
     progressBar.style.width = '100%';
-    setMessage('Upload complete.');
+    setMessage(getUploadCompleteMessage());
     resetPreparedState();
   } catch (error) {
     setMessage(error.message, true);
