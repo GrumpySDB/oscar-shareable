@@ -683,7 +683,6 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
           nextBatchIndex: 0,
           seenRequired: new Set(),
           seenPaths: new Set(),
-          seenWellueDatabase: false,
           expiresAt: Date.now() + UPLOAD_SESSION_TTL_MS,
         };
         pendingUploadSessions.set(uploadSessionId, uploadSession);
@@ -706,11 +705,6 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     }
 
     const incomingBasenames = files.map((file) => path.basename(file.originalname));
-    const hasIncomingWellueDatabase = uploadType === 'wellue-spo2' && hasWellueDatabaseFile(files);
-    if (uploadSession && hasIncomingWellueDatabase) {
-      uploadSession.seenWellueDatabase = true;
-    }
-
     if (uploadType === 'sdcard') {
       if (uploadSession) {
         for (const basename of incomingBasenames) {
@@ -761,16 +755,6 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
 
     if (dedupe.size === 0) {
       return res.status(400).json({ error: 'No valid files uploaded for this upload type.' });
-    }
-
-    if (uploadType === 'wellue-spo2') {
-      const isFinalBatchForWellue = !uploadSession || batchIndex === totalBatches - 1;
-      if (isFinalBatchForWellue) {
-        const hasWellueDatabase = uploadSession ? uploadSession.seenWellueDatabase : hasIncomingWellueDatabase;
-        if (!hasWellueDatabase) {
-          return res.status(400).json({ error: 'Missing required file: db_o2.db' });
-        }
-      }
     }
 
     await fsp.mkdir(folderPath, { recursive: true, mode: 0o750 });
