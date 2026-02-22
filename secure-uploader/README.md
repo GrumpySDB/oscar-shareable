@@ -60,6 +60,9 @@ App URL: `https://localhost:50710`
 - Uploads are capped at 5,000 files per request; choose a later start date if scan finds more.
 - If selected uploads exceed Cloudflare's per-request gateway limits, the frontend automatically splits uploads into multiple smaller batches.
 - Users can delete all uploaded data for a folder.
+- `.spo2` uploads are auto-detected as oximetry data and stored under `<folder>/Oximetry/`; only `.spo2` files up to 200KB are accepted.
+- Wellue/Viatom oximetry uploads are auto-detected when `db_o2.db` is present; the `db_o2.db` file is ignored and files from sibling numbered folders are stored under `<folder>/Oximetry/<number>/` when they have no extension and are <=200KB.
+- Oximetry uploads are rejected unless SD-card baseline files (`Identification.crc` and `STR.edf`) already exist in the destination folder.
 
 ## Integrated OSCAR service
 - `docker-compose.yml` now runs the uploader and `rogerrum/docker-oscar:latest` together.

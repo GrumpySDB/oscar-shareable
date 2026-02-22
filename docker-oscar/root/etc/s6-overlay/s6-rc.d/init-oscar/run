@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -euo pipefail
-
 OSCAR_UID="${PUID:-911}"
 OSCAR_GID="${PGID:-911}"
 
