@@ -525,14 +525,6 @@ function parseUploadBatchMetadata(body) {
 }
 
 
-function hasSdCardData(existingFileNames) {
-  const basenames = new Set();
-  for (const existingName of existingFileNames) {
-    basenames.add(path.posix.basename(existingName));
-  }
-  return REQUIRED_ALWAYS.every((name) => basenames.has(name));
-}
-
 function isNumericFolderName(segment) {
   return /^\d+$/.test(segment);
 }
@@ -685,11 +677,6 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
     if (fs.existsSync(folderPath)) {
       existingFiles = await listFilenames(folderPath);
     }
-
-    if (uploadType !== 'sdcard' && !hasSdCardData(existingFiles)) {
-      return res.status(400).json({ error: 'Please upload SD card data before uploading oximetry data.' });
-    }
-
     cleanupPendingUploadSessions();
 
     let uploadSession = null;
