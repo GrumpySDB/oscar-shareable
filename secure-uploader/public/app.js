@@ -326,12 +326,13 @@ function resetPreparedState(clearProgress = false) {
 }
 
 function getUploadCompleteMessage() {
+  const destinationFolder = preparedFolder || document.getElementById('folderName').value.trim();
   if (preparedUploadType === 'sdcard') {
     const uploadedFolder = preparedSourceRootFolder || preparedFolder;
-    return `Upload Complete.  Import your SD Card data from config>SDCARD>${currentUsername}>${uploadedFolder}`;
+    return `Upload Complete.  Import your SD Card data from config>SDCARD>${destinationFolder}>${uploadedFolder}`;
   }
 
-  return `Upload Complete.  Import your Oximetry data from config>SDCARD>${currentUsername}>Oximetry`;
+  return `Upload Complete.  Import your Oximetry data from config>SDCARD>${destinationFolder}>Oximetry`;
 }
 
 async function scanAndPrepare() {
