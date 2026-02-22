@@ -216,3 +216,17 @@ button.oscar-cta:hover {
   background: #0b6738;
 }
 
+
+
+.toggle-row {
+  margin-top: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-weight: 600;
+}
+
+.toggle-row input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}

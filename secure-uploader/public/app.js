@@ -4,6 +4,73 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 5000;
 const CLOUDFLARE_UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
 const SAFE_BATCH_LIMIT_BYTES = 90 * 1024 * 1024;
+const ENCRYPTION_VERSION = 'v1';
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function getUploadEncryptionConfig() {
+  const config = await api('/api/upload-encryption-key');
+  if (!config || typeof config.publicKeyPem !== 'string' || typeof config.keyId !== 'string') {
+    throw new Error('Server encryption configuration unavailable.');
+  }
+  return config;
+}
+
+async function importServerPublicKey(publicKeyPem) {
+  const cleanPem = publicKeyPem.replace(/-----BEGIN PUBLIC KEY-----/g, '').replace(/-----END PUBLIC KEY-----/g, '').replace(/\s+/g, '');
+  const derBytes = Uint8Array.from(atob(cleanPem), (char) => char.charCodeAt(0));
+  return window.crypto.subtle.importKey(
+    'spki',
+    derBytes.buffer,
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    false,
+    ['encrypt'],
+  );
+}
+
+async function encryptBatchFiles(files, publicKey) {
+  const dataKey = await window.crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt'],
+  );
+  const rawKey = new Uint8Array(await window.crypto.subtle.exportKey('raw', dataKey));
+  const wrappedKey = new Uint8Array(await window.crypto.subtle.encrypt({ name: 'RSA-OAEP' }, publicKey, rawKey));
+
+  const encryptedFiles = [];
+  const fileMetadata = [];
+
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const relativePath = getRelativePath(file);
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const plaintext = new Uint8Array(await file.arrayBuffer());
+    const ciphertext = new Uint8Array(await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, dataKey, plaintext));
+    const encryptedName = `enc-${index}`;
+
+    encryptedFiles.push(new File([ciphertext], encryptedName, { type: 'application/octet-stream' }));
+    fileMetadata.push({
+      encryptedName,
+      relativePath,
+      iv: bytesToBase64(iv),
+    });
+  }
+
+  return {
+    wrappedKey: bytesToBase64(wrappedKey),
+    fileMetadata,
+    encryptedFiles,
+  };
+}
+
 
 let token = sessionStorage.getItem('authToken') || null;
 let preparedFiles = [];
@@ -18,6 +85,7 @@ const summaryCounts = document.getElementById('summaryCounts');
 const summaryStatus = document.getElementById('summaryStatus');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
+const encryptionToggle = document.getElementById('encryptionToggle');
 
 
 const loginBanner = document.getElementById('loginBanner');
@@ -346,6 +414,10 @@ async function scanAndPrepare() {
   setMessage('Resmed SD card data detected.');
 }
 
+function encryptionEnabled() {
+  return Boolean(encryptionToggle && encryptionToggle.checked);
+}
+
 function createUploadBatches(files) {
   const batches = [];
   let currentBatch = [];
@@ -368,18 +440,34 @@ function createUploadBatches(files) {
   return batches;
 }
 
-function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes }) {
-  return new Promise((resolve, reject) => {
-    const form = new FormData();
-    form.append('folder', preparedFolder);
-    form.append('selectedDateMs', String(selectedDateMs));
-    form.append('uploadSessionId', sessionId);
-    form.append('batchIndex', String(batchIndex));
-    form.append('totalBatches', String(totalBatches));
+async function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes }) {
+  const form = new FormData();
+  form.append('folder', preparedFolder);
+  form.append('selectedDateMs', String(selectedDateMs));
+  form.append('uploadSessionId', sessionId);
+  form.append('batchIndex', String(batchIndex));
+  form.append('totalBatches', String(totalBatches));
+
+  const encryptedMode = encryptionEnabled();
+  if (encryptedMode) {
+    const encryptionConfig = await getUploadEncryptionConfig();
+    const publicKey = await importServerPublicKey(encryptionConfig.publicKeyPem);
+    const encrypted = await encryptBatchFiles(files, publicKey);
+    form.append('keyId', encryptionConfig.keyId);
+    form.append('encryptionVersion', ENCRYPTION_VERSION);
+    form.append('wrappedKey', encrypted.wrappedKey);
+    form.append('fileMetadata', JSON.stringify(encrypted.fileMetadata));
+
+    for (const file of encrypted.encryptedFiles) {
+      form.append('files', file, file.name);
+    }
+  } else {
     for (const file of files) {
       form.append('files', file, getRelativePath(file));
     }
+  }
 
+  return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open('POST', '/api/upload');
     request.setRequestHeader('Authorization', `Bearer ${token}`);
@@ -394,7 +482,11 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes })
       const loadedMb = (event.loaded / (1024 * 1024)).toFixed(1);
       const batchMb = (event.total / (1024 * 1024)).toFixed(1);
       const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
-      setMessage(`Uploading batch ${batchIndex + 1}/${totalBatches} (${loadedMb}/${batchMb} MB, total ${totalMb} MB)...`);
+      if (encryptedMode) {
+        setMessage(`Uploading encrypted batch ${batchIndex + 1}/${totalBatches} (${loadedMb}/${batchMb} MB, plaintext total ${totalMb} MB)...`);
+      } else {
+        setMessage(`Uploading batch ${batchIndex + 1}/${totalBatches} (${loadedMb}/${batchMb} MB, total ${totalMb} MB)...`);
+      }
     };
 
     request.onload = () => {
@@ -443,7 +535,11 @@ async function uploadPreparedFiles() {
   if (requiresChunking) {
     setMessage(`Selected files total ${totalMb.toFixed(1)} MB, above Cloudflare's 100 MB request limit. Upload will run in ${batches.length} batches.`);
   } else {
-    setMessage(`Uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)...`);
+    if (encryptionEnabled()) {
+      setMessage(`Encrypting and uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)...`);
+    } else {
+      setMessage(`Uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)...`);
+    }
   }
 
   try {
