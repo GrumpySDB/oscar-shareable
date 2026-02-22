@@ -14,7 +14,6 @@ let preparedSourceRootFolder = '';
 let selectedDateMs = 0;
 let preparedUploadType = 'sdcard';
 let preparedWellueDbParents = [];
-let tinfoilHatModeEnabled = false;
 
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
@@ -171,6 +170,10 @@ function getBasename(file) {
   return String(file?.name || '').split(/[\\/]/).pop() || '';
 }
 
+function isTinfoilHatModeEnabled() {
+  return document.getElementById('encryptionToggle')?.checked === true;
+}
+
 function isSpo2Filename(name) {
   if (typeof name !== 'string') return false;
   const trimmed = name.trim();
@@ -320,7 +323,6 @@ function resetPreparedState(clearProgress = false) {
   selectedDateMs = 0;
   preparedUploadType = 'sdcard';
   preparedWellueDbParents = [];
-  tinfoilHatModeEnabled = document.getElementById('encryptionToggle')?.checked === true;
   uploadBtn.disabled = true;
   if (clearProgress) {
     progressBar.style.width = '0%';
@@ -660,6 +662,7 @@ async function uploadPreparedFiles() {
     return;
   }
 
+  const tinfoilHatModeEnabled = isTinfoilHatModeEnabled();
   uploadBtn.disabled = true;
 
   const totalBytes = preparedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
@@ -682,6 +685,7 @@ async function uploadPreparedFiles() {
       let filesToUpload = batch;
       let encryptionEnvelope = null;
       if (tinfoilHatModeEnabled) {
+        setMessage(`Preparing encryption for batch ${batchIndex + 1}/${batches.length}...`);
         const encryptedPayload = await buildEncryptedBatchPayload(batch);
         filesToUpload = encryptedPayload.encryptedFiles;
         encryptionEnvelope = encryptedPayload.envelope;
@@ -758,9 +762,6 @@ document.getElementById('folderName').addEventListener('change', () => {
 });
 document.getElementById('startDate').addEventListener('change', () => {
   if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
-});
-document.getElementById('encryptionToggle').addEventListener('change', () => {
-  tinfoilHatModeEnabled = document.getElementById('encryptionToggle').checked;
 });
 document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);
 document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
