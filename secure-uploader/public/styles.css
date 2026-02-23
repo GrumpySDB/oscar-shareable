@@ -449,6 +449,31 @@ button.oscar-cta:hover {
   padding: 0.5rem;
 }
 
+
+.help-subtabs {
+  margin: 0.75rem 0 0.7rem;
+}
+
+.help-subtabs .help-tab {
+  font-size: 0.93rem;
+  padding: 0.5rem 0.78rem;
+}
+
+.warning-panel {
+  margin-top: 1.6rem;
+  border: 1px solid #f0d19f;
+  border-left: 6px solid #d88a1c;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fffaf1 0%, #fff4de 100%);
+  padding: 1rem 1.05rem;
+  box-shadow: 0 10px 20px rgba(216, 138, 28, 0.14);
+}
+
+.warning-panel h2 {
+  margin-top: 0;
+  color: #8f4d00;
+}
+
 .help-card {
   overflow-wrap: anywhere;
 }
