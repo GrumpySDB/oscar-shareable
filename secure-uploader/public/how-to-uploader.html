@@ -21,7 +21,7 @@
         </button>
       </div>
 
-      <section class="help-tab-panel is-active" id="panel-sd" role="tabpanel" aria-labelledby="tab-sd">
+      <section class="help-tab-panel is-active" id="panel-sd" role="tabpanel" aria-labelledby="tab-sd" data-tab-group="__default">
         <section class="help-section">
           <h2>1) Upload from your SD card root folder</h2>
           <ol>
@@ -82,7 +82,7 @@
         </section>
       </section>
 
-      <section class="help-tab-panel" id="panel-oximetry" role="tabpanel" aria-labelledby="tab-oximetry" hidden>
+      <section class="help-tab-panel" id="panel-oximetry" role="tabpanel" aria-labelledby="tab-oximetry" data-tab-group="__default" hidden>
         <section class="help-section">
           <h2>1) Upload your CPAP SD card data first</h2>
           <p>
@@ -99,30 +99,41 @@
         </section>
 
         <section class="help-section">
-          <h2>3) Upload oximetry data from Wellue/Viatom devices</h2>
-          <ol>
-            <li>Click <strong>Browse</strong> and select the folder that contains <strong>db_o2.db</strong>.</li>
-            <li>Make sure that same folder also contains the numbered oximetry folder(s) created by your device.</li>
-            <li>Upload the selected folder.</li>
-          </ol>
-          <p>
-            After upload, all detected files will be available in
-            <strong>config/SDCARD/{Username}/Oximetry</strong> and can be imported in OSCAR with the
-            <strong>Wellue/Viatom import</strong> feature.
-          </p>
-        </section>
+          <h2>3) Select your oximetry device and upload data</h2>
 
-        <section class="help-section">
-          <h2>4) Upload oximetry data from EMAY and other <code>*.spo2</code> devices</h2>
-          <ol>
-            <li>Click <strong>Browse</strong> and locate the <strong>.spo2</strong> files you want to upload.</li>
-            <li>Select one or more <strong>.spo2</strong> files, then upload.</li>
-          </ol>
-          <p>
-            After upload, those files will be available in
-            <strong>config/SDCARD/{Username}/Oximetry</strong> and can be imported using OSCAR's
-            <strong>Oximetry import wizard</strong>.
-          </p>
+          <div class="help-tabs help-subtabs" role="tablist" aria-label="Oximetry devices">
+            <button class="help-tab is-active" id="tab-oximetry-wellue" role="tab" type="button" aria-selected="true" aria-controls="panel-oximetry-wellue" data-tab-target="panel-oximetry-wellue" data-tab-group="oximetry-device">
+              Wellue / Viatom
+            </button>
+            <button class="help-tab" id="tab-oximetry-emay" role="tab" type="button" aria-selected="false" aria-controls="panel-oximetry-emay" data-tab-target="panel-oximetry-emay" data-tab-group="oximetry-device">
+              EMAY / <code>.spo2</code>
+            </button>
+          </div>
+
+          <section class="help-tab-panel is-active" id="panel-oximetry-wellue" role="tabpanel" aria-labelledby="tab-oximetry-wellue" data-tab-group="oximetry-device">
+            <ol>
+              <li>Click <strong>Browse</strong> and select the folder that contains <strong>db_o2.db</strong>.</li>
+              <li>Make sure that same folder also contains the numbered oximetry folder(s) created by your device.</li>
+              <li>Upload the selected folder.</li>
+            </ol>
+            <p>
+              After upload, all detected files will be available in
+              <strong>config/SDCARD/{Username}/Oximetry</strong> and can be imported in OSCAR with the
+              <strong>Wellue/Viatom import</strong> feature.
+            </p>
+          </section>
+
+          <section class="help-tab-panel" id="panel-oximetry-emay" role="tabpanel" aria-labelledby="tab-oximetry-emay" data-tab-group="oximetry-device" hidden>
+            <ol>
+              <li>Click <strong>Browse</strong> and locate the <strong>.spo2</strong> files you want to upload.</li>
+              <li>Select one or more <strong>.spo2</strong> files, then upload.</li>
+            </ol>
+            <p>
+              After upload, those files will be available in
+              <strong>config/SDCARD/{Username}/Oximetry</strong> and can be imported using OSCAR's
+              <strong>Oximetry import wizard</strong>.
+            </p>
+          </section>
         </section>
       </section>
 
