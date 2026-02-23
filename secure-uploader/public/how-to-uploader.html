@@ -10,65 +10,131 @@
   <main class="container help-container">
     <article class="card help-card">
       <h1>How to Use the OSCAR Uploader</h1>
-      <p class="subtle">Follow these steps to upload your SD card data and import it into OSCAR.</p>
+      <p class="subtle">Choose a tab below for step-by-step upload instructions.</p>
 
-      <section class="help-section">
-        <h2>1) Upload from your SD card root folder</h2>
-        <ol>
-          <li>In the uploader, first enter your <strong>Username (folder name)</strong>.</li>
-          <li>Then click the <strong>Browse</strong> button for <strong>SD Card Folder</strong>.</li>
-          <li>Select your SD card's <strong>root folder</strong> (not a subfolder).</li>
-        </ol>
-        <p>
-          The root folder must contain the always required files:
-          <strong>Identification.crc</strong> and <strong>STR.edf</strong>.
-        </p>
-        <img class="help-image" src="/images/help-sd-root.svg" alt="Example of selecting an SD card root folder that includes Identification.crc and STR.edf" />
-        <div class="help-example">
-          <h3>Example SD card root structure</h3>
-          <pre>SDCARD/
+      <div class="help-tabs" role="tablist" aria-label="Help topics">
+        <button class="help-tab is-active" id="tab-sd" role="tab" type="button" aria-selected="true" aria-controls="panel-sd" data-tab-target="panel-sd">
+          How to Upload SD Card Data
+        </button>
+        <button class="help-tab" id="tab-oximetry" role="tab" type="button" aria-selected="false" aria-controls="panel-oximetry" data-tab-target="panel-oximetry">
+          How to Upload Oximetry Data
+        </button>
+      </div>
+
+      <section class="help-tab-panel is-active" id="panel-sd" role="tabpanel" aria-labelledby="tab-sd" data-tab-group="__default">
+        <section class="help-section">
+          <h2>1) Upload from your SD card root folder</h2>
+          <ol>
+            <li>In the uploader, first enter your <strong>Username (folder name)</strong>.</li>
+            <li>Then click the <strong>Browse</strong> button for <strong>SD Card Folder</strong>.</li>
+            <li>Select your SD card's <strong>root folder</strong> (not a subfolder).</li>
+          </ol>
+          <p>
+            The root folder must contain the always required files:
+            <strong>Identification.crc</strong> and <strong>STR.edf</strong>.
+          </p>
+          <img class="help-image" src="/images/help-sd-root.svg" alt="Example of selecting an SD card root folder that includes Identification.crc and STR.edf" />
+          <div class="help-example">
+            <h3>Example SD card root structure</h3>
+            <pre>SDCARD/
 ├── Identification.crc   (required)
 ├── STR.edf              (required)
 ├── DATALOG/
 └── SETTINGS/</pre>
-        </div>
+          </div>
+        </section>
+
+        <section class="help-section">
+          <h2>2) Proceed to OSCAR and open Profile</h2>
+          <p>
+            Click <strong>Proceed to OSCAR</strong>. Once OSCAR opens, you may need to click the <strong>Profile</strong>
+            tab at the top of the window.
+          </p>
+          <img class="help-image" src="/images/help-profile-tab.svg" alt="OSCAR top tabs with Profile highlighted" />
+        </section>
+
+        <section class="help-section">
+          <h2>3) Create a new profile</h2>
+          <ol>
+            <li>Click <strong>New Profile</strong>.</li>
+            <li>Set your <strong>username</strong>.</li>
+            <li>Set your <strong>time zone</strong>.</li>
+            <li>If you want, add an optional profile password.</li>
+            <li>Click <strong>Next</strong> until the profile is created.</li>
+          </ol>
+          <img class="help-image" src="/images/help-new-profile.svg" alt="New profile form showing user name, timezone, and optional password" />
+        </section>
+
+        <section class="help-section">
+          <h2>4) Import your uploaded SD card data</h2>
+          <ol>
+            <li>Click <strong>Import SD Card</strong>.</li>
+            <li>Click <strong>Choose a Folder</strong>.</li>
+            <li>Navigate to: <strong>config &gt; SDCARD &gt; your username &gt; your uploaded folder</strong>.</li>
+            <li>Select your uploaded folder, then click <strong>Choose</strong>.</li>
+          </ol>
+          <img class="help-image" src="/images/help-import-folder.svg" alt="Folder chooser showing config/SDCARD/user-name/uploaded-folder" />
+        </section>
+
+        <section class="help-section">
+          <h2>5) Review your data</h2>
+          <p>After import, click <strong>Daily View</strong> and navigate through your data.</p>
+        </section>
       </section>
 
-      <section class="help-section">
-        <h2>2) Proceed to OSCAR and open Profile</h2>
-        <p>
-          Click <strong>Proceed to OSCAR</strong>. Once OSCAR opens, you may need to click the <strong>Profile</strong>
-          tab at the top of the window.
-        </p>
-        <img class="help-image" src="/images/help-profile-tab.svg" alt="OSCAR top tabs with Profile highlighted" />
-      </section>
+      <section class="help-tab-panel" id="panel-oximetry" role="tabpanel" aria-labelledby="tab-oximetry" data-tab-group="__default" hidden>
+        <section class="help-section">
+          <h2>1) Upload your CPAP SD card data first</h2>
+          <p>
+            Before uploading oximetry files, complete the SD card upload steps in the
+            <strong>How to Upload SD Card Data</strong> tab.
+          </p>
+        </section>
 
-      <section class="help-section">
-        <h2>3) Create a new profile</h2>
-        <ol>
-          <li>Click <strong>New Profile</strong>.</li>
-          <li>Set your <strong>username</strong>.</li>
-          <li>Set your <strong>time zone</strong>.</li>
-          <li>If you want, add an optional profile password.</li>
-          <li>Click <strong>Next</strong> until the profile is created.</li>
-        </ol>
-        <img class="help-image" src="/images/help-new-profile.svg" alt="New profile form showing user name, timezone, and optional password" />
-      </section>
+        <section class="help-section">
+          <h2>2) Enter your username as the folder name</h2>
+          <p>
+            Use the same <strong>Username (folder name)</strong> that you used when uploading your CPAP SD card data.
+          </p>
+        </section>
 
-      <section class="help-section">
-        <h2>4) Import your uploaded SD card data</h2>
-        <ol>
-          <li>Click <strong>Import SD Card</strong>.</li>
-          <li>Click <strong>Choose a Folder</strong>.</li>
-          <li>Navigate to: <strong>config &gt; SDCARD &gt; your username &gt; your uploaded folder</strong>.</li>
-          <li>Select your uploaded folder, then click <strong>Choose</strong>.</li>
-        </ol>
-        <img class="help-image" src="/images/help-import-folder.svg" alt="Folder chooser showing config/SDCARD/user-name/uploaded-folder" />
-      </section>
+        <section class="help-section">
+          <h2>3) Select your oximetry device and upload data</h2>
 
-      <section class="help-section">
-        <h2>5) Review your data</h2>
-        <p>After import, click <strong>Daily View</strong> and navigate through your data.</p>
+          <div class="help-tabs help-subtabs" role="tablist" aria-label="Oximetry devices">
+            <button class="help-tab is-active" id="tab-oximetry-wellue" role="tab" type="button" aria-selected="true" aria-controls="panel-oximetry-wellue" data-tab-target="panel-oximetry-wellue" data-tab-group="oximetry-device">
+              Wellue / Viatom
+            </button>
+            <button class="help-tab" id="tab-oximetry-emay" role="tab" type="button" aria-selected="false" aria-controls="panel-oximetry-emay" data-tab-target="panel-oximetry-emay" data-tab-group="oximetry-device">
+              EMAY / <code>.spo2</code>
+            </button>
+          </div>
+
+          <section class="help-tab-panel is-active" id="panel-oximetry-wellue" role="tabpanel" aria-labelledby="tab-oximetry-wellue" data-tab-group="oximetry-device">
+            <ol>
+              <li>Click <strong>Browse</strong> and select the folder that contains <strong>db_o2.db</strong>.</li>
+              <li>Make sure that same folder also contains the numbered oximetry folder(s) created by your device.</li>
+              <li>Upload the selected folder.</li>
+            </ol>
+            <p>
+              After upload, all detected files will be available in
+              <strong>config/SDCARD/{Username}/Oximetry</strong> and can be imported in OSCAR with the
+              <strong>Wellue/Viatom import</strong> feature.
+            </p>
+          </section>
+
+          <section class="help-tab-panel" id="panel-oximetry-emay" role="tabpanel" aria-labelledby="tab-oximetry-emay" data-tab-group="oximetry-device" hidden>
+            <ol>
+              <li>Click <strong>Browse</strong> and locate the <strong>.spo2</strong> files you want to upload.</li>
+              <li>Select one or more <strong>.spo2</strong> files, then upload.</li>
+            </ol>
+            <p>
+              After upload, those files will be available in
+              <strong>config/SDCARD/{Username}/Oximetry</strong> and can be imported using OSCAR's
+              <strong>Oximetry import wizard</strong>.
+            </p>
+          </section>
+        </section>
       </section>
 
       <section class="help-section warning-panel">
@@ -82,7 +148,6 @@
           If you run into issues or have feedback, please reach out to your administrator.
         </p>
       </section>
-
     </article>
   </main>
 
@@ -95,5 +160,7 @@
       <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank" rel="noopener noreferrer">View Source on GitHub</a>
     </nav>
   </footer>
+
+  <script src="/help-tabs.js" defer></script>
 </body>
 </html>

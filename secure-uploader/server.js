@@ -40,6 +40,31 @@ const activeAuthSessions = new Map();
 const consumedLaunchTokens = new Map();
 const pendingUploadSessions = new Map();
 
+const APP_ENCRYPTION_PRIVATE_KEY_PEM = process.env.APP_ENCRYPTION_PRIVATE_KEY || '';
+const APP_ENCRYPTION_PUBLIC_KEY_PEM = process.env.APP_ENCRYPTION_PUBLIC_KEY || '';
+
+function buildApplicationEncryptionKeyPair() {
+  if (APP_ENCRYPTION_PRIVATE_KEY_PEM && APP_ENCRYPTION_PUBLIC_KEY_PEM) {
+    return {
+      privateKey: crypto.createPrivateKey(APP_ENCRYPTION_PRIVATE_KEY_PEM),
+      publicKey: crypto.createPublicKey(APP_ENCRYPTION_PUBLIC_KEY_PEM),
+    };
+  }
+
+  const generated = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
+
+  return {
+    privateKey: crypto.createPrivateKey(generated.privateKey),
+    publicKey: crypto.createPublicKey(generated.publicKey),
+  };
+}
+
+const applicationEncryptionKeyPair = buildApplicationEncryptionKeyPair();
+
 let oscarTarget;
 try {
   oscarTarget = new URL(OSCAR_BASE_URL);
@@ -91,8 +116,18 @@ const securityHeaders = helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'"],
+      scriptSrc: [
+        "'self'",
+        'https://static.cloudflareinsights.com',
+        "'sha256-8f/vDJSm1sfYAlPoEyBM6lKEa8VcejiQxKJJyYmTnFs='",
+        "'sha256-CXYI9SpEVoDUv9Qz3uoKltqXfjpMx92u3wu2sKJ/uFc='",
+        "'sha256-ZswfTY7H35rbv8WC7NXBoiC7WNu86vSzCDChNWwZZDM='",
+      ],
+      styleSrc: [
+        "'self'",
+        "'unsafe-hashes'",
+        "'sha256-+OsIn6RhyCZCUkkvtHxFtP0kU3CGdGeLjDd9Fzqdl3o='",
+      ],
       imgSrc: ["'self'", 'data:'],
       objectSrc: ["'none'"],
       baseUri: ["'none'"],
@@ -632,6 +667,38 @@ function inferUploadType(uploadType, files) {
   return uploadType;
 }
 
+function parseBooleanFlag(value) {
+  return String(value || '').toLowerCase() === 'true';
+}
+
+function decryptApplicationLayerFile(fileBuffer, envelope, privateKey) {
+  if (!Buffer.isBuffer(fileBuffer) || !envelope || typeof envelope !== 'object') {
+    throw new Error('Invalid encryption payload.');
+  }
+
+  const wrappedKey = Buffer.from(String(envelope.wrappedKey || ''), 'base64');
+  const iv = Buffer.from(String(envelope.iv || ''), 'base64');
+  const tag = Buffer.from(String(envelope.tag || ''), 'base64');
+
+  if (wrappedKey.length === 0 || iv.length !== 12 || tag.length !== 16) {
+    throw new Error('Invalid encryption envelope.');
+  }
+
+  const aesKey = crypto.privateDecrypt({
+    key: privateKey,
+    oaepHash: 'sha256',
+    padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+  }, wrappedKey);
+
+  if (aesKey.length !== 32) {
+    throw new Error('Invalid encryption key length.');
+  }
+
+  const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(fileBuffer), decipher.final()]);
+}
+
 app.post('/api/login', authLimiter, (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const username = sanitizeCredentialInput(body.username, {
@@ -669,6 +736,11 @@ app.get('/api/session', authMiddleware, (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/encryption-public-key', authMiddleware, (_req, res) => {
+  const pem = applicationEncryptionKeyPair.publicKey.export({ type: 'spki', format: 'pem' });
+  res.json({ algorithm: 'RSA-OAEP-256/AES-256-GCM', publicKeyPem: pem });
+});
+
 app.post('/api/oscar-launch', authMiddleware, (req, res) => {
   const ownerId = String(req.auth.sub || 'unknown');
   const launchTokenId = crypto.randomUUID();
@@ -702,6 +774,16 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
 
     const selectedDate = Number(req.body.selectedDateMs);
     const normalizedSelectedDate = Number.isFinite(selectedDate) ? selectedDate : 0;
+    const tinfoilHatMode = parseBooleanFlag(req.body.tinfoilHatMode);
+    const encryptionEnvelopeMap = (() => {
+      if (!tinfoilHatMode) return new Map();
+      try {
+        const raw = JSON.parse(typeof req.body.encryptionEnvelope === 'string' ? req.body.encryptionEnvelope : '{}');
+        return new Map(Object.entries(raw || {}));
+      } catch (_err) {
+        return new Map();
+      }
+    })();
 
     const files = Array.isArray(req.files) ? req.files : [];
     if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
@@ -852,7 +934,19 @@ app.post('/api/upload', authMiddleware, upload.array('files'), async (req, res) 
       if (fs.existsSync(destination)) {
         await ensureOwnership(destination);
       }
-      await fsp.writeFile(destination, file.buffer, { mode: 0o640 });
+      let filePayload = file.buffer;
+      if (tinfoilHatMode) {
+        const envelope = encryptionEnvelopeMap.get(file.safeRelativePath) || encryptionEnvelopeMap.get(file.originalname);
+        if (!envelope) {
+          return res.status(400).json({ error: `Missing encryption envelope for ${file.safeRelativePath}` });
+        }
+        try {
+          filePayload = decryptApplicationLayerFile(file.buffer, envelope, applicationEncryptionKeyPair.privateKey);
+        } catch (_err) {
+          return res.status(400).json({ error: `Unable to decrypt ${file.safeRelativePath}` });
+        }
+      }
+      await fsp.writeFile(destination, filePayload, { mode: 0o640 });
       await ensureOwnership(destination);
 
       if (uploadSession) {
@@ -938,6 +1032,10 @@ app.get('/privacy-security-policy', (_req, res) => {
 
 app.get('/how-to-uploader', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'how-to-uploader.html'));
+});
+
+app.get('/faq', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'faq.html'));
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
