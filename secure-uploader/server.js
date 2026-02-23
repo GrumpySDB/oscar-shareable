@@ -116,8 +116,18 @@ const securityHeaders = helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'"],
+      scriptSrc: [
+        "'self'",
+        'https://static.cloudflareinsights.com',
+        "'sha256-8f/vDJSm1sfYAlPoEyBM6lKEa8VcejiQxKJJyYmTnFs='",
+        "'sha256-CXYI9SpEVoDUv9Qz3uoKltqXfjpMx92u3wu2sKJ/uFc='",
+        "'sha256-ZswfTY7H35rbv8WC7NXBoiC7WNu86vSzCDChNWwZZDM='",
+      ],
+      styleSrc: [
+        "'self'",
+        "'unsafe-hashes'",
+        "'sha256-+OsIn6RhyCZCUkkvtHxFtP0kU3CGdGeLjDd9Fzqdl3o='",
+      ],
       imgSrc: ["'self'", 'data:'],
       objectSrc: ["'none'"],
       baseUri: ["'none'"],
