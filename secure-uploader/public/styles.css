@@ -394,6 +394,65 @@ button.oscar-cta:hover {
   font-size: 0.9rem;
 }
 
+
+
+.help-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 1.1rem 0 1rem;
+}
+
+.help-tab {
+  width: auto;
+  margin-top: 0;
+  border: 1px solid #c5d3ff;
+  background: linear-gradient(180deg, #f6f9ff 0%, #e7eeff 100%);
+  color: #1a3d9f;
+  font-weight: 700;
+  padding: 0.58rem 0.9rem;
+  border-radius: 10px;
+}
+
+.help-tab:hover,
+.help-tab:focus {
+  background: #e3eaff;
+}
+
+.help-tab.is-active {
+  border-color: #2457f5;
+  background: linear-gradient(180deg, #3f6cf7 0%, #2457f5 100%);
+  color: #fff;
+  box-shadow: 0 8px 16px rgba(36, 87, 245, 0.22);
+}
+
+.help-tab-panel {
+  display: none;
+}
+
+.help-tab-panel.is-active {
+  display: block;
+}
+
+.help-section + .help-section {
+  margin-top: 1.2rem;
+}
+.help-image {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin: 0.85rem auto 0;
+  border: 1px solid #d8e2fb;
+  border-radius: 12px;
+  background: #f8faff;
+  padding: 0.5rem;
+}
+
+.help-card {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 560px) {
   .footer-sep {
     display: none;
