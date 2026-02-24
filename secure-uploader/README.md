@@ -55,11 +55,16 @@ App URL: `https://localhost:50710`
 - Only new filenames are uploaded, except these are always uploaded every time:
   - `Identification.crc`
   - `STR.edf`
+- Files inside `DATALOG/` and `STR_Backup/` follow normal duplicate filtering; only missing files are uploaded.
 - `Identification.tgt` and `journal.nl` are optional: upload them when present, but they are not required.
 - Non-required files must be within selected date range and no older than 6 months.
 - Uploads are capped at 5,000 files per request; choose a later start date if scan finds more.
 - If selected uploads exceed Cloudflare's per-request gateway limits, the frontend automatically splits uploads into multiple smaller batches.
 - Users can delete all uploaded data for a folder.
+- `.spo2` uploads are auto-detected as oximetry data and stored under `<folder>/Oximetry/`; only `.spo2` files up to 200KB are accepted.
+- Existing oximetry files are skipped during scan; uploads proceed with only missing valid oximetry files and do not fail just because some files already exist.
+- Wellue/Viatom oximetry uploads are auto-detected when `db_o2.db` is present; the `db_o2.db` file is ignored and files from sibling numbered folders are stored under `<folder>/Oximetry/<number>/` when they have no extension and are <=200KB.
+- Oximetry uploads are rejected unless SD-card baseline files (`Identification.crc` and `STR.edf`) already exist in the destination folder.
 
 ## Integrated OSCAR service
 - `docker-compose.yml` now runs the uploader and `rogerrum/docker-oscar:latest` together.

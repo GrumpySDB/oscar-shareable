@@ -25,7 +25,7 @@
     <section id="appCard" class="card hidden">
       <img id="uploadBanner" class="screen-banner hidden" alt="Random upload image" />
       <div class="header-row">
-        <h2>Upload SD Card Files</h2>
+        <h2>Upload SD Card or Oximetry Data</h2>
         <div class="header-actions">
           <a href="/how-to-uploader" class="header-link-btn">Help</a>
           <button id="logoutBtn" class="ghost">Logout</button>
@@ -43,6 +43,20 @@
 
       <label for="directoryInput">SD Card Folder </label>
       <input id="directoryInput" type="file" webkitdirectory directory multiple />
+
+      <div class="encryption-option">
+        <label class="switch-label" for="encryptionToggle">
+          <span class="toggle-control">
+            <input id="encryptionToggle" type="checkbox" />
+            <span class="toggle-slider" aria-hidden="true"></span>
+          </span>
+          <span>Tinfoil Hat Mode (End-to-End Encryption)</span>
+        </label>
+        <p class="subtle encryption-note">
+          Extra encryption is not really necessary for CPAP or oximetry files because they do not include personal information. This optional mode is provided as a courtesy and as a fun proof-of-concept.  May impact performance on large uploads.
+          <a href="/faq" class="policy-link">Learn more in the FAQ</a>.
+        </p>
+      </div>
 
 
       <div id="summary" class="summary">
@@ -66,6 +80,8 @@
       <a href="/how-to-uploader" class="policy-link">How to Use the Uploader</a>
       <span class="footer-sep">•</span>
       <a href="/privacy-security-policy" class="policy-link">Privacy and Security Policy</a>
+      <span class="footer-sep">•</span>
+      <a href="/faq" class="policy-link">FAQ</a>
       <span class="footer-sep">•</span>
       <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank" rel="noopener noreferrer">View Source on GitHub</a>
     </nav>

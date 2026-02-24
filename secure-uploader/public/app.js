@@ -1,19 +1,26 @@
 const REQUIRED_ALWAYS = ['Identification.crc', 'STR.edf'];
 const OPTIONAL_ALWAYS = ['Identification.tgt', 'Identification.json', 'journal.nl'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const OXIMETRY_MAX_FILE_SIZE = 200 * 1024;
 const MAX_UPLOAD_FILES = 5000;
 const CLOUDFLARE_UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
 const SAFE_BATCH_LIMIT_BYTES = 90 * 1024 * 1024;
 
 let token = sessionStorage.getItem('authToken') || null;
+let currentUsername = '';
 let preparedFiles = [];
 let preparedFolder = '';
+let preparedSourceRootFolder = '';
 let selectedDateMs = 0;
+let preparedUploadType = 'sdcard';
+let preparedWellueDbParents = [];
 
 const loginCard = document.getElementById('loginCard');
 const appCard = document.getElementById('appCard');
 const loginError = document.getElementById('loginError');
-const appMessage = document.getElementById('appMessage');
+const statusPanel = document.getElementById('summary') || document.getElementById('statusPanel');
+const statusMessage = document.getElementById('appMessage') || document.getElementById('statusMessage');
+const appMessage = statusMessage;
 const summary = document.getElementById('summaryCounts');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
@@ -53,6 +60,8 @@ function showApp() {
 }
 
 function setMessage(message, isError = false, details = '') {
+  if (!statusPanel || !statusMessage) return;
+
   const normalizedMessage = typeof message === 'string' ? message.trim() : '';
   const normalizedDetails = typeof details === 'string' ? details.trim() : '';
   const hasMessage = Boolean(normalizedMessage) || Boolean(normalizedDetails);
@@ -86,10 +95,12 @@ function configureDateInput() {
   const input = document.getElementById('startDate');
   const today = new Date();
   const min = getSixMonthsAgo();
+  const defaultDate = new Date(today);
+  defaultDate.setDate(defaultDate.getDate() - 7);
   const todayIso = today.toISOString().slice(0, 10);
   input.max = todayIso;
   input.min = min.toISOString().slice(0, 10);
-  input.value = todayIso;
+  input.value = defaultDate.toISOString().slice(0, 10);
 }
 
 function folderNameValid(value) {
@@ -104,6 +115,38 @@ function sanitizeUsernameInput(value) {
   return normalized;
 }
 
+function decodeJwtPayload(jwtToken) {
+  if (typeof jwtToken !== 'string') return null;
+  const parts = jwtToken.split('.');
+  if (parts.length < 2) return null;
+  const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+  const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
+  try {
+    const json = atob(padded);
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function getUsernameFromToken(jwtToken) {
+  const payload = decodeJwtPayload(jwtToken);
+  return payload && typeof payload.sub === 'string' ? payload.sub : '';
+}
+
+function getSelectedRootFolderName(files) {
+  if (!Array.isArray(files)) return '';
+
+  for (const file of files) {
+    const relativePath = getRelativePath(file);
+    const segments = relativePath.split('/').filter(Boolean);
+    if (segments.length > 1) return segments[0];
+  }
+
+  return '';
+}
+
 function isRequired(name) {
   return REQUIRED_ALWAYS.includes(name);
 }
@@ -113,11 +156,28 @@ function isAlwaysIncluded(name) {
 }
 
 function getRelativePath(file) {
-  return file.webkitRelativePath || file.name;
+  const rawPath = String(file?.webkitRelativePath || file?.name || '').trim();
+  const slashNormalized = rawPath.replace(/\\/g, '/');
+  return slashNormalized.replace(/^\.\//, '');
 }
 
 function getBasename(file) {
-  return file.name;
+  const relativePath = getRelativePath(file);
+  const segments = relativePath.split('/').filter(Boolean);
+  if (segments.length > 0) {
+    return segments[segments.length - 1];
+  }
+  return String(file?.name || '').split(/[\\/]/).pop() || '';
+}
+
+function isTinfoilHatModeEnabled() {
+  return document.getElementById('encryptionToggle')?.checked === true;
+}
+
+function isSpo2Filename(name) {
+  if (typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  return /^.+\.spo2$/i.test(trimmed);
 }
 
 
@@ -189,9 +249,11 @@ async function checkSession() {
 
   try {
     await api('/api/session');
+    currentUsername = getUsernameFromToken(token);
     showApp();
   } catch (_err) {
     token = null;
+    currentUsername = '';
     sessionStorage.removeItem('authToken');
     showLogin();
   }
@@ -224,6 +286,7 @@ async function login() {
     });
 
     token = result.token;
+    currentUsername = username;
     sessionStorage.setItem('authToken', token);
     showApp();
   } catch (err) {
@@ -236,6 +299,7 @@ async function login() {
 async function logout() {
   const currentToken = token;
   token = null;
+  currentUsername = '';
   sessionStorage.removeItem('authToken');
 
   if (currentToken) {
@@ -255,11 +319,24 @@ async function logout() {
 function resetPreparedState(clearProgress = false) {
   preparedFiles = [];
   preparedFolder = '';
+  preparedSourceRootFolder = '';
   selectedDateMs = 0;
+  preparedUploadType = 'sdcard';
+  preparedWellueDbParents = [];
   uploadBtn.disabled = true;
   if (clearProgress) {
     progressBar.style.width = '0%';
   }
+}
+
+function getUploadCompleteMessage() {
+  const destinationFolder = document.getElementById('folderName').value.trim() || preparedFolder;
+  if (preparedUploadType === 'sdcard') {
+    const uploadedFolder = preparedSourceRootFolder || preparedFolder || destinationFolder;
+    return `Upload Complete.  Import your SD Card data from config>SDCARD>${destinationFolder}>${uploadedFolder}`;
+  }
+
+  return `Upload Complete.  Import your Oximetry data from config>SDCARD>${destinationFolder}>Oximetry`;
 }
 
 async function scanAndPrepare() {
@@ -278,17 +355,8 @@ async function scanAndPrepare() {
     return;
   }
 
+  const selectedRootFolder = getSelectedRootFolderName(files);
   const selectedDate = new Date(document.getElementById('startDate').value);
-  if (Number.isNaN(selectedDate.getTime())) {
-    setMessage('Please select a valid start date.', true);
-    return;
-  }
-
-  const now = Date.now();
-  if (selectedDate.getTime() < getSixMonthsAgo(now).getTime() || selectedDate.getTime() > now) {
-    setMessage('Start date must be within the past 6 months.', true);
-    return;
-  }
 
   let existingNames = [];
   try {
@@ -300,12 +368,43 @@ async function scanAndPrepare() {
   }
 
   const existingSet = new Set(existingNames);
-  const requiredBasenames = new Set(files.map((file) => getBasename(file)));
+  const hasSpo2 = files.some((file) => isSpo2Filename(getBasename(file)));
+  const dbO2Files = files.filter((file) => getBasename(file).toLowerCase() === 'db_o2.db');
+  const isWellueOximetry = dbO2Files.length > 0;
+  const wellueDbParents = Array.from(new Set(
+    dbO2Files
+      .map((file) => {
+        const parts = getRelativePath(file).split('/');
+        return parts.slice(0, -1).join('/');
+      })
+      .filter(Boolean),
+  ));
 
-  for (const required of REQUIRED_ALWAYS) {
-    if (!requiredBasenames.has(required)) {
-      setMessage(`Invalid data: missing required file ${required}.`, true);
+  let uploadType = 'sdcard';
+  if (isWellueOximetry) {
+    uploadType = 'wellue-spo2';
+  } else if (hasSpo2) {
+    uploadType = 'spo2';
+  }
+
+  if (uploadType === 'sdcard') {
+    if (Number.isNaN(selectedDate.getTime())) {
+      setMessage('Please select a valid start date.', true);
       return;
+    }
+
+    const now = Date.now();
+    if (selectedDate.getTime() < getSixMonthsAgo(now).getTime() || selectedDate.getTime() > now) {
+      setMessage('Start date must be within the past 6 months.', true);
+      return;
+    }
+
+    const requiredBasenames = new Set(files.map((file) => getBasename(file)));
+    for (const required of REQUIRED_ALWAYS) {
+      if (!requiredBasenames.has(required)) {
+        setMessage(`Invalid data: missing required file ${required}.`, true);
+        return;
+      }
     }
   }
 
@@ -314,13 +413,58 @@ async function scanAndPrepare() {
   let skippedInvalid = 0;
 
   for (const file of files) {
-    if (!validateFile(file, selectedDate.getTime())) {
+    const relativePath = getRelativePath(file);
+    const basename = getBasename(file);
+
+    if (uploadType === 'sdcard') {
+      if (!validateFile(file, selectedDate.getTime())) {
+        skippedInvalid += 1;
+        continue;
+      }
+
+      if (!isAlwaysIncluded(basename) && existingSet.has(relativePath)) {
+        skippedExisting += 1;
+        continue;
+      }
+
+      eligible.push(file);
+      continue;
+    }
+
+    if (uploadType === 'spo2') {
+      if (!isSpo2Filename(basename) || file.size > OXIMETRY_MAX_FILE_SIZE) {
+        skippedInvalid += 1;
+        continue;
+      }
+
+      const destinationPath = `Oximetry/${basename}`;
+      if (existingSet.has(destinationPath)) {
+        skippedExisting += 1;
+        continue;
+      }
+
+      eligible.push(file);
+      continue;
+    }
+
+    const relativeParts = relativePath.split('/');
+    const fileName = relativeParts[relativeParts.length - 1] || '';
+    const parent = relativeParts.slice(0, -2).join('/');
+    const directFolder = relativeParts.length >= 2 ? relativeParts[relativeParts.length - 2] : '';
+    const hasExtension = fileName.includes('.');
+    const isInNumberedFolder = /^\d+$/.test(directFolder);
+    const dbSiblingExists = dbO2Files.some((dbFile) => {
+      const dbParts = getRelativePath(dbFile).split('/');
+      const dbParent = dbParts.slice(0, -1).join('/');
+      return dbParent === parent;
+    });
+    if (!isInNumberedFolder || !dbSiblingExists || hasExtension || file.size > OXIMETRY_MAX_FILE_SIZE || basename.toLowerCase() === 'db_o2.db') {
       skippedInvalid += 1;
       continue;
     }
 
-    const relativePath = getRelativePath(file);
-    if (!isAlwaysIncluded(getBasename(file)) && existingSet.has(relativePath)) {
+    const destinationPath = `Oximetry/${directFolder}/${fileName}`;
+    if (existingSet.has(destinationPath)) {
       skippedExisting += 1;
       continue;
     }
@@ -330,8 +474,19 @@ async function scanAndPrepare() {
 
   const skippedTotal = skippedExisting + skippedInvalid;
   if (eligible.length === 0) {
+    if (uploadType !== 'sdcard' && skippedExisting > 0 && skippedInvalid === 0) {
+      setMessage(
+        'No new oximetry files to upload. Existing files were skipped.',
+        false,
+        `Valid files to upload: 0 • Files skipped: ${skippedTotal}`,
+      );
+      return;
+    }
+
     setMessage(
-      'Invalid or duplicate SD card data detected. Upload is disabled.',
+      uploadType === 'sdcard'
+        ? 'Invalid or duplicate SD card data detected. Upload is disabled.'
+        : 'Invalid or duplicate oximetry data detected. Upload is disabled.',
       true,
       `Valid files to upload: 0 • Files skipped: ${skippedTotal}`,
     );
@@ -348,14 +503,71 @@ async function scanAndPrepare() {
 
   preparedFiles = eligible;
   preparedFolder = folder;
+  preparedSourceRootFolder = selectedRootFolder;
   selectedDateMs = selectedDate.getTime();
+  preparedUploadType = uploadType;
+  preparedWellueDbParents = uploadType === 'wellue-spo2' ? wellueDbParents : [];
   uploadBtn.disabled = false;
 
-  setMessage(
-    'Resmed SD card data detected.',
+  const detectionMessage = uploadType === 'spo2'
+    ? 'SPO2 Data Detected'
+    : uploadType === 'wellue-spo2'
+      ? 'Wellue/Viatom SPO2 Data Detected'
+      : 'Resmed SD card data detected.';
+
+  setMessage(detectionMessage, false, `Valid files to upload: ${eligible.length} • Files skipped: ${skippedTotal}`);
+}
+
+
+function pemToArrayBuffer(pem) {
+  const base64 = String(pem || '').replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+/g, '');
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function getEncryptionPublicKey() {
+  const result = await api('/api/encryption-public-key');
+  if (!result || typeof result.publicKeyPem !== 'string') {
+    throw new Error('Unable to initialize Tinfoil Hat Mode encryption key.');
+  }
+  return window.crypto.subtle.importKey(
+    'spki',
+    pemToArrayBuffer(result.publicKeyPem),
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
     false,
-    `Valid files to upload: ${eligible.length} • Files skipped: ${skippedTotal}`,
+    ['encrypt'],
   );
+}
+
+async function buildEncryptedBatchPayload(files) {
+  const encryptionKey = await getEncryptionPublicKey();
+  const envelope = {};
+  const encryptedFiles = [];
+
+  for (const file of files) {
+    const plaintext = await file.arrayBuffer();
+    const aesKeyBytes = window.crypto.getRandomValues(new Uint8Array(32));
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const aesKey = await window.crypto.subtle.importKey('raw', aesKeyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+    const encrypted = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, plaintext);
+    const encryptedBytes = new Uint8Array(encrypted);
+    const tag = encryptedBytes.slice(encryptedBytes.length - 16);
+    const cipherText = encryptedBytes.slice(0, encryptedBytes.length - 16);
+    const wrappedKey = await window.crypto.subtle.encrypt({ name: 'RSA-OAEP' }, encryptionKey, aesKeyBytes);
+    const relativePath = getRelativePath(file);
+
+    envelope[relativePath] = {
+      wrappedKey: btoa(String.fromCharCode(...new Uint8Array(wrappedKey))),
+      iv: btoa(String.fromCharCode(...iv)),
+      tag: btoa(String.fromCharCode(...tag)),
+    };
+
+    encryptedFiles.push(new File([cipherText], relativePath, { type: 'application/octet-stream', lastModified: file.lastModified }));
+  }
+
+  return { encryptedFiles, envelope };
 }
 
 function createUploadBatches(files) {
@@ -380,14 +592,22 @@ function createUploadBatches(files) {
   return batches;
 }
 
-function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes }) {
+function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, tinfoilHatMode, encryptionEnvelope }) {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     form.append('folder', preparedFolder);
     form.append('selectedDateMs', String(selectedDateMs));
+    form.append('uploadType', preparedUploadType);
+    if (preparedUploadType === 'wellue-spo2' && preparedWellueDbParents.length > 0) {
+      form.append('wellueDbParents', JSON.stringify(preparedWellueDbParents));
+    }
     form.append('uploadSessionId', sessionId);
     form.append('batchIndex', String(batchIndex));
     form.append('totalBatches', String(totalBatches));
+    form.append('tinfoilHatMode', tinfoilHatMode ? 'true' : 'false');
+    if (tinfoilHatMode && encryptionEnvelope) {
+      form.append('encryptionEnvelope', JSON.stringify(encryptionEnvelope));
+    }
     for (const file of files) {
       form.append('files', file, getRelativePath(file));
     }
@@ -442,6 +662,7 @@ async function uploadPreparedFiles() {
     return;
   }
 
+  const tinfoilHatModeEnabled = isTinfoilHatModeEnabled();
   uploadBtn.disabled = true;
 
   const totalBytes = preparedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
@@ -455,23 +676,34 @@ async function uploadPreparedFiles() {
   if (requiresChunking) {
     setMessage(`Selected files total ${totalMb.toFixed(1)} MB, above Cloudflare's 100 MB request limit. Upload will run in ${batches.length} batches.`);
   } else {
-    setMessage(`Uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)...`);
+    setMessage(`Uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)${tinfoilHatModeEnabled ? ' with Tinfoil Hat Mode enabled' : ''}...`);
   }
 
   try {
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
       const batch = batches[batchIndex];
+      let filesToUpload = batch;
+      let encryptionEnvelope = null;
+      if (tinfoilHatModeEnabled) {
+        setMessage(`Preparing encryption for batch ${batchIndex + 1}/${batches.length}...`);
+        const encryptedPayload = await buildEncryptedBatchPayload(batch);
+        filesToUpload = encryptedPayload.encryptedFiles;
+        encryptionEnvelope = encryptedPayload.envelope;
+      }
+
       await uploadBatch({
-        files: batch,
+        files: filesToUpload,
         batchIndex,
         totalBatches: batches.length,
         sessionId,
         totalBytes,
+        tinfoilHatMode: tinfoilHatModeEnabled,
+        encryptionEnvelope,
       });
     }
 
     progressBar.style.width = '100%';
-    setMessage('Upload complete.');
+    setMessage(getUploadCompleteMessage());
     resetPreparedState();
   } catch (error) {
     setMessage(error.message, true);
