@@ -4,7 +4,7 @@ services:
     image: nginx:stable-alpine
     container_name: config-prepper
     volumes:
-      - ./cloudflared:/template:ro
+      - ${DOCKER_HOST_PATH:-.}/cloudflared:/template:ro
       - cloudflared-config:/etc/cloudflared
     env_file:
       - .env
@@ -34,8 +34,8 @@ services:
     image: nginx:stable-alpine
     container_name: nginx-internal
     volumes:
-      - ./nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ./certs:/etc/nginx/certs:ro
+      - ${DOCKER_HOST_PATH:-.}/nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${DOCKER_HOST_PATH:-.}/certs:/etc/nginx/certs:ro
     expose:
       - "80"
       - "443"
@@ -71,6 +71,7 @@ services:
       UPLOAD_UID: 911
       UPLOAD_GID: 911
       OSCAR_BASE_URL: http://oscar:3000
+      DATABASE_PATH: /app/data/uploads/db.sqlite
     volumes:
       - uploads:/app/data/uploads
     restart: unless-stopped
