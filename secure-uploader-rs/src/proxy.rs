@@ -72,6 +72,7 @@ pub async fn proxy_handler(
     let path = req.uri().path();
     
     if path == "/oscar/login" {
+        tracing::debug!("proxy_handler: /oscar/login hit");
         let qs = req.uri().query().unwrap_or("");
         let query_params: std::collections::HashMap<String, String> = url::form_urlencoded::parse(qs.as_bytes())
             .into_owned()
@@ -80,6 +81,7 @@ pub async fn proxy_handler(
         let token = if let Some(t) = query_params.get("token") {
             t
         } else {
+            tracing::debug!("proxy_handler: /oscar/login - no token param => redirect to /");
             return Redirect::to("/").into_response();
         };
 
@@ -95,17 +97,22 @@ pub async fn proxy_handler(
             &Validation::default(),
         ) {
             Ok(d) => d,
-            Err(_) => return Redirect::to("/").into_response(),
+            Err(e) => {
+                tracing::debug!("proxy_handler: /oscar/login - token decode failed: {}", e);
+                return Redirect::to("/").into_response();
+            }
         };
 
         let claims = token_data.claims;
         if claims.purpose != "oscar-launch" {
+            tracing::debug!("proxy_handler: /oscar/login - purpose mismatch: {}", claims.purpose);
             return Redirect::to("/").into_response();
         }
 
         {
             let mut consumed = state.consumed_launch_tokens.write().await;
             if consumed.contains_key(&claims.jti) {
+                tracing::debug!("proxy_handler: /oscar/login - token already consumed: {}", claims.jti);
                 return Redirect::to("/").into_response();
             }
             consumed.insert(claims.jti, now + 120);
@@ -114,7 +121,7 @@ pub async fn proxy_handler(
         use crate::auth::OscarClaims;
         let oscar_claims = OscarClaims {
             sub: claims.sub,
-            sid: claims.sid,
+            sid: claims.sid.clone(),
             fp: claims.fp,
             scope: "oscar".into(),
             exp: now + 8 * 60 * 60, // 8 hours
@@ -126,10 +133,13 @@ pub async fn proxy_handler(
             &EncodingKey::from_secret(state.config.jwt_secret.as_bytes())
         ).unwrap();
 
+        let cookie_value = format!("oscar_session={}; Path=/; Max-Age={}; HttpOnly; SameSite=Strict; Secure", session_token, 8*60*60);
+        tracing::debug!("proxy_handler: /oscar/login - setting cookie (len={}), redirecting to /oscar/, sid={}", cookie_value.len(), claims.sid);
+
         let mut res = Redirect::to("/oscar/").into_response();
         res.headers_mut().insert(
             header::SET_COOKIE,
-            format!("oscar_session={}; Path=/; Max-Age={}; HttpOnly; SameSite=Strict; Secure", session_token, 8*60*60).parse().unwrap()
+            cookie_value.parse().unwrap()
         );
         return res;
     }

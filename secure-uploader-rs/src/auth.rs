@@ -192,11 +192,17 @@ pub async fn require_oscar_session_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, impl IntoResponse> {
-    if req.uri().path() == "/oscar/login" {
+    let path = req.uri().path().to_string();
+    tracing::debug!("require_oscar_session_middleware: path={}", path);
+
+    if path == "/oscar/login" {
+        tracing::debug!("require_oscar_session_middleware: bypassing for /oscar/login");
         return Ok(next.run(req).await);
     }
 
     let cookie_header = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()).unwrap_or("");
+    tracing::debug!("require_oscar_session_middleware: cookie_header present={}", !cookie_header.is_empty());
+
     let mut oscar_session = None;
     for cookie_str in cookie_header.split(';') {
         let trimmed = cookie_str.trim();
@@ -207,18 +213,28 @@ pub async fn require_oscar_session_middleware(
     }
 
     let token = match oscar_session {
-        Some(t) => t,
-        None => return Err(axum::response::Redirect::to("/")),
+        Some(t) => {
+            tracing::debug!("require_oscar_session_middleware: oscar_session cookie found, len={}", t.len());
+            t
+        }
+        None => {
+            tracing::debug!("require_oscar_session_middleware: NO oscar_session cookie => redirect to /");
+            return Err(axum::response::Redirect::to("/"));
+        }
     };
 
     let token_data = decode::<OscarClaims>(
         &token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
         &Validation::default(),
-    ).map_err(|_| axum::response::Redirect::to("/"))?;
+    ).map_err(|e| {
+        tracing::debug!("require_oscar_session_middleware: token decode failed: {}", e);
+        axum::response::Redirect::to("/")
+    })?;
 
     let claims = token_data.claims;
     if claims.scope != "oscar" {
+        tracing::debug!("require_oscar_session_middleware: scope mismatch: {}", claims.scope);
         return Err(axum::response::Redirect::to("/"));
     }
 
@@ -227,6 +243,7 @@ pub async fn require_oscar_session_middleware(
     sessions.retain(|_, s| s.expires_at > now);
 
     if !sessions.contains_key(&claims.sid) {
+        tracing::debug!("require_oscar_session_middleware: session {} not found in active sessions (count={})", claims.sid, sessions.len());
         return Err(axum::response::Redirect::to("/"));
     }
 
@@ -241,8 +258,11 @@ pub async fn require_oscar_session_middleware(
     let fp = URL_SAFE_NO_PAD.encode(hasher.finalize());
 
     if fp != claims.fp {
+        tracing::debug!("require_oscar_session_middleware: fingerprint mismatch. computed={} vs claims={}", fp, claims.fp);
+        tracing::debug!("require_oscar_session_middleware: user_agent='{}' accept_language='{}'", user_agent, accept_language);
         return Err(axum::response::Redirect::to("/"));
     }
 
+    tracing::debug!("require_oscar_session_middleware: session valid, proceeding");
     Ok(next.run(req).await)
 }
