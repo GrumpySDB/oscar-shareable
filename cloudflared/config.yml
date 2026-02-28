@@ -1,9 +1,0 @@
-tunnel: TUNNEL_ID_PLACEHOLDER
-credentials-file: /etc/cloudflared/TUNNEL_ID_PLACEHOLDER.json
-
-ingress:
-  - hostname: uploader.example.com
-    service: http://nginx-internal:80
-    originRequest:
-      httpHostHeader: uploader.example.com
-  - service: http_status:404
