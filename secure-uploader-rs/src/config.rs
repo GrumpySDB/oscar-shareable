@@ -7,6 +7,7 @@ use std::sync::Arc;
 use rsa::RsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
 use rand::rngs::OsRng;
+use crate::db::Database;
 
 #[derive(Clone)]
 pub struct AppConfig {
@@ -66,6 +67,7 @@ impl AppConfig {
 
 pub struct AppState {
     pub config: AppConfig,
+    pub db: Database,
     pub active_auth_sessions: RwLock<HashMap<String, SessionInfo>>,
     pub consumed_launch_tokens: RwLock<HashMap<String, i64>>,
     pub pending_upload_sessions: RwLock<HashMap<String, UploadSession>>,
@@ -97,8 +99,16 @@ impl AppState {
             .danger_accept_invalid_certs(true)
             .build()?;
 
+        let db_path = env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/db.sqlite".to_string());
+        // Ensure data dir exists
+        if let Some(parent) = std::path::Path::new(&db_path).parent() {
+            std::fs::create_dir_all(parent).unwrap_or_default();
+        }
+        let db = Database::new(&db_path)?;
+
         Ok(Self {
             config,
+            db,
             active_auth_sessions: RwLock::new(HashMap::new()),
             consumed_launch_tokens: RwLock::new(HashMap::new()),
             pending_upload_sessions: RwLock::new(HashMap::new()),

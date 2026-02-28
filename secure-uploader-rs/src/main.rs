@@ -3,6 +3,7 @@ pub mod config;
 pub mod proxy;
 pub mod upload;
 pub mod utils;
+pub mod db;
 
 use axum::{
     extract::{DefaultBodyLimit, Request},
