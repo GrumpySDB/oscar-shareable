@@ -192,6 +192,10 @@ pub async fn require_oscar_session_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, impl IntoResponse> {
+    if req.uri().path() == "/oscar/login" {
+        return Ok(next.run(req).await);
+    }
+
     let cookie_header = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()).unwrap_or("");
     let mut oscar_session = None;
     for cookie_str in cookie_header.split(';') {
