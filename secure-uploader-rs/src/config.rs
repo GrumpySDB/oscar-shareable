@@ -111,7 +111,7 @@ impl AppState {
         if let Some(parent) = std::path::Path::new(&db_path).parent() {
             std::fs::create_dir_all(parent).unwrap_or_default();
         }
-        let db = Database::new(&db_path)?;
+        let db = Database::new(&db_path, &config.app_username, &config.app_password)?;
 
         Ok(Self {
             config,

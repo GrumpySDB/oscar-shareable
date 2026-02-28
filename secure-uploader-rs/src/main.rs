@@ -37,10 +37,20 @@ async fn main() -> anyhow::Result<()> {
     let public_dir = PathBuf::from("./public");
     let serve_dir = ServeDir::new(&public_dir).not_found_service(ServeFile::new(public_dir.join("index.html")));
 
+    let admin_api_routes = Router::new()
+        .route("/users", get(auth::list_users_handler))
+        .route("/users/:uuid", delete(auth::delete_user_handler))
+        .route("/users/:uuid/reset-password", post(auth::reset_password_handler))
+        .route("/invites", get(auth::list_invites_handler))
+        .route("/invites", post(auth::generate_invite_handler))
+        .layer(middleware::from_fn(auth::admin_middleware))
+        .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
+
     let api_routes = Router::new()
         .route("/auth/discord/callback", get(auth::discord_callback))
         .route("/auth/local/signup", post(auth::local_signup))
         .route("/auth/local/login", post(auth::local_login))
+        .nest("/admin", admin_api_routes)
         .merge(
             Router::new()
                 .route("/logout", post(auth::logout))
@@ -81,10 +91,16 @@ async fn main() -> anyhow::Result<()> {
         // Standard CSP is applied globally but NOT inside /oscar/ proxy since it overrides it
         .layer(middleware::from_fn(add_security_headers));
 
+    let admin_page_route = Router::new()
+        .route("/admin", get(|| async { Html(include_str!("../public/admin.html")) }))
+        .layer(middleware::from_fn(auth::admin_middleware))
+        .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
+
     let app = Router::new()
         .nest("/api", api_routes)
         .merge(oscar_login_route)
         .merge(proxy_routes)
+        .merge(admin_page_route)
         .route("/privacy-security-policy", get(|| async { Html(include_str!("../public/privacy-security-policy.html")) }))
         .route("/how-to-uploader", get(|| async { Html(include_str!("../public/how-to-uploader.html")) }))
         .route("/faq", get(|| async { Html(include_str!("../public/faq.html")) }))

@@ -483,3 +483,65 @@ button.oscar-cta:hover {
     display: none;
   }
 }
+
+/* Admin Portal Specific Styles */
+.tabs {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 2px solid var(--border);
+}
+
+.tab {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  font-weight: 600;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  border-radius: 0;
+  margin: 0;
+  width: auto;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: -2px;
+}
+
+.panel {
+  display: none;
+}
+
+.panel.active {
+  display: block;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+  font-size: 0.95rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.8rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+table button {
+  width: auto;
+  margin: 0;
+}

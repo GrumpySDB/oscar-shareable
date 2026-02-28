@@ -15,6 +15,7 @@ use crate::config::{AppState, SessionInfo};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub uuid: String,
+    pub role: String,
     pub sid: String,
     pub exp: i64,
 }
@@ -56,6 +57,7 @@ pub struct LoginResponse {
 #[derive(Deserialize)]
 pub struct DiscordCallbackQuery {
     pub code: String,
+    pub state: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -120,23 +122,28 @@ pub async fn discord_callback(
     })?;
 
     if user.is_none() {
-        // For Discord, we might want to check an invite or whitelist.
-        // For MVP, if they are the SUPER_ADMIN_ID, they are auto-created as admin.
-        // Others might need an invite (Phase 3).
-        let role = if discord_user.id == state.config.super_admin_id { "admin" } else { "user" };
+        // Enforce invite logic for new Discord users
+        let invite_code = query.state.as_deref().unwrap_or("");
+        if !state.db.validate_invite(invite_code).unwrap_or(false) {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "A valid invite code is required to sign up via Discord. Pass it via the OAuth 'state' parameter." }))));
+        }
         
         let new_user = crate::db::User {
             uuid: uuid::Uuid::new_v4().to_string(),
             username: Some(discord_user.username),
             provider: "discord".to_string(),
             identifier: discord_user.id.clone(),
-            role: role.to_string(),
+            role: "user".to_string(),
         };
         
         state.db.create_user(new_user.clone(), None).map_err(|e| {
             tracing::error!("Failed to create user: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create user" })))
         })?;
+        
+        // Mark invite as used
+        let _ = state.db.use_invite(invite_code, &new_user.uuid);
+        
         user = Some(new_user);
     }
 
@@ -247,6 +254,7 @@ async fn issue_session(
 
     let claims = Claims {
         uuid: user.uuid,
+        role: user.role,
         sid,
         exp,
     };
@@ -357,6 +365,117 @@ pub async fn auth_middleware(
         StatusCode::UNAUTHORIZED,
         Json(serde_json::json!({ "error": "Session expired" })),
     ))
+}
+
+pub async fn admin_middleware(
+    mut req: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let claims = req.extensions().get::<Claims>().ok_or((
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({ "error": "Unauthorized" })),
+    ))?;
+
+    if claims.role != "admin" {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden: Admin access only" })),
+        ));
+    }
+
+    Ok(next.run(req).await)
+}
+
+#[derive(Deserialize)]
+pub struct CreateInvitePayload {
+    pub expire_days: i64,
+}
+
+pub async fn generate_invite_handler(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    ExtractJson(payload): ExtractJson<CreateInvitePayload>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let code = format!("INVITE-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap().to_uppercase());
+    let expires_at = chrono::Utc::now().timestamp() + (payload.expire_days * 86400);
+    state.db.create_invite(&code, &claims.uuid, expires_at).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+    Ok(Json(serde_json::json!({ "code": code, "expires_at": expires_at })))
+}
+
+pub async fn list_invites_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let invites = state.db.get_all_invites().map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+    Ok(Json(serde_json::json!({ "invites": invites })))
+}
+
+pub async fn list_users_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let users = state.db.get_all_users().map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+    
+    let sanitized_users: Vec<_> = users.into_iter().map(|u| {
+        serde_json::json!({
+            "uuid": u.uuid,
+            "username": u.username,
+            "provider": u.provider,
+            "role": u.role
+        })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "users": sanitized_users })))
+}
+
+pub async fn delete_user_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(uuid_param): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // 1. Delete user from SQLite database. This cascade-deletes their invites and share_links.
+    state.db.delete_user(&uuid_param).map_err(|_| {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "User not found or database error" })))
+    })?;
+    
+    // 2. Erase their active sessions
+    let mut sessions = state.active_auth_sessions.write().await;
+    sessions.retain(|_, s| s.uuid != uuid_param);
+    
+    // 3. Delete their files from filesystem
+    let _ = std::fs::remove_dir_all(format!("/app/data/uploads/{}", uuid_param));
+    // Due to container mounting, OSCAR_Data may be mounted directly, or via another path.
+    // Ensure the external proxy can access it or clean it up. For MVP, we delete the uploads folder which is all the backend directly commands.
+    
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn reset_password_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(uuid_param): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let new_pw = uuid::Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    
+    use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+    use rand::rngs::OsRng;
+    let salt = SaltString::generate(&mut OsRng);
+    let password_hash = Argon2::default()
+        .hash_password(new_pw.as_bytes(), &salt)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Hash error" }))))?
+        .to_string();
+
+    state.db.reset_user_password(&uuid_param, &password_hash).map_err(|_| {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Local user not found" })))
+    })?;
+
+    // Clear active sessions for this user so they have to login again
+    let mut sessions = state.active_auth_sessions.write().await;
+    sessions.retain(|_, s| s.uuid != uuid_param);
+
+    Ok(Json(serde_json::json!({ "new_password": new_pw })))
 }
 
 pub async fn require_oscar_session_middleware(

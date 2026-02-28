@@ -135,6 +135,11 @@ function getUsernameFromToken(jwtToken) {
   return payload && typeof payload.sub === 'string' ? payload.sub : '';
 }
 
+function getRoleFromToken(jwtToken) {
+  const payload = decodeJwtPayload(jwtToken);
+  return payload && typeof payload.role === 'string' ? payload.role : '';
+}
+
 function getSelectedRootFolderName(files) {
   if (!Array.isArray(files)) return '';
 
@@ -249,6 +254,12 @@ async function checkSession() {
 
   try {
     await api('/api/session');
+
+    if (getRoleFromToken(token) === 'admin') {
+      window.location.href = '/admin';
+      return;
+    }
+
     currentUsername = getUsernameFromToken(token);
     showApp();
   } catch (_err) {
@@ -286,8 +297,14 @@ async function login() {
     });
 
     token = result.token;
-    currentUsername = username;
     sessionStorage.setItem('authToken', token);
+
+    if (getRoleFromToken(token) === 'admin') {
+      window.location.href = '/admin';
+      return;
+    }
+
+    currentUsername = username;
     showApp();
   } catch (err) {
     loginError.textContent = err.message;

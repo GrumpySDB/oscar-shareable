@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="/styles.css?v=2" />
+</head>
+
+<body>
+    <main class="container">
+        <section class="card" id="adminCard">
+            <div class="header-row">
+                <h2>Admin Dashboard</h2>
+                <div class="header-actions">
+                    <a href="/" class="header-link-btn">Return to App</a>
+                    <button id="logoutBtn" class="ghost">Logout</button>
+                </div>
+            </div>
+            <p class="subtle">Manage users and generate invites.</p>
+
+            <div class="tabs">
+                <button id="tabUsers" class="tab active">Users</button>
+                <button id="tabInvites" class="tab">Invites</button>
+            </div>
+
+            <div id="usersPanel" class="panel active">
+                <h3>System Users</h3>
+                <table id="usersTable">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Provider</th>
+                            <th>Role</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div id="invitesPanel" class="panel hidden">
+                <h3>Generate new Invite</h3>
+                <p class="subtle">Create a single-use code that allows a user to sign up.</p>
+                <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 20px;">
+                    <input type="number" id="inviteExpireDays" value="7" min="1" max="365" style="width: 80px;" />
+                    <span>Days until expiration</span>
+                    <button id="generateInviteBtn">Generate Invite</button>
+                </div>
+
+                <table id="invitesTable">
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Created By</th>
+                            <th>Status</th>
+                            <th>Expires</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="summary" class="summary">
+                <p id="appMessage" class="message"></p>
+            </div>
+        </section>
+    </main>
+    <script src="/admin.js" defer></script>
+</body>
+
+</html>
