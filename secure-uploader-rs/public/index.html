@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OSCAR Secure Upload</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="container">
+    <section id="loginCard" class="card">
+      <img id="loginBanner" class="screen-banner hidden" alt="Random welcome image" />
+      <h1>OSCAR Secure Uploader</h1>
+      <p class="subtle">Sign in to upload SD card data.</p>
+      <form id="loginForm" novalidate>
+        <label for="username">Username</label>
+        <input id="username" type="text" autocomplete="username" maxlength="128" />
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" maxlength="256" />
+        <button id="loginBtn" type="submit">Login</button>
+      </form>
+      <p id="loginError" class="error"></p>
+    </section>
+
+    <section id="appCard" class="card hidden">
+      <img id="uploadBanner" class="screen-banner hidden" alt="Random upload image" />
+      <div class="header-row">
+        <h2>Upload SD Card or Oximetry Data</h2>
+        <div class="header-actions">
+          <a href="/how-to-uploader" class="header-link-btn">Help</a>
+          <button id="logoutBtn" class="ghost">Logout</button>
+        </div>
+      </div>
+
+      <label for="folderName">Username (Will be used as your SDCard Folder Name)</label>
+      <input id="folderName" type="text" placeholder="example-clinic-a" maxlength="64" />
+
+      <label for="startDate">Start Date (max 6 months back)</label>
+      <div class="date-input-wrap">
+        <span class="date-icon" aria-hidden="true">📅</span>
+        <input id="startDate" type="date" />
+      </div>
+
+      <label for="directoryInput">SD Card Folder </label>
+      <input id="directoryInput" type="file" webkitdirectory directory multiple />
+
+      <div class="encryption-option">
+        <label class="switch-label" for="encryptionToggle">
+          <span class="toggle-control">
+            <input id="encryptionToggle" type="checkbox" />
+            <span class="toggle-slider" aria-hidden="true"></span>
+          </span>
+          <span>Tinfoil Hat Mode (End-to-End Encryption)</span>
+        </label>
+        <p class="subtle encryption-note">
+          Extra encryption is not really necessary for CPAP or oximetry files because they do not include personal information. This optional mode is provided as a courtesy and as a fun proof-of-concept.  May impact performance on large uploads.
+          <a href="/faq" class="policy-link">Learn more in the FAQ</a>.
+        </p>
+      </div>
+
+
+      <div id="summary" class="summary">
+        <div id="summaryCounts"></div>
+        <p id="appMessage" class="message"></p>
+      </div>
+
+      <div class="progress-wrap" aria-label="overall upload progress">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+
+      <button id="uploadBtn" disabled>Upload Selected Files</button>
+      <button id="deleteBtn" class="danger">Delete Uploaded Data</button>
+      <button id="oscarBtn" class="oscar-cta" type="button">Proceed to OSCAR</button>
+
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <nav class="footer-links" aria-label="Footer links">
+      <a href="/how-to-uploader" class="policy-link">How to Use the Uploader</a>
+      <span class="footer-sep">•</span>
+      <a href="/privacy-security-policy" class="policy-link">Privacy and Security Policy</a>
+      <span class="footer-sep">•</span>
+      <a href="/faq" class="policy-link">FAQ</a>
+      <span class="footer-sep">•</span>
+      <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank" rel="noopener noreferrer">View Source on GitHub</a>
+    </nav>
+  </footer>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
