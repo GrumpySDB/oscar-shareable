@@ -1,13 +1,29 @@
 services:
 
+  config-prepper:
+    image: alpine:latest
+    container_name: config-prepper
+    volumes:
+      - ./cloudflared/config.yml.example:/template/config.yml.template:ro
+      - cloudflared-config:/etc/cloudflared
+    env_file:
+      - .env
+    command: >
+      sh -c "apk add --no-equivs --no-cache gettext &&
+             envsubst < /template/config.yml.template > /etc/cloudflared/config.yml"
+
   cloudflared:
-    build:
-      context: ./cloudflared
+    image: cloudflare/cloudflared:latest
     container_name: cloudflared
     command: tunnel run
     env_file:
       - .env
     restart: unless-stopped
+    volumes:
+      - cloudflared-config:/etc/cloudflared:ro
+    depends_on:
+      config-prepper:
+        condition: service_completed_successfully
     networks:
       - internal
     security_opt:
@@ -103,6 +119,7 @@ services:
 
 volumes:
   uploads:
+  cloudflared-config:
 
 
 networks:
