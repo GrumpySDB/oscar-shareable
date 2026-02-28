@@ -1,16 +1,15 @@
 services:
 
   config-prepper:
-    image: alpine:latest
+    image: nginx:stable-alpine
     container_name: config-prepper
     volumes:
-      - ./cloudflared/config.yml.example:/template/config.yml.template:ro
+      - ./cloudflared:/template:ro
       - cloudflared-config:/etc/cloudflared
     env_file:
       - .env
     command: >
-      sh -c "apk add --no-equivs --no-cache gettext &&
-             envsubst < /template/config.yml.template > /etc/cloudflared/config.yml"
+      sh -c "envsubst < /template/config.yml.example > /etc/cloudflared/config.yml"
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -43,7 +42,12 @@ services:
     env_file:
       - .env
     environment:
-      NGINX_ENVSUBST_FILTER: UPLOADER_UPSTREAM NGINX_SERVER_NAME_HTTP NGINX_SERVER_NAME_HTTPS NGINX_SSL_CERT NGINX_SSL_KEY NGINX_CLIENT_MAX_BODY_SIZE
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE}
+      NGINX_SERVER_NAME_HTTP: ${NGINX_SERVER_NAME_HTTP}
+      NGINX_SERVER_NAME_HTTPS: ${NGINX_SERVER_NAME_HTTPS}
+      UPLOADER_UPSTREAM: ${UPLOADER_UPSTREAM}
+      NGINX_SSL_CERT: ${NGINX_SSL_CERT}
+      NGINX_SSL_KEY: ${NGINX_SSL_KEY}
     restart: unless-stopped
     networks:
       - internal
