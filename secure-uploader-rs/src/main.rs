@@ -40,14 +40,17 @@ async fn main() -> anyhow::Result<()> {
 
     let api_routes = Router::new()
         .route("/login", post(auth::login))
-        .route("/logout", post(auth::logout))
-        .route("/session", get(auth::session_check))
-        .route("/encryption-public-key", get(auth::get_public_key))
-        .route("/oscar-launch", post(proxy::oscar_launch))
-        .route("/folders/:folder/files", get(upload::list_files))
-        .route("/upload", post(upload::handle_upload))
-        .route("/folders/:folder", delete(upload::delete_folder))
-        .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
+        .merge(
+            Router::new()
+                .route("/logout", post(auth::logout))
+                .route("/session", get(auth::session_check))
+                .route("/encryption-public-key", get(auth::get_public_key))
+                .route("/oscar-launch", post(proxy::oscar_launch))
+                .route("/folders/:folder/files", get(upload::list_files))
+                .route("/upload", post(upload::handle_upload))
+                .route("/folders/:folder", delete(upload::delete_folder))
+                .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware))
+        );
 
     // For proxy we need `any` to proxy all verbs, plus handle websocket upgrades.
     let proxy_routes = Router::new()

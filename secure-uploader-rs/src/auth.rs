@@ -145,20 +145,28 @@ pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     mut req: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let token = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .ok_or((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Unauthorized" })),
+        ))?;
 
     let token_data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
         &Validation::default(),
     )
-    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    .map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Invalid token" })),
+        )
+    })?;
 
     let claims = token_data.claims;
     let now = chrono::Utc::now().timestamp();
@@ -173,7 +181,10 @@ pub async fn auth_middleware(
         }
     }
 
-    Err(StatusCode::UNAUTHORIZED)
+    Err((
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({ "error": "Session expired" })),
+    ))
 }
 
 pub async fn require_oscar_session_middleware(
