@@ -279,7 +279,7 @@ async function login() {
   usernameInput.value = username;
 
   try {
-    const result = await api('/api/login', {
+    const result = await api('/api/auth/local/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
@@ -360,7 +360,7 @@ async function scanAndPrepare() {
 
   let existingNames = [];
   try {
-    const data = await api(`/api/folders/${encodeURIComponent(folder)}/files`);
+    const data = await api('/api/files');
     existingNames = Array.isArray(data.filenames) ? data.filenames : [];
   } catch (err) {
     setMessage(`Unable to load existing files: ${err.message}`, true);
@@ -741,7 +741,7 @@ async function deleteFolder() {
   if (!window.confirm(`Delete all uploaded data for folder "${folder}"?`)) return;
 
   try {
-    await api(`/api/folders/${encodeURIComponent(folder)}`, { method: 'DELETE' });
+    await api('/api/files', { method: 'DELETE' });
     resetPreparedState(true);
     setMessage(`Deleted uploaded data for folder "${folder}".`);
   } catch (err) {
