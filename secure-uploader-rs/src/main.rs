@@ -52,9 +52,16 @@ async fn main() -> anyhow::Result<()> {
                 .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware))
         );
 
+    // /oscar/login is a separate route with its own launch-token auth (not session-cookie based).
+    // It must NOT go through require_oscar_session_middleware because it creates the session.
+    let oscar_login_route = Router::new()
+        .route("/oscar/login", get(proxy::oscar_login_handler));
+
     // For proxy we need `any` to proxy all verbs, plus handle websocket upgrades.
+    // These routes require an active Oscar session cookie.
     let proxy_routes = Router::new()
         .route("/oscar", any(proxy::proxy_handler))
+        .route("/oscar/", any(proxy::proxy_handler))
         .route("/oscar/*path", any(proxy::proxy_handler))
         .route("/websockify", any(proxy::proxy_handler))
         // proxy needs special Oscar session checking middleware
@@ -74,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut app = Router::new()
         .nest("/api", api_routes)
+        .merge(oscar_login_route)
         .merge(proxy_routes)
         .route("/privacy-security-policy", get(|| async { Html(include_str!("../public/privacy-security-policy.html")) }))
         .route("/how-to-uploader", get(|| async { Html(include_str!("../public/how-to-uploader.html")) }))

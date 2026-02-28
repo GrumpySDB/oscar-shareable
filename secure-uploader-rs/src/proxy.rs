@@ -10,7 +10,7 @@ use std::sync::Arc;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 use crate::config::AppState;
-use crate::auth::Claims;
+use crate::auth::{Claims, OscarClaims};
 
 #[derive(Deserialize)]
 pub struct OscarLaunchQuery {
@@ -65,85 +65,99 @@ pub async fn oscar_launch(
     }))
 }
 
+/// Dedicated handler for /oscar/login.
+/// This route is NOT behind the session-cookie middleware.
+/// Instead it validates a one-time launch token (issued only to authenticated users)
+/// and creates the session cookie.
+pub async fn oscar_login_handler(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+) -> Response {
+    tracing::debug!("oscar_login_handler: /oscar/login hit");
+    let qs = req.uri().query().unwrap_or("");
+    let query_params: std::collections::HashMap<String, String> = url::form_urlencoded::parse(qs.as_bytes())
+        .into_owned()
+        .collect();
+
+    let token = if let Some(t) = query_params.get("token") {
+        t.clone()
+    } else {
+        tracing::debug!("oscar_login_handler: no token param => redirect to /");
+        return Redirect::to("/").into_response();
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    {
+        let mut consumed = state.consumed_launch_tokens.write().await;
+        consumed.retain(|_, &mut exp| exp > now);
+    }
+
+    let token_data = match decode::<LaunchTokenClaims>(
+        &token,
+        &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
+        &Validation::default(),
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::debug!("oscar_login_handler: token decode failed: {}", e);
+            return Redirect::to("/").into_response();
+        }
+    };
+
+    let claims = token_data.claims;
+    if claims.purpose != "oscar-launch" {
+        tracing::debug!("oscar_login_handler: purpose mismatch: {}", claims.purpose);
+        return Redirect::to("/").into_response();
+    }
+
+    {
+        let mut consumed = state.consumed_launch_tokens.write().await;
+        if consumed.contains_key(&claims.jti) {
+            tracing::debug!("oscar_login_handler: token already consumed: {}", claims.jti);
+            return Redirect::to("/").into_response();
+        }
+        consumed.insert(claims.jti, now + 120);
+    }
+
+    // Verify the auth session is still active
+    {
+        let mut sessions = state.active_auth_sessions.write().await;
+        sessions.retain(|_, s| s.expires_at > now);
+        if !sessions.contains_key(&claims.sid) {
+            tracing::debug!("oscar_login_handler: auth session {} not found", claims.sid);
+            return Redirect::to("/").into_response();
+        }
+    }
+
+    let oscar_claims = OscarClaims {
+        sub: claims.sub,
+        sid: claims.sid.clone(),
+        fp: claims.fp,
+        scope: "oscar".into(),
+        exp: now + 8 * 60 * 60, // 8 hours
+    };
+
+    let session_token = encode(
+        &Header::default(),
+        &oscar_claims,
+        &EncodingKey::from_secret(state.config.jwt_secret.as_bytes())
+    ).unwrap();
+
+    let cookie_value = format!("oscar_session={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax; Secure", session_token, 8*60*60);
+    tracing::debug!("oscar_login_handler: setting cookie, redirecting to /oscar/, sid={}", claims.sid);
+
+    let mut res = Redirect::to("/oscar/").into_response();
+    res.headers_mut().insert(
+        header::SET_COOKIE,
+        cookie_value.parse().unwrap()
+    );
+    res
+}
+
 pub async fn proxy_handler(
     State(state): State<Arc<AppState>>,
     req: Request,
 ) -> Response {
-    let path = req.uri().path();
-    
-    if path == "/oscar/login" {
-        tracing::debug!("proxy_handler: /oscar/login hit");
-        let qs = req.uri().query().unwrap_or("");
-        let query_params: std::collections::HashMap<String, String> = url::form_urlencoded::parse(qs.as_bytes())
-            .into_owned()
-            .collect();
-            
-        let token = if let Some(t) = query_params.get("token") {
-            t
-        } else {
-            tracing::debug!("proxy_handler: /oscar/login - no token param => redirect to /");
-            return Redirect::to("/").into_response();
-        };
-
-        let now = chrono::Utc::now().timestamp();
-        {
-            let mut consumed = state.consumed_launch_tokens.write().await;
-            consumed.retain(|_, &mut exp| exp > now);
-        }
-
-        let token_data = match decode::<LaunchTokenClaims>(
-            token,
-            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-            &Validation::default(),
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::debug!("proxy_handler: /oscar/login - token decode failed: {}", e);
-                return Redirect::to("/").into_response();
-            }
-        };
-
-        let claims = token_data.claims;
-        if claims.purpose != "oscar-launch" {
-            tracing::debug!("proxy_handler: /oscar/login - purpose mismatch: {}", claims.purpose);
-            return Redirect::to("/").into_response();
-        }
-
-        {
-            let mut consumed = state.consumed_launch_tokens.write().await;
-            if consumed.contains_key(&claims.jti) {
-                tracing::debug!("proxy_handler: /oscar/login - token already consumed: {}", claims.jti);
-                return Redirect::to("/").into_response();
-            }
-            consumed.insert(claims.jti, now + 120);
-        }
-
-        use crate::auth::OscarClaims;
-        let oscar_claims = OscarClaims {
-            sub: claims.sub,
-            sid: claims.sid.clone(),
-            fp: claims.fp,
-            scope: "oscar".into(),
-            exp: now + 8 * 60 * 60, // 8 hours
-        };
-
-        let session_token = encode(
-            &Header::default(),
-            &oscar_claims,
-            &EncodingKey::from_secret(state.config.jwt_secret.as_bytes())
-        ).unwrap();
-
-        let cookie_value = format!("oscar_session={}; Path=/; Max-Age={}; HttpOnly; SameSite=Strict; Secure", session_token, 8*60*60);
-        tracing::debug!("proxy_handler: /oscar/login - setting cookie (len={}), redirecting to /oscar/, sid={}", cookie_value.len(), claims.sid);
-
-        let mut res = Redirect::to("/oscar/").into_response();
-        res.headers_mut().insert(
-            header::SET_COOKIE,
-            cookie_value.parse().unwrap()
-        );
-        return res;
-    }
-
     let mut path = req.uri().path().to_string();
     if path.starts_with("/oscar") {
         path = path.replacen("/oscar", "", 1);

@@ -195,11 +195,6 @@ pub async fn require_oscar_session_middleware(
     let path = req.uri().path().to_string();
     tracing::debug!("require_oscar_session_middleware: path={}", path);
 
-    if path == "/oscar/login" {
-        tracing::debug!("require_oscar_session_middleware: bypassing for /oscar/login");
-        return Ok(next.run(req).await);
-    }
-
     let cookie_header = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()).unwrap_or("");
     tracing::debug!("require_oscar_session_middleware: cookie_header present={}", !cookie_header.is_empty());
 
