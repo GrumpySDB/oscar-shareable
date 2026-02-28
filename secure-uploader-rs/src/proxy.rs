@@ -46,7 +46,7 @@ pub async fn oscar_launch(
     let now = chrono::Utc::now().timestamp();
     
     let launch_claims = LaunchTokenClaims {
-        sub: claims.sub.clone(),
+        sub: claims.uuid.clone(),
         sid: claims.sid.clone(),
         fp,
         jti,
@@ -130,7 +130,7 @@ pub async fn oscar_login_handler(
     }
 
     let oscar_claims = OscarClaims {
-        sub: claims.sub,
+        uuid: claims.sub,
         sid: claims.sid.clone(),
         fp: claims.fp,
         scope: "oscar".into(),
@@ -266,7 +266,7 @@ async fn handle_websocket_upgrade(
 
     upgrade.on_upgrade(move |client_ws: axum::extract::ws::WebSocket| async move {
         match tokio_tungstenite::connect_async(ws_url).await {
-            Ok((mut server_ws, _)) => {
+            Ok((server_ws, _)) => {
                 let (mut client_tx, mut client_rx) = client_ws.split();
                 let (mut server_tx, mut server_rx) = server_ws.split();
 

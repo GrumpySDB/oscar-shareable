@@ -10,21 +10,18 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use rsa::pkcs8::EncodePublicKey;
 
-use crate::{
-    config::{AppState, SessionInfo},
-    utils::safe_equal,
-};
+use crate::config::{AppState, SessionInfo};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,
+    pub uuid: String,
     pub sid: String,
     pub exp: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OscarClaims {
-    pub sub: String,
+    pub uuid: String,
     pub sid: String,
     pub fp: String,
     pub scope: String,
@@ -32,9 +29,23 @@ pub struct OscarClaims {
 }
 
 #[derive(Deserialize)]
-pub struct LoginPayload {
-    pub username: Option<String>,
-    pub password: Option<String>,
+pub struct LocalLoginPayload {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Deserialize)]
+pub struct LocalSignupPayload {
+    pub username: String,
+    pub invite_code: String,
+}
+
+#[derive(Serialize)]
+pub struct SignupResponse {
+    pub username: String,
+    pub password: String,
+    pub recovery_phrase: String,
+    pub token: String,
 }
 
 #[derive(Serialize)]
@@ -42,22 +53,186 @@ pub struct LoginResponse {
     pub token: String,
 }
 
-pub async fn login(
-    State(state): State<Arc<AppState>>,
-    ExtractJson(payload): ExtractJson<LoginPayload>,
-) -> Result<Json<LoginResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let username = payload.username.unwrap_or_default();
-    let password = payload.password.unwrap_or_default();
+#[derive(Deserialize)]
+pub struct DiscordCallbackQuery {
+    pub code: String,
+}
 
-    if !safe_equal(&username, &state.config.app_username)
-        || !safe_equal(&password, &state.config.app_password)
-    {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Invalid credentials" })),
-        ));
+#[derive(Deserialize)]
+struct DiscordTokenResponse {
+    access_token: String,
+}
+
+#[derive(Deserialize)]
+struct DiscordUser {
+    id: String,
+    username: String,
+}
+
+pub async fn discord_callback(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<DiscordCallbackQuery>,
+) -> Result<Json<LoginResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let client = &state.reqwest_client;
+
+    // Exchange code for token
+    let token_res = client
+        .post("https://discord.com/api/oauth2/token")
+        .form(&[
+            ("client_id", state.config.discord_client_id.as_str()),
+            ("client_secret", state.config.discord_client_secret.as_str()),
+            ("grant_type", "authorization_code"),
+            ("code", query.code.as_str()),
+            ("redirect_uri", state.config.discord_redirect_uri.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|e| {
+            tracing::error!("Discord token exchange failed: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Token exchange failed" })))
+        })?;
+
+    if !token_res.status().is_success() {
+        let err_text = token_res.text().await.unwrap_or_default();
+        tracing::error!("Discord token error: {}", err_text);
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Discord rejected the code" }))));
     }
 
+    let token_data: DiscordTokenResponse = token_res.json().await.map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Invalid token response" })))
+    })?;
+
+    // Get user info
+    let user_res = client
+        .get("https://discord.com/api/users/@me")
+        .bearer_auth(token_data.access_token)
+        .send()
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to get user info" }))))?;
+
+    let discord_user: DiscordUser = user_res.json().await.map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Invalid user response" })))
+    })?;
+
+    // Check if user exists
+    let mut user = state.db.get_user_by_identifier("discord", &discord_user.id).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+
+    if user.is_none() {
+        // For Discord, we might want to check an invite or whitelist.
+        // For MVP, if they are the SUPER_ADMIN_ID, they are auto-created as admin.
+        // Others might need an invite (Phase 3).
+        let role = if discord_user.id == state.config.super_admin_id { "admin" } else { "user" };
+        
+        let new_user = crate::db::User {
+            uuid: uuid::Uuid::new_v4().to_string(),
+            username: Some(discord_user.username),
+            provider: "discord".to_string(),
+            identifier: discord_user.id.clone(),
+            role: role.to_string(),
+        };
+        
+        state.db.create_user(new_user.clone(), None).map_err(|e| {
+            tracing::error!("Failed to create user: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create user" })))
+        })?;
+        user = Some(new_user);
+    }
+
+    let user = user.unwrap();
+    issue_session(&state, user).await
+}
+
+pub async fn local_signup(
+    State(state): State<Arc<AppState>>,
+    ExtractJson(payload): ExtractJson<LocalSignupPayload>,
+) -> Result<Json<SignupResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Validate invite
+    let is_valid = state.db.validate_invite(&payload.invite_code).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+
+    if !is_valid {
+        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Invalid or expired invite code" }))));
+    }
+
+    // Check if username taken
+    let exists = state.db.get_user_by_identifier("local", &payload.username).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+
+    if exists.is_some() {
+        return Err((StatusCode::CONFLICT, Json(serde_json::json!({ "error": "Username already taken" }))));
+    }
+
+    // Generate credentials
+    let password = format!("{}-{}", payload.username, uuid::Uuid::new_v4().to_string().split('-').next().unwrap());
+    
+    use bip39::Mnemonic;
+    use rand::{rngs::OsRng, RngCore};
+    let mut rng = OsRng;
+    let mut entropy = [0u8; 16];
+    rng.fill_bytes(&mut entropy);
+    let mnemonic = Mnemonic::from_entropy(&entropy).unwrap();
+    let recovery_phrase = mnemonic.to_string();
+
+    use argon2::{
+        password_hash::{SaltString},
+        Argon2, PasswordHasher,
+    };
+    let salt = SaltString::generate(&mut rng);
+    let argon2 = Argon2::default();
+    let password_hash = argon2.hash_password(password.as_bytes(), &salt)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Password hashing failed" }))))?
+        .to_string();
+
+    let uuid = uuid::Uuid::new_v4().to_string();
+    let user = crate::db::User {
+        uuid: uuid.clone(),
+        username: Some(payload.username.clone()),
+        provider: "local".to_string(),
+        identifier: payload.username.clone(),
+        role: "user".to_string(),
+    };
+
+    state.db.create_user(user.clone(), Some(password_hash)).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create user" })))
+    })?;
+
+    state.db.use_invite(&payload.invite_code, &uuid).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Invite update error" })))
+    })?;
+
+    let token_res = issue_session(&state, user).await?;
+    
+    Ok(Json(SignupResponse {
+        username: payload.username,
+        password,
+        recovery_phrase,
+        token: token_res.0.token,
+    }))
+}
+
+pub async fn local_login(
+    State(state): State<Arc<AppState>>,
+    ExtractJson(payload): ExtractJson<LocalLoginPayload>,
+) -> Result<Json<LoginResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let user = state.db.verify_password("local", &payload.username, &payload.password).map_err(|e| {
+        tracing::error!("Auth verification error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Authentication error" })))
+    })?;
+
+    match user {
+        Some(u) => issue_session(&state, u).await,
+        None => Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid credentials" })))),
+    }
+}
+
+async fn issue_session(
+    state: &AppState,
+    user: crate::db::User,
+) -> Result<Json<LoginResponse>, (StatusCode, Json<serde_json::Value>)> {
     let sid = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     let exp = now + state.config.auth_session_ttl_seconds as i64;
@@ -65,13 +240,13 @@ pub async fn login(
     state.active_auth_sessions.write().await.insert(
         sid.clone(),
         SessionInfo {
-            sub: username.clone(),
+            uuid: user.uuid.clone(),
             expires_at: exp,
         },
     );
 
     let claims = Claims {
-        sub: username,
+        uuid: user.uuid,
         sid,
         exp,
     };
@@ -82,10 +257,7 @@ pub async fn login(
         &EncodingKey::from_secret(state.config.jwt_secret.as_bytes()),
     )
     .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "Failed to create token" })),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create token" })))
     })?;
 
     Ok(Json(LoginResponse { token }))
@@ -175,7 +347,7 @@ pub async fn auth_middleware(
     sessions.retain(|_, s| s.expires_at > now);
 
     if let Some(session) = sessions.get(&claims.sid) {
-        if session.sub == claims.sub {
+        if session.uuid == claims.uuid {
             req.extensions_mut().insert(claims);
             return Ok(next.run(req).await);
         }

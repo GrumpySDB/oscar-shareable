@@ -79,4 +79,112 @@ impl Database {
             Ok(None)
         }
     }
+
+    pub fn get_user_by_uuid(&self, uuid: &str) -> Result<Option<User>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT uuid, username, provider, identifier, role FROM users WHERE uuid = ?1")?;
+        
+        let mut rows = stmt.query(params![uuid])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(User {
+                uuid: row.get(0)?,
+                username: row.get(1)?,
+                provider: row.get(2)?,
+                identifier: row.get(3)?,
+                role: row.get(4)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn create_user(&self, user: User, password_hash: Option<String>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO users (uuid, username, provider, identifier, argon2_password_hash, role, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                user.uuid,
+                user.username,
+                user.provider,
+                user.identifier,
+                password_hash,
+                user.role,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn verify_password(&self, provider: &str, identifier: &str, password: &str) -> Result<Option<User>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT uuid, username, provider, identifier, argon2_password_hash, role FROM users WHERE provider = ?1 AND identifier = ?2")?;
+        
+        let mut rows = stmt.query(params![provider, identifier])?;
+        if let Some(row) = rows.next()? {
+            let hash: Option<String> = row.get(4)?;
+            if let Some(h) = hash {
+                use argon2::{
+                    password_hash::{PasswordHash, PasswordVerifier},
+                    Argon2,
+                };
+                if PasswordHash::new(&h).and_then(|parsed_hash| {
+                    Argon2::default().verify_password(password.as_bytes(), &parsed_hash)
+                }).is_ok() {
+                    return Ok(Some(User {
+                        uuid: row.get(0)?,
+                        username: row.get(1)?,
+                        provider: row.get(2)?,
+                        identifier: row.get(3)?,
+                        role: row.get(5)?,
+                    }));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn validate_invite(&self, code: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let mut stmt = conn.prepare("SELECT 1 FROM invites WHERE code = ?1 AND used_by_uuid IS NULL AND expires_at > ?2")?;
+        let exists = stmt.exists(params![code, now])?;
+        Ok(exists)
+    }
+
+    pub fn use_invite(&self, code: &str, user_uuid: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE invites SET used_by_uuid = ?1 WHERE code = ?2",
+            params![user_uuid, code],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_user(&self, uuid: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM users WHERE uuid = ?1", params![uuid])?;
+        Ok(())
+    }
+
+    pub fn get_all_users(&self) -> Result<Vec<User>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT uuid, username, provider, identifier, role FROM users")?;
+        let user_iter = stmt.query_map([], |row| {
+            Ok(User {
+                uuid: row.get(0)?,
+                username: row.get(1)?,
+                provider: row.get(2)?,
+                identifier: row.get(3)?,
+                role: row.get(4)?,
+            })
+        })?;
+        
+        let mut users = Vec::new();
+        for user in user_iter {
+            users.push(user?);
+        }
+        Ok(users)
+    }
 }

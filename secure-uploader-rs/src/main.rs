@@ -38,18 +38,21 @@ async fn main() -> anyhow::Result<()> {
     let serve_dir = ServeDir::new(&public_dir).not_found_service(ServeFile::new(public_dir.join("index.html")));
 
     let api_routes = Router::new()
-        .route("/login", post(auth::login))
+        .route("/auth/discord/callback", get(auth::discord_callback))
+        .route("/auth/local/signup", post(auth::local_signup))
+        .route("/auth/local/login", post(auth::local_login))
         .merge(
             Router::new()
                 .route("/logout", post(auth::logout))
                 .route("/session", get(auth::session_check))
                 .route("/encryption-public-key", get(auth::get_public_key))
                 .route("/oscar-launch", post(proxy::oscar_launch))
-                .route("/folders/:folder/files", get(upload::list_files))
+                .route("/files", get(upload::list_files))
                 .route("/upload", post(upload::handle_upload))
-                .route("/folders/:folder", delete(upload::delete_folder))
+                .route("/files", delete(upload::delete_folder))
                 .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware))
-        );
+        )
+        .with_state(shared_state.clone());
 
     // /oscar/login is a separate route with its own launch-token auth (not session-cookie based).
     // It must NOT go through require_oscar_session_middleware because it creates the session.

@@ -3,7 +3,6 @@ use std::env;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
 use reqwest::Client;
-use std::sync::Arc;
 use rsa::RsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
 use rand::rngs::OsRng;
@@ -21,6 +20,10 @@ pub struct AppConfig {
     pub upload_gid: u32,
     pub app_encryption_private_key: RsaPrivateKey,
     pub max_upload_batch_bytes: usize,
+    pub discord_client_id: String,
+    pub discord_client_secret: String,
+    pub discord_redirect_uri: String,
+    pub super_admin_id: String,
 }
 
 impl AppConfig {
@@ -61,6 +64,10 @@ impl AppConfig {
             upload_gid,
             app_encryption_private_key,
             max_upload_batch_bytes,
+            discord_client_id: env::var("DISCORD_CLIENT_ID").unwrap_or_default(),
+            discord_client_secret: env::var("DISCORD_CLIENT_SECRET").unwrap_or_default(),
+            discord_redirect_uri: env::var("DISCORD_REDIRECT_URI").unwrap_or_default(),
+            super_admin_id: env::var("SUPER_ADMIN_ID").unwrap_or_default(),
         })
     }
 }
@@ -76,7 +83,7 @@ pub struct AppState {
 
 #[derive(Clone)]
 pub struct SessionInfo {
-    pub sub: String,
+    pub uuid: String,
     pub expires_at: i64,
 }
 

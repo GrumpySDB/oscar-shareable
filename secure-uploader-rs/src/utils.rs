@@ -1,4 +1,3 @@
-use anyhow::Result;
 use sha2::Sha256;
 
 pub fn safe_equal(a: &str, b: &str) -> bool {

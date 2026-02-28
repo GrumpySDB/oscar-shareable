@@ -1,5 +1,6 @@
 use axum::{
-    extract::{Multipart, Path, State},
+    extract::{Multipart, State},
+    Extension,
     http::StatusCode,
     response::{IntoResponse, Json},
 };
@@ -12,8 +13,9 @@ use rsa::Oaep;
 use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
 
 use crate::{
+    auth::Claims,
     config::AppState,
-    utils::{sanitize_folder_name, sanitize_upload_relative_path},
+    utils::sanitize_upload_relative_path,
 };
 
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
@@ -21,20 +23,17 @@ const OXIMETRY_MAX_FILE_SIZE: usize = 200 * 1024; // 200KB
 const UPLOAD_ROOT: &str = "./data/uploads";
 
 pub async fn list_files(
-    Path(folder): Path<String>,
+    Extension(claims): Extension<Claims>,
 ) -> impl IntoResponse {
-    let folder = match sanitize_folder_name(&folder) {
-        Some(f) => f,
-        None => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid folder name" })))),
-    };
+    let folder = &claims.uuid;
 
-    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    let folder_path = PathBuf::from(UPLOAD_ROOT).join(folder);
     if !folder_path.exists() {
-        return Ok(Json(serde_json::json!({ "filenames": [] })));
+        return Json(serde_json::json!({ "filenames": [] }));
     }
 
     let filenames = collect_filenames_recursive(&folder_path, &folder_path).await.unwrap_or_default();
-    Ok(Json(serde_json::json!({ "filenames": filenames })))
+    Json(serde_json::json!({ "filenames": filenames }))
 }
 
 #[async_recursion::async_recursion]
@@ -56,17 +55,14 @@ async fn collect_filenames_recursive(root: &PathBuf, current: &PathBuf) -> anyho
 }
 
 pub async fn delete_folder(
-    Path(folder): Path<String>,
+    Extension(claims): Extension<Claims>,
 ) -> impl IntoResponse {
-    let folder = match sanitize_folder_name(&folder) {
-        Some(f) => f,
-        None => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid folder name" })))),
-    };
+    let folder = &claims.uuid;
 
-    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    let folder_path = PathBuf::from(UPLOAD_ROOT).join(folder);
     let _ = fs::remove_dir_all(&folder_path).await;
     
-    Ok(Json(serde_json::json!({ "deleted": folder })))
+    Json(serde_json::json!({ "deleted": folder }))
 }
 
 #[derive(Deserialize)]
@@ -79,16 +75,13 @@ struct Envelope {
 
 pub async fn handle_upload(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    let mut folder = String::new();
-    let mut selected_date = 0i64;
+    let folder = &claims.uuid;
     let mut tinfoil_hat_mode = false;
-    let mut upload_session_id = String::new();
     let mut total_batches = 1usize;
     let mut batch_index = 0usize;
-    let mut upload_type = "sdcard".to_string();
-    let mut wellue_db_parents_raw = String::new();
     let mut raw_encryption_envelope_map = String::new();
     
     // Files are held in RAM during processing, matching the JS multer.memoryStorage()
@@ -101,14 +94,14 @@ pub async fn handle_upload(
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
         let name = field.name().unwrap_or("").to_string();
         
-        if name == "folder" { folder = field.text().await.unwrap_or_default(); }
-        else if name == "selectedDateMs" { selected_date = field.text().await.unwrap_or_default().parse().unwrap_or(0); }
+        if name == "folder" { /* IGNORED - using uuid from claims */ }
+        else if name == "selectedDateMs" { let _ = field.text().await; }
         else if name == "tinfoilHatMode" { tinfoil_hat_mode = field.text().await.unwrap_or("false".to_string()).to_lowercase() == "true"; }
-        else if name == "uploadSessionId" { upload_session_id = field.text().await.unwrap_or_default(); }
+        else if name == "uploadSessionId" { let _ = field.text().await; }
         else if name == "totalBatches" { total_batches = field.text().await.unwrap_or_default().parse().unwrap_or(1); }
         else if name == "batchIndex" { batch_index = field.text().await.unwrap_or_default().parse().unwrap_or(0); }
-        else if name == "uploadType" { upload_type = field.text().await.unwrap_or_default(); }
-        else if name == "wellueDbParents" { wellue_db_parents_raw = field.text().await.unwrap_or_default(); }
+        else if name == "uploadType" { let _ = field.text().await; }
+        else if name == "wellueDbParents" { let _ = field.text().await; }
         else if name == "encryptionEnvelope" { raw_encryption_envelope_map = field.text().await.unwrap_or_default(); }
         else if name == "files" {
             let file_name = field.file_name().unwrap_or("").to_string();
@@ -165,12 +158,7 @@ pub async fn handle_upload(
         }
     }
 
-    let folder = match sanitize_folder_name(&folder) {
-        Some(f) => f,
-        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid folder name" }))),
-    };
-
-    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    let folder_path = PathBuf::from(UPLOAD_ROOT).join(folder);
     fs::create_dir_all(&folder_path).await.unwrap();
 
     let envelopes: std::collections::HashMap<String, Envelope> = if tinfoil_hat_mode && !raw_encryption_envelope_map.is_empty() {
@@ -219,7 +207,6 @@ pub async fn handle_upload(
     // --- Write all files to disk in parallel, bounded to 32 concurrent writes ---
     // Using JoinSet with a concurrency cap avoids overwhelming the filesystem while
     // providing large throughput gains for CPAP batches of hundreds of small files.
-    use std::os::unix::fs::OpenOptionsExt;
     use tokio::task::JoinSet;
 
     const MAX_CONCURRENT_WRITES: usize = 32;
