@@ -1,14 +1,13 @@
 services:
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    build:
+      context: ./cloudflared
     container_name: cloudflared
     command: tunnel run
     env_file:
       - .env
     restart: unless-stopped
-    volumes:
-      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
     networks:
       - internal
     security_opt:
