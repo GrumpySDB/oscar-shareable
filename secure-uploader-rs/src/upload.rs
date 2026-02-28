@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use std::{os::unix::fs::PermissionsExt, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use tokio::{fs, io::AsyncWriteExt};
 use serde::Deserialize;
 use rsa::RsaPrivateKey;
@@ -179,12 +179,11 @@ pub async fn handle_upload(
         std::collections::HashMap::new()
     };
 
-    let effective_upload_type = "sdcard"; // For strict rewrite we would parse inferUploadType, but simplifying for MVP
+    // --- Validate paths and decrypt payloads synchronously first ---
+    // This ensures all security checks are done before any file touches disk,
+    // and lets us return clean error responses if anything is wrong.
+    let mut write_tasks: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(temp_files.len());
 
-    let mut uploaded_count = 0;
-    
-    // All files are in RAM at this point — write to disk in a single pass.
-    // This matches the JS multer.memoryStorage() pattern for maximum throughput.
     for (filename, payload) in temp_files {
         let sanitized_path = match sanitize_upload_relative_path(&filename) {
             Some(p) => p,
@@ -192,34 +191,69 @@ pub async fn handle_upload(
         };
 
         let dest_path = folder_path.join(&sanitized_path);
-        if let Some(parent) = dest_path.parent() {
-            let _ = fs::create_dir_all(parent).await;
-        }
 
         let mut final_payload = payload;
 
         if tinfoil_hat_mode {
             if let Some(env) = envelopes.get(&sanitized_path).or_else(|| envelopes.get(&filename)) {
-                if let Ok(decrypted) = decrypt_payload(&final_payload, env, &state.config.app_encryption_private_key) {
-                    final_payload = decrypted;
-                } else {
-                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Unable to decrypt {}", sanitized_path) })));
+                match decrypt_payload(&final_payload, env, &state.config.app_encryption_private_key) {
+                    Ok(decrypted) => final_payload = decrypted,
+                    Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Unable to decrypt {}", sanitized_path) }))),
                 }
             } else {
                 return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Missing envelope for {}", sanitized_path) })));
             }
         }
 
-        if let Ok(mut file) = fs::File::create(&dest_path).await {
-            let _ = file.write_all(&final_payload).await;
-            
-            // Apply 0640 perms (roughly what Node did)
-            let mut perms = file.metadata().await.unwrap().permissions();
-            perms.set_mode(0o640);
-            let _ = file.set_permissions(perms).await;
-            
-            uploaded_count += 1;
+        write_tasks.push((dest_path, final_payload));
+    }
+
+    // --- Create parent directories for all destination paths ---
+    // Done in a single pass before spawning write tasks to avoid concurrent mkdir races.
+    for (dest_path, _) in &write_tasks {
+        if let Some(parent) = dest_path.parent() {
+            let _ = fs::create_dir_all(parent).await;
         }
+    }
+
+    // --- Write all files to disk in parallel, bounded to 32 concurrent writes ---
+    // Using JoinSet with a concurrency cap avoids overwhelming the filesystem while
+    // providing large throughput gains for CPAP batches of hundreds of small files.
+    use std::os::unix::fs::OpenOptionsExt;
+    use tokio::task::JoinSet;
+
+    const MAX_CONCURRENT_WRITES: usize = 32;
+    let mut join_set: JoinSet<bool> = JoinSet::new();
+    let mut uploaded_count = 0usize;
+
+    for (dest_path, payload) in write_tasks {
+        // Drain completed tasks when we hit the concurrency cap
+        while join_set.len() >= MAX_CONCURRENT_WRITES {
+            if let Some(Ok(true)) = join_set.join_next().await {
+                uploaded_count += 1;
+            }
+        }
+
+        join_set.spawn(async move {
+            // Set mode 0o640 at file creation — avoids a separate metadata()+set_permissions() call
+            let file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o640)
+                .open(&dest_path)
+                .await;
+
+            match file {
+                Ok(mut f) => f.write_all(&payload).await.is_ok(),
+                Err(_) => false,
+            }
+        });
+    }
+
+    // Drain remaining tasks
+    while let Some(Ok(true)) = join_set.join_next().await {
+        uploaded_count += 1;
     }
 
     (StatusCode::OK, Json(serde_json::json!({

@@ -13,9 +13,7 @@ pub struct AppConfig {
     pub jwt_secret: String,
     pub app_username: String,
     pub app_password: String,
-    pub https_port: u16,
-    pub ssl_key_path: String,
-    pub ssl_cert_path: String,
+    pub http_port: u16,
     pub oscar_base_url: url::Url,
     pub auth_session_ttl_seconds: u64,
     pub upload_uid: u32,
@@ -29,9 +27,8 @@ impl AppConfig {
         let jwt_secret = env::var("JWT_SECRET").context("JWT_SECRET must be set")?;
         let app_username = env::var("APP_USERNAME").unwrap_or_else(|_| "shared-user".to_string());
         let app_password = env::var("APP_PASSWORD").context("APP_PASSWORD must be set")?;
-        let https_port = env::var("HTTPS_PORT").unwrap_or_else(|_| "50710".to_string()).parse()?;
-        let ssl_key_path = env::var("SSL_KEY_PATH").unwrap_or_else(|_| "/app/certs/origin.key".to_string()).trim().to_string();
-        let ssl_cert_path = env::var("SSL_CERT_PATH").unwrap_or_else(|_| "/app/certs/origin.pem".to_string()).trim().to_string();
+        // HTTP port for the internal Docker network listener (TLS is terminated by nginx)
+        let http_port = env::var("HTTP_PORT").unwrap_or_else(|_| "8080".to_string()).parse()?;
         let oscar_base_url = url::Url::parse(&env::var("OSCAR_BASE_URL").unwrap_or_else(|_| "http://oscar:3000".to_string()))?;
         let auth_session_ttl_seconds = env::var("AUTH_SESSION_TTL_SECONDS").unwrap_or_else(|_| "1800".to_string()).parse()?;
         let upload_uid = env::var("UPLOAD_UID").unwrap_or_else(|_| "911".to_string()).parse()?;
@@ -56,9 +53,7 @@ impl AppConfig {
             jwt_secret,
             app_username,
             app_password,
-            https_port,
-            ssl_key_path,
-            ssl_cert_path,
+            http_port,
             oscar_base_url,
             auth_session_ttl_seconds,
             upload_uid,

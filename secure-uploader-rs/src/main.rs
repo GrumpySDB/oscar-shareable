@@ -12,7 +12,6 @@ use axum::{
     routing::{delete, get, post, any},
     Router,
 };
-use axum_server::tls_rustls::RustlsConfig;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tower_http::{
     limit::RequestBodyLimitLayer,
@@ -24,7 +23,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    rustls::crypto::ring::default_provider().install_default().expect("Failed to install rustls crypto provider");
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,secure_uploader=debug".into()))
         .with(tracing_subscriber::fmt::layer())
@@ -79,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
         // Standard CSP is applied globally but NOT inside /oscar/ proxy since it overrides it
         .layer(middleware::from_fn(add_security_headers));
 
-    let mut app = Router::new()
+    let app = Router::new()
         .nest("/api", api_routes)
         .merge(oscar_login_route)
         .merge(proxy_routes)
@@ -93,14 +91,12 @@ async fn main() -> anyhow::Result<()> {
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024 * 5000)) // 50GB limit per request total. Individual chunks streamed.
         .with_state(shared_state);
 
-    let tls_config = RustlsConfig::from_pem_file(&cfg.ssl_cert_path, &cfg.ssl_key_path)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load TLS certificates from file: {}", e))?;
+    // Listen on plain HTTP — TLS is terminated by nginx at the container boundary.
+    // The Docker internal network is isolated; no plain-text traffic crosses a trust boundary.
+    let addr = SocketAddr::from(([0, 0, 0, 0], cfg.http_port));
+    tracing::info!("Listening on http://{} (internal, behind nginx TLS)", addr);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], cfg.https_port));
-    tracing::info!("Listening on https://{}", addr);
-
-    axum_server::bind_rustls(addr, tls_config)
+    axum_server::bind(addr)
         .serve(app.into_make_service())
         .await?;
 

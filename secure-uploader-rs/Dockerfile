@@ -12,7 +12,6 @@ RUN mkdir src && \
 
 COPY src ./src
 COPY public ./public
-COPY certs ./certs
 
 RUN find src -type f -exec touch {} + && cargo build --release
 
@@ -30,13 +29,11 @@ RUN groupadd -g ${GID} appuser && useradd -u ${UID} -g ${GID} -s /bin/sh -m appu
 
 COPY --from=builder /usr/src/app/target/release/secure-uploader /app/secure-uploader
 COPY --from=builder /usr/src/app/public /app/public
-COPY certs /app/certs
 
 RUN chown -R appuser:appuser /app
-RUN chmod 644 /app/certs/*
 
 USER appuser
 
 ENV RUST_LOG="info,secure_uploader=debug"
 
-CMD ["/bin/sh", "-c", "ls -la /app/certs && /app/secure-uploader"]
+CMD ["/app/secure-uploader"]

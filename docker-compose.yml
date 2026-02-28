@@ -40,11 +40,11 @@ services:
         GID: 911
     user: "911:911"
     expose:
-      - "50710"
+      - "8080"
     env_file:
       - .env
     environment:
-      HTTPS_PORT: 50710
+      HTTP_PORT: 8080
       UPLOAD_UID: 911
       UPLOAD_GID: 911
       OSCAR_BASE_URL: http://oscar:3000

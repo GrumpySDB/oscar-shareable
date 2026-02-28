@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.37.0", features = ["full"] }
 axum = { version = "0.7.5", features = ["macros", "multipart", "ws"] }
-axum-server = { version = "0.7.1", features = ["tls-rustls"] }
+axum-server = { version = "0.7.1" }
 tower = "0.4.13"
 tower-http = { version = "0.5.2", features = ["fs", "cors", "trace", "set-header", "normalize-path", "limit"] }
 serde = { version = "1.0.197", features = ["derive"] }
@@ -28,8 +28,6 @@ futures-util = "0.3.30"
 regex = "1.10.4"
 url = "2.5.0"
 anyhow = "1.0.82"
-rustls = { version = "0.23.5", features = ["ring"] }
-rustls-pemfile = "2.1.2"
 aes-gcm = "0.10.3"
 rsa = { version = "0.9.6", features = ["sha2"] }
 sha2 = "0.10.8"
