@@ -1,0 +1,9 @@
+tunnel: ${CF_TUNNEL_ID}
+credentials-file: /etc/cloudflared/${CF_TUNNEL_ID}.json
+
+ingress:
+  - hostname: ${CF_HOSTNAME}
+    service: http://nginx-internal:80
+    originRequest:
+      httpHostHeader: ${CF_HOSTNAME}
+  - service: http_status:404

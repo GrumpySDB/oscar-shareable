@@ -1,5 +1,4 @@
 .env
 cloudflared/config.yml
-nginx/nginx.conf
 .agents/rules/security.md
 .agents/rules/testing-guidelines.md
