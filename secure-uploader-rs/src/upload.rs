@@ -91,10 +91,12 @@ pub async fn handle_upload(
     let mut wellue_db_parents_raw = String::new();
     let mut raw_encryption_envelope_map = String::new();
     
-    // In axum multipart, fields come in stream order. Usually files are last.
-    // If files come before metadata we might have to store them in temp or RAM.
-    // Assuming the frontend appends textual metadata before the files.
-    let mut temp_files = Vec::new();
+    // Files are held in RAM during processing, matching the JS multer.memoryStorage()
+    // approach for performance. Size limits are enforced during streaming to prevent
+    // unbounded memory consumption.
+    let mut temp_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut batch_bytes_total: usize = 0;
+    let max_batch_bytes = state.config.max_upload_batch_bytes;
 
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
         let name = field.name().unwrap_or("").to_string();
@@ -110,9 +112,55 @@ pub async fn handle_upload(
         else if name == "encryptionEnvelope" { raw_encryption_envelope_map = field.text().await.unwrap_or_default(); }
         else if name == "files" {
             let file_name = field.file_name().unwrap_or("").to_string();
-            let data = field.bytes().await.unwrap_or_default();
-            if !file_name.is_empty() && !data.is_empty() {
-                temp_files.push((file_name, data));
+            if file_name.is_empty() {
+                continue;
+            }
+
+            // Read the file chunk-by-chunk, enforcing per-file and per-batch limits
+            // during streaming rather than after the full read. This prevents a single
+            // oversized file from consuming unbounded memory before we can reject it.
+            let mut file_buf: Vec<u8> = Vec::new();
+            let mut field = field;
+
+            while let Ok(Some(chunk)) = field.chunk().await {
+                let new_file_size = file_buf.len() + chunk.len();
+                if new_file_size > MAX_FILE_SIZE {
+                    // Individual file exceeds 10MB — not valid CPAP SD card data
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!(
+                                "The file \"{}\" exceeds the 10 MB size limit. \
+                                 Files larger than 10 MB are not expected in CPAP data \
+                                 and have been rejected for your protection.",
+                                file_name
+                            )
+                        })),
+                    );
+                }
+
+                let new_batch_total = batch_bytes_total + file_buf.len() + chunk.len();
+                if new_batch_total > max_batch_bytes {
+                    let limit_mb = max_batch_bytes / (1024 * 1024);
+                    return (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        Json(serde_json::json!({
+                            "error": format!(
+                                "This upload batch exceeds the {} MB total size limit. \
+                                 Please try selecting a more recent start date to reduce \
+                                 the number of files per upload.",
+                                limit_mb
+                            )
+                        })),
+                    );
+                }
+
+                file_buf.extend_from_slice(&chunk);
+            }
+
+            if !file_buf.is_empty() {
+                batch_bytes_total += file_buf.len();
+                temp_files.push((file_name, file_buf));
             }
         }
     }
@@ -135,6 +183,8 @@ pub async fn handle_upload(
 
     let mut uploaded_count = 0;
     
+    // All files are in RAM at this point — write to disk in a single pass.
+    // This matches the JS multer.memoryStorage() pattern for maximum throughput.
     for (filename, payload) in temp_files {
         let sanitized_path = match sanitize_upload_relative_path(&filename) {
             Some(p) => p,
@@ -146,7 +196,7 @@ pub async fn handle_upload(
             let _ = fs::create_dir_all(parent).await;
         }
 
-        let mut final_payload = payload.to_vec();
+        let mut final_payload = payload;
 
         if tinfoil_hat_mode {
             if let Some(env) = envelopes.get(&sanitized_path).or_else(|| envelopes.get(&filename)) {

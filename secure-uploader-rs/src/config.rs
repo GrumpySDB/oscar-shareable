@@ -21,6 +21,7 @@ pub struct AppConfig {
     pub upload_uid: u32,
     pub upload_gid: u32,
     pub app_encryption_private_key: RsaPrivateKey,
+    pub max_upload_batch_bytes: usize,
 }
 
 impl AppConfig {
@@ -35,6 +36,11 @@ impl AppConfig {
         let auth_session_ttl_seconds = env::var("AUTH_SESSION_TTL_SECONDS").unwrap_or_else(|_| "1800".to_string()).parse()?;
         let upload_uid = env::var("UPLOAD_UID").unwrap_or_else(|_| "911".to_string()).parse()?;
         let upload_gid = env::var("UPLOAD_GID").unwrap_or_else(|_| "911".to_string()).parse()?;
+
+        let max_upload_batch_bytes: usize = env::var("MAX_UPLOAD_BATCH_BYTES")
+            .unwrap_or_else(|_| "1073741824".to_string())
+            .parse()
+            .context("Invalid MAX_UPLOAD_BATCH_BYTES")?;
 
         let app_encryption_private_key = if let Ok(pem) = env::var("APP_ENCRYPTION_PRIVATE_KEY") {
             if pem.is_empty() {
@@ -58,6 +64,7 @@ impl AppConfig {
             upload_uid,
             upload_gid,
             app_encryption_private_key,
+            max_upload_batch_bytes,
         })
     }
 }

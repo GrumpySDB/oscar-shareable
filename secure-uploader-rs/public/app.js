@@ -45,7 +45,7 @@ async function loadRandomBanner(imageElement) {
 
     imageElement.src = `/images/${encodeURIComponent(selected)}`;
     imageElement.classList.remove('hidden');
-  } catch (_err) {}
+  } catch (_err) { }
 }
 
 
@@ -230,7 +230,7 @@ async function api(path, options = {}) {
     try {
       const body = await response.json();
       detail = body.error || detail;
-    } catch (_err) {}
+    } catch (_err) { }
 
     const error = new Error(detail);
     error.status = response.status;
@@ -308,7 +308,7 @@ async function logout() {
         method: 'POST',
         headers: { Authorization: `Bearer ${currentToken}` },
       });
-    } catch (_err) {}
+    } catch (_err) { }
   }
 
   resetPreparedState(true);
@@ -639,10 +639,10 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, t
       try {
         const body = JSON.parse(request.responseText);
         message = body.error || message;
-      } catch (_err) {}
+      } catch (_err) { }
 
-      if (request.status === 413) {
-        message = 'Upload rejected by gateway size limit. Reduce batch size and retry.';
+      if (request.status === 413 && message === 'Upload failed') {
+        message = 'Upload rejected by size limit. Please try selecting a more recent start date to reduce the number of files per upload.';
       }
 
       reject(new Error(message));

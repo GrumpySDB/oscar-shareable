@@ -53,9 +53,13 @@ services:
     restart: unless-stopped
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:size=512m
       - /run
       - /var/tmp
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     security_opt:
       - no-new-privileges:true
     cap_drop:
