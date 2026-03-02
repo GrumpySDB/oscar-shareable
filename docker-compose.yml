@@ -30,6 +30,23 @@ services:
     cap_drop:
       - ALL
 
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: docker-socket-proxy
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CONTAINERS=1
+      - IMAGES=1
+      - NETWORKS=1
+      - POST=1
+      - DELETE=1
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+
   nginx:
     image: nginx:stable-alpine
     container_name: nginx-internal
@@ -57,13 +74,11 @@ services:
   uploader:
     container_name: uploader
     build:
-      context: ./secure-uploader-rs
-      args:
-        UID: 911
-        GID: 911
-    user: "911:911"
+      context: .
     expose:
       - "8080"
+    group_add:
+      - "952"
     env_file:
       - .env
     environment:
@@ -72,9 +87,12 @@ services:
       UPLOAD_GID: 911
       OSCAR_BASE_URL: http://oscar:3000
       DATABASE_PATH: /app/data/uploads/db.sqlite
-    volumes:
-      - uploads:/app/data/uploads
+      DOCKER_HOST_PATH: ${DOCKER_HOST_PATH:-/config/dev/oscar-shareable}
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
     restart: unless-stopped
+    volumes:
+      - ${DOCKER_HOST_PATH:-.}/data/uploads:/app/data/uploads
+      - ${DOCKER_HOST_PATH:-.}/data/profiles:/app/data/profiles
     read_only: true
     tmpfs:
       - /tmp:size=512m
@@ -89,22 +107,24 @@ services:
     cap_drop:
       - ALL
     depends_on:
-      - oscar
       - nginx
       - cloudflared
+      - docker-socket-proxy
     networks:
       - internal
 
   oscar:
     build:
       context: ./docker-oscar
-    container_name: oscar
-    restart: unless-stopped
+    image: custom-oscar-vnc:latest
+    profiles: [ "template" ]
+    container_name: oscar-template
+    restart: "no"
     ports:
       - 127.0.0.1:3030:3000
     volumes:
-      - /var/www/oscar-data:/config/Documents/OSCAR_Data:rw
-      - uploads:/config/SDCARD:rw
+      - ${DOCKER_HOST_PATH:-.}/data/profiles:/config/Documents/OSCAR_Data:rw
+      - ${DOCKER_HOST_PATH:-.}/data/uploads:/config/Documents/SDCARD:rw
     environment:
       PUID: "911"
       PGID: "911"
@@ -123,7 +143,6 @@ services:
       - no-new-privileges:true
 
 volumes:
-  uploads:
   cloudflared-config:
 
 

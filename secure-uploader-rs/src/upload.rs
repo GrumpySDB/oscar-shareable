@@ -11,6 +11,7 @@ use rsa::RsaPrivateKey;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use rsa::Oaep;
 use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
+use bollard::container::{StopContainerOptions, RemoveContainerOptions};
 
 use crate::{
     auth::Claims,
@@ -20,14 +21,14 @@ use crate::{
 
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 const OXIMETRY_MAX_FILE_SIZE: usize = 200 * 1024; // 200KB
-const UPLOAD_ROOT: &str = "./data/uploads";
+use crate::config::{UPLOAD_ROOT, PROFILE_ROOT};
 
 pub async fn list_files(
     Extension(claims): Extension<Claims>,
 ) -> impl IntoResponse {
-    let folder = &claims.uuid;
+    let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
 
-    let folder_path = PathBuf::from(UPLOAD_ROOT).join(folder);
+    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
     if !folder_path.exists() {
         return Json(serde_json::json!({ "filenames": [] }));
     }
@@ -57,10 +58,13 @@ async fn collect_filenames_recursive(root: &PathBuf, current: &PathBuf) -> anyho
 pub async fn delete_folder(
     Extension(claims): Extension<Claims>,
 ) -> impl IntoResponse {
-    let folder = &claims.uuid;
+    let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
 
-    let folder_path = PathBuf::from(UPLOAD_ROOT).join(folder);
-    let _ = fs::remove_dir_all(&folder_path).await;
+    let upload_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    let profile_path = PathBuf::from(PROFILE_ROOT).join(&folder);
+    
+    let _ = fs::remove_dir_all(&upload_path).await;
+    let _ = fs::remove_dir_all(&profile_path).await;
     
     Json(serde_json::json!({ "deleted": folder }))
 }
@@ -78,11 +82,27 @@ pub async fn handle_upload(
     Extension(claims): Extension<Claims>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    let folder = &claims.uuid;
+    let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
     let mut tinfoil_hat_mode = false;
     let mut total_batches = 1usize;
     let mut batch_index = 0usize;
     let mut raw_encryption_envelope_map = String::new();
+
+    // --- Evict active OSCAR container if it exists ---
+    // This ensures that when the user clicks 'Proceed to OSCAR' after the upload,
+    // a fresh container is launched that picks up the newly uploaded data.
+    let uuid = claims.uuid.clone();
+    let docker = state.docker.clone();
+    let state_arc = state.clone();
+
+    tokio::spawn(async move {
+        let mut containers = state_arc.active_containers.write().await;
+        if let Some(info) = containers.remove(&uuid) {
+            tracing::info!("Evicting OSCAR container {} due to new upload start.", info.container_id);
+            let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
+            let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+        }
+    });
     
     // Files are held in RAM during processing, matching the JS multer.memoryStorage()
     // approach for performance. Size limits are enforced during streaming to prevent
@@ -94,7 +114,7 @@ pub async fn handle_upload(
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
         let name = field.name().unwrap_or("").to_string();
         
-        if name == "folder" { /* IGNORED - using uuid from claims */ }
+        if name == "folder" { let _ = field.text().await; } // Ignored, using claims.username
         else if name == "selectedDateMs" { let _ = field.text().await; }
         else if name == "tinfoilHatMode" { tinfoil_hat_mode = field.text().await.unwrap_or("false".to_string()).to_lowercase() == "true"; }
         else if name == "uploadSessionId" { let _ = field.text().await; }
@@ -158,7 +178,7 @@ pub async fn handle_upload(
         }
     }
 
-    let folder_path = PathBuf::from(UPLOAD_ROOT).join(folder);
+    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
     fs::create_dir_all(&folder_path).await.unwrap();
 
     let envelopes: std::collections::HashMap<String, Envelope> = if tinfoil_hat_mode && !raw_encryption_envelope_map.is_empty() {
@@ -201,7 +221,19 @@ pub async fn handle_upload(
     for (dest_path, _) in &write_tasks {
         if let Some(parent) = dest_path.parent() {
             let _ = fs::create_dir_all(parent).await;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::chown;
+                let _ = chown(parent, Some(911), Some(911));
+            }
         }
+    }
+    
+    // Also chown the root folder itself
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::chown;
+        let _ = chown(&folder_path, Some(911), Some(911));
     }
 
     // --- Write all files to disk in parallel, bounded to 32 concurrent writes ---
@@ -222,18 +254,32 @@ pub async fn handle_upload(
         }
 
         join_set.spawn(async move {
-            // Set mode 0o640 at file creation — avoids a separate metadata()+set_permissions() call
+            // Set mode 0o640 at file creation
             let file = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .mode(0o640)
+                .mode(0o660)
                 .open(&dest_path)
                 .await;
 
             match file {
-                Ok(mut f) => f.write_all(&payload).await.is_ok(),
-                Err(_) => false,
+                Ok(mut f) => {
+                    let success = f.write_all(&payload).await.is_ok();
+                    let _ = f.flush().await; // Ensure write finishes before chown
+                    
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::chown;
+                        // Chown file to UID 911, GID 911 for OSCAR consumption
+                        let _ = chown(&dest_path, Some(911), Some(911));
+                    }
+                    success
+                },
+                Err(e) => {
+                    tracing::error!("Failed to create file {:?}: {}", dest_path, e);
+                    false
+                },
             }
         });
     }
@@ -248,6 +294,25 @@ pub async fn handle_upload(
         "batchIndex": batch_index,
         "totalBatches": total_batches
     })))
+}
+
+pub async fn list_banner_images() -> impl IntoResponse {
+    let mut images = Vec::new();
+    let images_root = "./public/images";
+    if let Ok(mut entries) = fs::read_dir(images_root).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".webp") {
+                    images.push(name.to_string());
+                }
+            }
+        }
+    }
+    
+    // Sort for deterministic results (optional but nice)
+    images.sort();
+    
+    Json(serde_json::json!({ "images": images }))
 }
 
 fn decrypt_payload(

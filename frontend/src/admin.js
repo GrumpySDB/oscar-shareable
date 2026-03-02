@@ -171,17 +171,9 @@ document.getElementById('bulkDeleteBtn').addEventListener('click', async () => {
 
     statusMessage.textContent = 'Deleting users...';
     try {
-        const uuids = checked.map(cb => cb.dataset.uuid);
-        await Promise.all(uuids.map(uuid => api(`/api/admin/users/${uuid}`, { method: 'DELETE' })));
-
-        statusMessage.textContent = `Successfully deleted ${uuids.length} user(s).`;
-
-        // Live/Optimistic update for immediate feedback
-        usersStatus = usersStatus.filter(u => !uuids.includes(u.uuid));
-        renderUsers();
-
-        // Optional: refresh from server in the background
-        setTimeout(loadUsers, 1000);
+        await Promise.all(checked.map(cb => api(`/api/admin/users/${cb.dataset.uuid}`, { method: 'DELETE' })));
+        statusMessage.textContent = `Successfully deleted ${checked.length} user(s).`;
+        loadUsers();
     } catch (err) {
         statusMessage.textContent = 'Error during bulk deletion: ' + err.message;
         loadUsers(); // reload to get actual state
@@ -353,16 +345,9 @@ document.getElementById('bulkRevokeBtn').addEventListener('click', async () => {
 
     statusMessage.textContent = 'Revoking invites...';
     try {
-        const codes = checked.map(cb => cb.dataset.code);
-        await Promise.all(codes.map(code => api(`/api/admin/invites/${code}`, { method: 'DELETE' })));
-
-        statusMessage.textContent = `Successfully revoked ${codes.length} invite(s).`;
-
-        // Live/Optimistic update
-        invitesStatus = invitesStatus.filter(inv => !codes.includes(inv.code));
-        renderInvites();
-
-        setTimeout(loadInvites, 1000);
+        await Promise.all(checked.map(cb => api(`/api/admin/invites/${cb.dataset.code}`, { method: 'DELETE' })));
+        statusMessage.textContent = `Successfully revoked ${checked.length} invite(s).`;
+        loadInvites();
     } catch (err) {
         statusMessage.textContent = 'Error during bulk revocation: ' + err.message;
         loadInvites();

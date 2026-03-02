@@ -38,3 +38,6 @@ async-recursion = "1.0.5"
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 argon2 = "0.5.3"
 bip39 = "2.1.0"
+bollard = "0.16.1"
+dashmap = "5.5.3"
+tokio-stream = "0.1.15"

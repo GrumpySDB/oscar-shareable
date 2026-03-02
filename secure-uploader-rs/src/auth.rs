@@ -1,20 +1,26 @@
 use axum::{
-    extract::{Request, State},
+    extract::{Request, State, ConnectInfo},
     http::{header, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response, Json},
     Json as ExtractJson,
+    Extension,
 };
+use std::net::SocketAddr;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use rsa::pkcs8::EncodePublicKey;
 
-use crate::config::{AppState, SessionInfo};
+use crate::config::{AppState, SessionInfo, UPLOAD_ROOT, PROFILE_ROOT};
+use bollard::container::{StopContainerOptions, RemoveContainerOptions};
+use std::path::PathBuf;
+use tokio::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub uuid: String,
+    pub username: String,
     pub role: String,
     pub sid: String,
     pub exp: i64,
@@ -61,6 +67,11 @@ pub struct DiscordCallbackQuery {
 }
 
 #[derive(Deserialize)]
+pub struct DiscordLoginQuery {
+    pub invite: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct DiscordTokenResponse {
     access_token: String,
 }
@@ -71,10 +82,26 @@ struct DiscordUser {
     username: String,
 }
 
+pub async fn discord_login(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<DiscordLoginQuery>,
+) -> impl IntoResponse {
+    let client_id = &state.config.discord_client_id;
+    let redirect_uri = urlencoding::encode(&state.config.discord_redirect_uri);
+    let state_param = query.invite.unwrap_or_default();
+    
+    let url = format!(
+        "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}",
+        client_id, redirect_uri, state_param
+    );
+    
+    axum::response::Redirect::to(&url)
+}
+
 pub async fn discord_callback(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(query): axum::extract::Query<DiscordCallbackQuery>,
-) -> Result<Json<LoginResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let client = &state.reqwest_client;
 
     // Exchange code for token
@@ -122,18 +149,28 @@ pub async fn discord_callback(
     })?;
 
     if user.is_none() {
-        // Enforce invite logic for new Discord users
+        // Enforce invite logic for NEW Discord users
         let invite_code = query.state.as_deref().unwrap_or("");
+        
+        if invite_code.is_empty() {
+             tracing::warn!("Discord login attempt for non-existent user with NO invite code.");
+             return Ok(axum::response::Redirect::to("/?error=uninvited").into_response());
+        }
+
         if !state.db.validate_invite(invite_code).unwrap_or(false) {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "A valid invite code is required to sign up via Discord. Pass it via the OAuth 'state' parameter." }))));
+             tracing::warn!("Discord login attempt for new user with INVALID invite code: {}", invite_code);
+             return Ok(axum::response::Redirect::to("/?error=invalid_invite").into_response());
         }
         
+        let now = chrono::Utc::now().timestamp();
         let new_user = crate::db::User {
             uuid: uuid::Uuid::new_v4().to_string(),
             username: Some(discord_user.username),
             provider: "discord".to_string(),
             identifier: discord_user.id.clone(),
             role: "user".to_string(),
+            created_at: now,
+            last_accessed_at: Some(now),
         };
         
         state.db.create_user(new_user.clone(), None).map_err(|e| {
@@ -148,13 +185,18 @@ pub async fn discord_callback(
     }
 
     let user = user.unwrap();
-    issue_session(&state, user).await
+    let (headers, token_res) = issue_session(&state, user).await?;
+    
+    let url = format!("/?login_token={}", token_res.0.token);
+    let mut response = axum::response::Redirect::to(&url).into_response();
+    response.headers_mut().extend(headers);
+    Ok(response)
 }
 
 pub async fn local_signup(
     State(state): State<Arc<AppState>>,
     ExtractJson(payload): ExtractJson<LocalSignupPayload>,
-) -> Result<Json<SignupResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(header::HeaderMap, Json<SignupResponse>), (StatusCode, Json<serde_json::Value>)> {
     // Validate invite
     let is_valid = state.db.validate_invite(&payload.invite_code).map_err(|_| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
@@ -173,8 +215,13 @@ pub async fn local_signup(
         return Err((StatusCode::CONFLICT, Json(serde_json::json!({ "error": "Username already taken" }))));
     }
 
-    // Generate credentials
-    let password = format!("{}-{}", payload.username, uuid::Uuid::new_v4().to_string().split('-').next().unwrap());
+    // Backend validation for username
+    if payload.username.len() < 1 || payload.username.len() > 128 || !payload.username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid username format" }))));
+    }
+
+    // Generate credentials (ensure > 20 chars minimum)
+    let password = uuid::Uuid::new_v4().simple().to_string();
     
     use bip39::Mnemonic;
     use rand::{rngs::OsRng, RngCore};
@@ -184,23 +231,30 @@ pub async fn local_signup(
     let mnemonic = Mnemonic::from_entropy(&entropy).unwrap();
     let recovery_phrase = mnemonic.to_string();
 
-    use argon2::{
-        password_hash::{SaltString},
-        Argon2, PasswordHasher,
-    };
-    let salt = SaltString::generate(&mut rng);
-    let argon2 = Argon2::default();
-    let password_hash = argon2.hash_password(password.as_bytes(), &salt)
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Password hashing failed" }))))?
-        .to_string();
+    let password_clone = password.clone();
+    let password_hash = tokio::task::spawn_blocking(move || {
+        use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+        use rand::rngs::OsRng;
+        let mut rng = OsRng;
+        let salt = SaltString::generate(&mut rng);
+        let argon2 = Argon2::default();
+        argon2.hash_password(password_clone.as_bytes(), &salt)
+            .map(|h| h.to_string())
+    })
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Internal error" }))))?
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Password hashing failed" }))))?;
 
     let uuid = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp();
     let user = crate::db::User {
         uuid: uuid.clone(),
         username: Some(payload.username.clone()),
         provider: "local".to_string(),
         identifier: payload.username.clone(),
         role: "user".to_string(),
+        created_at: now,
+        last_accessed_at: Some(now),
     };
 
     state.db.create_user(user.clone(), Some(password_hash)).map_err(|_| {
@@ -211,27 +265,40 @@ pub async fn local_signup(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Invite update error" })))
     })?;
 
-    let token_res = issue_session(&state, user).await?;
+    let (headers, token_res) = issue_session(&state, user).await?;
     
-    Ok(Json(SignupResponse {
+    Ok((headers, Json(SignupResponse {
         username: payload.username,
         password,
         recovery_phrase,
         token: token_res.0.token,
-    }))
+    })))
 }
 
 pub async fn local_login(
     State(state): State<Arc<AppState>>,
     ExtractJson(payload): ExtractJson<LocalLoginPayload>,
-) -> Result<Json<LoginResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let user = state.db.verify_password("local", &payload.username, &payload.password).map_err(|e| {
+) -> Result<(header::HeaderMap, Json<LoginResponse>), (StatusCode, Json<serde_json::Value>)> {
+    let state_clone = state.clone();
+    let username = payload.username.clone();
+    let password = payload.password.clone();
+    
+    let user_res = tokio::task::spawn_blocking(move || {
+        state_clone.db.verify_password("local", &username, &password)
+    })
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Internal task error" }))))?;
+
+    let user = user_res.map_err(|e| {
         tracing::error!("Auth verification error: {}", e);
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Authentication error" })))
     })?;
 
     match user {
-        Some(u) => issue_session(&state, u).await,
+        Some(u) => {
+            let (headers, token_res) = issue_session(&state, u).await?;
+            Ok((headers, token_res))
+        }
         None => Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid credentials" })))),
     }
 }
@@ -239,7 +306,7 @@ pub async fn local_login(
 async fn issue_session(
     state: &AppState,
     user: crate::db::User,
-) -> Result<Json<LoginResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(header::HeaderMap, Json<LoginResponse>), (StatusCode, Json<serde_json::Value>)> {
     let sid = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     let exp = now + state.config.auth_session_ttl_seconds as i64;
@@ -252,8 +319,10 @@ async fn issue_session(
         },
     );
 
+    let user_uuid = user.uuid.clone();
     let claims = Claims {
         uuid: user.uuid,
+        username: user.username.unwrap_or_default(),
         role: user.role,
         sid,
         exp,
@@ -268,7 +337,18 @@ async fn issue_session(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create token" })))
     })?;
 
-    Ok(Json(LoginResponse { token }))
+    // Update last_accessed_at on new session creation
+    let _ = state.db.touch_user_access(&user_uuid);
+
+    let mut headers = header::HeaderMap::new();
+    let cookie = format!(
+        "auth_session={}; Path=/; Max-Age={}; HttpOnly; SameSite=Strict; Secure",
+        token,
+        state.config.auth_session_ttl_seconds
+    );
+    headers.insert(header::SET_COOKIE, cookie.parse().unwrap());
+
+    Ok((headers, Json(LoginResponse { token })))
 }
 
 pub async fn logout(
@@ -285,6 +365,16 @@ pub async fn logout(
                     &Validation::default(),
                 ) {
                     state.active_auth_sessions.write().await.remove(&token_data.claims.sid);
+
+                    let uuid = token_data.claims.uuid.clone();
+                    if let Some(info) = state.active_containers.write().await.remove(&uuid) {
+                        let docker = state.docker.clone();
+                        tokio::spawn(async move {
+                            tracing::info!("User logged out. Evicting OSCAR container {}.", info.container_id);
+                            let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
+                            let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+                        });
+                    }
                 }
             }
         }
@@ -303,7 +393,11 @@ pub async fn logout(
     response
 }
 
-pub async fn session_check() -> impl IntoResponse {
+pub async fn session_check(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> impl IntoResponse {
+    let _ = state.db.touch_user_access(&claims.uuid);
     Json(serde_json::json!({ "ok": true }))
 }
 
@@ -326,39 +420,77 @@ pub async fn auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let token = req
-        .headers()
+    let auth_header = req.headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or((
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Unauthorized" })),
-        ))?;
+        .and_then(|value| value.strip_prefix("Bearer "));
 
-    let token_data = decode::<Claims>(
-        token,
+    let cookie_auth = req.headers()
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';')
+                .find(|c| c.trim().starts_with("auth_session="))
+                .map(|c| c.trim()["auth_session=".len()..].to_string())
+        });
+
+    let token = auth_header.map(|s| s.to_string()).or(cookie_auth);
+
+    let is_html_request = req.uri().path().starts_with("/admin") || req.uri().path() == "/";
+
+    let token = match token {
+        Some(t) => t,
+        None => {
+            if is_html_request {
+                return Ok(axum::response::Redirect::to("/").into_response());
+            }
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Unauthorized" })),
+            ));
+        }
+    };
+
+    let token_data_res = decode::<Claims>(
+        &token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
         &Validation::default(),
-    )
-    .map_err(|_| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Invalid token" })),
-        )
-    })?;
+    );
+
+    let token_data = match token_data_res {
+        Ok(td) => td,
+        Err(_) => {
+            if is_html_request {
+                return Ok(axum::response::Redirect::to("/").into_response());
+            }
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Invalid token" })),
+            ));
+        }
+    };
 
     let claims = token_data.claims;
     let now = chrono::Utc::now().timestamp();
     
-    let mut sessions = state.active_auth_sessions.write().await;
-    sessions.retain(|_, s| s.expires_at > now);
+    let is_valid = {
+        let mut sessions = state.active_auth_sessions.write().await;
+        sessions.retain(|_, s| s.expires_at > now);
 
-    if let Some(session) = sessions.get(&claims.sid) {
-        if session.uuid == claims.uuid {
-            req.extensions_mut().insert(claims);
-            return Ok(next.run(req).await);
+        if let Some(session) = sessions.get(&claims.sid) {
+            session.uuid == claims.uuid
+        } else {
+            false
         }
+    };
+
+    if is_valid {
+        req.extensions_mut().insert(claims);
+        return Ok(next.run(req).await);
+    }
+
+    if is_html_request {
+        return Ok(axum::response::Redirect::to("/").into_response());
     }
 
     Err((
@@ -368,7 +500,7 @@ pub async fn auth_middleware(
 }
 
 pub async fn admin_middleware(
-    mut req: Request,
+    req: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let claims = req.extensions().get::<Claims>().ok_or((
@@ -388,7 +520,8 @@ pub async fn admin_middleware(
 
 #[derive(Deserialize)]
 pub struct CreateInvitePayload {
-    pub expire_days: i64,
+    pub expire_days: Option<i64>,
+    pub label: Option<String>,
 }
 
 pub async fn generate_invite_handler(
@@ -396,12 +529,23 @@ pub async fn generate_invite_handler(
     axum::Extension(claims): axum::Extension<Claims>,
     ExtractJson(payload): ExtractJson<CreateInvitePayload>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let code = format!("INVITE-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap().to_uppercase());
-    let expires_at = chrono::Utc::now().timestamp() + (payload.expire_days * 86400);
-    state.db.create_invite(&code, &claims.uuid, expires_at).map_err(|_| {
+    let days = payload.expire_days.unwrap_or(3);
+    let code = uuid::Uuid::new_v4().to_string().split('-').next().unwrap().to_uppercase();
+    let expires_at = chrono::Utc::now().timestamp() + (days * 86400);
+    state.db.create_invite(&code, &claims.uuid, expires_at, payload.label).map_err(|_| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
     })?;
     Ok(Json(serde_json::json!({ "code": code, "expires_at": expires_at })))
+}
+
+pub async fn revoke_invite_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(code): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    state.db.revoke_invite(&code).map_err(|_| {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Invite not found or already deleted" })))
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn list_invites_handler(
@@ -425,7 +569,9 @@ pub async fn list_users_handler(
             "uuid": u.uuid,
             "username": u.username,
             "provider": u.provider,
-            "role": u.role
+            "role": u.role,
+            "created_at": u.created_at,
+            "last_accessed_at": u.last_accessed_at,
         })
     }).collect();
 
@@ -436,19 +582,51 @@ pub async fn delete_user_handler(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(uuid_param): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // 1. Delete user from SQLite database. This cascade-deletes their invites and share_links.
-    state.db.delete_user(&uuid_param).map_err(|_| {
-        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "User not found or database error" })))
+    // 1. Fetch user first to determine folder name and perform cleanup
+    let user_opt = state.db.get_user_by_uuid(&uuid_param).map_err(|e| {
+        tracing::error!("Database error fetching user for deletion: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
     })?;
-    
+
+    let user = match user_opt {
+        Some(u) => u,
+        None => return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "User not found" })))),
+    };
+
+    let folder_name = crate::utils::sanitize_folder_name(user.username.as_deref().unwrap_or("")).unwrap_or(user.uuid.clone());
+
     // 2. Erase their active sessions
-    let mut sessions = state.active_auth_sessions.write().await;
-    sessions.retain(|_, s| s.uuid != uuid_param);
+    {
+        let mut sessions = state.active_auth_sessions.write().await;
+        sessions.retain(|_, s| s.uuid != uuid_param);
+    }
     
-    // 3. Delete their files from filesystem
-    let _ = std::fs::remove_dir_all(format!("/app/data/uploads/{}", uuid_param));
-    // Due to container mounting, OSCAR_Data may be mounted directly, or via another path.
-    // Ensure the external proxy can access it or clean it up. For MVP, we delete the uploads folder which is all the backend directly commands.
+    // 3. Evict active OSCAR container if it exists
+    {
+        let mut containers = state.active_containers.write().await;
+        if let Some(info) = containers.remove(&uuid_param) {
+            let docker = state.docker.clone();
+            let upid = uuid_param.clone();
+            tokio::spawn(async move {
+                tracing::info!("Evicting OSCAR container {} for deleted user {}.", info.container_id, upid);
+                let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
+                let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+            });
+        }
+    }
+
+    // 4. Delete their files from filesystem
+    let upload_path = PathBuf::from(UPLOAD_ROOT).join(&folder_name);
+    let profile_path = PathBuf::from(PROFILE_ROOT).join(&folder_name);
+    
+    let _ = fs::remove_dir_all(upload_path).await;
+    let _ = fs::remove_dir_all(profile_path).await;
+
+    // 5. Delete user from SQLite database. This cascade-deletes their invites and share_links.
+    state.db.delete_user(&uuid_param).map_err(|e| {
+        tracing::error!("Database error deleting user {}: {}", uuid_param, e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to delete from database" })))
+    })?;
     
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -525,11 +703,14 @@ pub async fn require_oscar_session_middleware(
     }
 
     let now = chrono::Utc::now().timestamp();
-    let mut sessions = state.active_auth_sessions.write().await;
-    sessions.retain(|_, s| s.expires_at > now);
+    let is_valid = {
+        let mut sessions = state.active_auth_sessions.write().await;
+        sessions.retain(|_, s| s.expires_at > now);
+        sessions.contains_key(&claims.sid)
+    };
 
-    if !sessions.contains_key(&claims.sid) {
-        tracing::debug!("require_oscar_session_middleware: session {} not found in active sessions (count={})", claims.sid, sessions.len());
+    if !is_valid {
+        tracing::debug!("require_oscar_session_middleware: session {} not found in active sessions", claims.sid);
         return Err(axum::response::Redirect::to("/"));
     }
 
@@ -550,5 +731,90 @@ pub async fn require_oscar_session_middleware(
     }
 
     tracing::debug!("require_oscar_session_middleware: session valid, proceeding");
+    
+    let mut req = req;
+    req.extensions_mut().insert(claims.clone());
+    
+    Ok(next.run(req).await)
+}
+
+pub async fn list_share_links(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> impl IntoResponse {
+    match state.db.get_active_share_links_for_user(&claims.uuid) {
+        Ok(links) => (StatusCode::OK, axum::Json(links)).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Database error" }))).into_response(),
+    }
+}
+
+pub async fn create_share_link(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> impl IntoResponse {
+    let token = uuid::Uuid::new_v4().to_string();
+    let expires_at = chrono::Utc::now().timestamp() + 24 * 60 * 60; // 24 hours
+    
+    // Enforce max 5 links: delete oldest
+    if let Ok(links) = state.db.get_active_share_links_for_user(&claims.uuid) {
+        if links.len() >= 5 {
+            // links are ordered created_at DESC. index 0 is newest.
+            // keep index 0..3 (4 links), delete index 4+
+            for num in 4..links.len() {
+                if let Some(token_to_delete) = links[num].get("token").and_then(|t| t.as_str()) {
+                    let _ = state.db.delete_share_link(token_to_delete, &claims.uuid);
+                }
+            }
+        }
+    }
+
+    match state.db.create_share_link(&token, &claims.uuid, expires_at) {
+        Ok(_) => (StatusCode::OK, axum::Json(serde_json::json!({ "token": token, "expires_at": expires_at }))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to create share link: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Failed to create share link" }))).into_response()
+        }
+    }
+}
+
+pub async fn delete_share_link(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+    Extension(claims): Extension<Claims>,
+) -> impl IntoResponse {
+    match state.db.delete_share_link(&token, &claims.uuid) {
+        Ok(_) => StatusCode::OK.into_response(),
+        Err(rusqlite::Error::QueryReturnedNoRows) => (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({ "error": "Share link not found" }))).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Database error" }))).into_response(),
+    }
+}
+
+pub async fn auth_rate_limit_middleware(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Result<Response, (StatusCode, axum::Json<serde_json::Value>)> {
+    let ip = addr.ip().to_string();
+    let now = chrono::Utc::now().timestamp();
+
+    let mut entry = state.auth_attempts.entry(ip).or_insert((0, now));
+    let (count, start_time) = entry.value_mut();
+
+    if now - *start_time > 60 {
+        *count = 1;
+        *start_time = now;
+    } else {
+        *count += 1;
+    }
+
+    if *count > 5 {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(serde_json::json!({ "error": "Too many attempts. Please wait 60 seconds." })),
+        ));
+    }
+
+    drop(entry);
     Ok(next.run(req).await)
 }

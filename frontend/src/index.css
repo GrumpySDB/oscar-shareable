@@ -264,48 +264,6 @@ button.danger {
 .error {
   color: var(--danger);
   min-height: 20px;
-  margin-top: 1rem;
-}
-
-.aesthetic-error {
-  background: #fff5f5;
-  border: 1px solid #feb2b2;
-  border-radius: 12px;
-  padding: 1.25rem;
-  text-align: center;
-  box-shadow: 0 4px 12px rgba(201, 61, 61, 0.08);
-  animation: slideDown 0.3s ease-out;
-}
-
-.aesthetic-error .error-icon {
-  font-size: 2rem;
-  margin-bottom: 0.5rem;
-}
-
-.aesthetic-error .error-title {
-  color: #c53030;
-  font-weight: 700;
-  font-size: 1.1rem;
-  margin-bottom: 0.4rem;
-}
-
-.aesthetic-error .error-text {
-  color: #9b2c2c;
-  font-size: 0.92rem;
-  line-height: 1.5;
-  font-weight: 500;
-}
-
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .status-message {

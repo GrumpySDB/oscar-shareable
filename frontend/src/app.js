@@ -9,7 +9,6 @@ const SAFE_BATCH_LIMIT_BYTES = 90 * 1024 * 1024;
 let token = sessionStorage.getItem('authToken') || null;
 let currentUsername = '';
 let preparedFiles = [];
-let preparedFolder = '';
 let preparedSourceRootFolder = '';
 let selectedDateMs = 0;
 let preparedUploadType = 'sdcard';
@@ -25,6 +24,37 @@ const summary = document.getElementById('summaryCounts');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
 
+const urlParams = new URLSearchParams(window.location.search);
+
+const errParam = urlParams.get('error');
+if (errParam && loginError) {
+  loginError.textContent = errParam;
+  window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+const loginTokenParam = urlParams.get('login_token');
+if (loginTokenParam) {
+  token = loginTokenParam;
+  sessionStorage.setItem('authToken', token);
+  window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+const legacyInviteCode = urlParams.get('invite');
+if (legacyInviteCode) {
+  window.location.href = `/invite?code=${encodeURIComponent(legacyInviteCode)}`;
+}
+
+function handleShareLinkRouting() {
+  const path = window.location.pathname;
+  if (path.startsWith('/share/')) {
+    const tokenPart = path.replace('/share/', '').trim();
+    if (tokenPart) {
+      sessionStorage.setItem('pendingShareLaunchToken', tokenPart);
+      window.history.replaceState({}, document.title, '/');
+    }
+  }
+}
+handleShareLinkRouting();
 
 const loginBanner = document.getElementById('loginBanner');
 const uploadBanner = document.getElementById('uploadBanner');
@@ -33,7 +63,7 @@ async function loadRandomBanner(imageElement) {
   if (!imageElement) return;
 
   try {
-    const response = await fetch('/images/manifest.json', { cache: 'no-store' });
+    const response = await fetch('/api/banner-images', { cache: 'no-store' });
     if (!response.ok) return;
 
     const data = await response.json();
@@ -45,7 +75,7 @@ async function loadRandomBanner(imageElement) {
 
     imageElement.src = `/images/${encodeURIComponent(selected)}`;
     imageElement.classList.remove('hidden');
-  } catch (_err) {}
+  } catch (_err) { }
 }
 
 
@@ -94,18 +124,45 @@ function getSixMonthsAgo(referenceTime = Date.now()) {
 function configureDateInput() {
   const input = document.getElementById('startDate');
   const today = new Date();
-  const min = getSixMonthsAgo();
+  const minDate = getSixMonthsAgo();
+  minDate.setDate(minDate.getDate() + 1);
+
   const defaultDate = new Date(today);
   defaultDate.setDate(defaultDate.getDate() - 7);
-  const todayIso = today.toISOString().slice(0, 10);
-  input.max = todayIso;
-  input.min = min.toISOString().slice(0, 10);
-  input.value = defaultDate.toISOString().slice(0, 10);
+
+  if (typeof flatpickr === 'function') {
+    try {
+      flatpickr(input, {
+        dateFormat: "Y-m-d",
+        maxDate: today,
+        minDate: minDate,
+        defaultDate: defaultDate,
+        disableMobile: "true",
+        onChange: function (selectedDates, dateStr, instance) {
+          if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
+        }
+      });
+    } catch (e) {
+      console.error("Flatpickr init failed:", e);
+      setupBasicDateInput(input, today, minDate, defaultDate);
+    }
+  } else {
+    setupBasicDateInput(input, today, minDate, defaultDate);
+  }
 }
 
-function folderNameValid(value) {
-  return /^[A-Za-z0-9_-]{1,64}$/.test(value);
+function setupBasicDateInput(input, today, minDate, defaultDate) {
+  input.type = 'date';
+  input.max = today.toISOString().slice(0, 10);
+  input.min = minDate.toISOString().slice(0, 10);
+  input.value = defaultDate.toISOString().slice(0, 10);
+  input.readOnly = false;
+  input.addEventListener('change', () => {
+    if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
+  });
 }
+
+
 
 function sanitizeUsernameInput(value) {
   if (typeof value !== 'string') return null;
@@ -133,6 +190,11 @@ function decodeJwtPayload(jwtToken) {
 function getUsernameFromToken(jwtToken) {
   const payload = decodeJwtPayload(jwtToken);
   return payload && typeof payload.sub === 'string' ? payload.sub : '';
+}
+
+function getRoleFromToken(jwtToken) {
+  const payload = decodeJwtPayload(jwtToken);
+  return payload && typeof payload.role === 'string' ? payload.role : '';
 }
 
 function getSelectedRootFolderName(files) {
@@ -224,13 +286,13 @@ function validateFile(file, startDateMs) {
 async function api(path, options = {}) {
   const headers = options.headers || {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(path, { ...options, headers });
+  const response = await fetch(path, { ...options, headers, cache: 'no-store' });
   if (!response.ok) {
     let detail = 'Request failed';
     try {
       const body = await response.json();
       detail = body.error || detail;
-    } catch (_err) {}
+    } catch (_err) { }
 
     const error = new Error(detail);
     error.status = response.status;
@@ -241,6 +303,47 @@ async function api(path, options = {}) {
   return response.json();
 }
 
+async function proceedToAppFlow() {
+  const pendingToken = sessionStorage.getItem('pendingShareLaunchToken');
+  if (pendingToken) {
+    sessionStorage.removeItem('pendingShareLaunchToken');
+
+    const overlay = document.getElementById('oscarLoadingOverlay');
+    const mainAppCard = document.getElementById('appCard');
+    const loginCardMain = document.getElementById('loginCard');
+
+    if (mainAppCard) mainAppCard.classList.add('hidden');
+    if (loginCardMain) loginCardMain.classList.add('hidden');
+    if (overlay) overlay.classList.remove('hidden');
+
+    try {
+      const result = await api(`/api/share/${pendingToken}`, { method: 'GET' });
+      if (!result || typeof result.launchUrl !== 'string') {
+        throw new Error('Unable to open shared profile right now.');
+      }
+      setTimeout(() => {
+        window.location.href = result.launchUrl;
+      }, 3000);
+    } catch (err) {
+      if (overlay) overlay.classList.add('hidden');
+      if (mainAppCard) mainAppCard.classList.remove('hidden');
+      setMessage(`Unable to open shared profile: ${err.message}`, true);
+    }
+  } else {
+    showApp();
+  }
+}
+
+function showShareModal() {
+  const overlay = document.getElementById('genLinkOverlay');
+  if (overlay) overlay.classList.remove('hidden');
+}
+
+function hideShareModal() {
+  const overlay = document.getElementById('genLinkOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
 async function checkSession() {
   if (!token) {
     showLogin();
@@ -249,8 +352,14 @@ async function checkSession() {
 
   try {
     await api('/api/session');
+
+    if (getRoleFromToken(token) === 'admin') {
+      window.location.href = '/admin';
+      return;
+    }
+
     currentUsername = getUsernameFromToken(token);
-    showApp();
+    proceedToAppFlow();
   } catch (_err) {
     token = null;
     currentUsername = '';
@@ -279,16 +388,22 @@ async function login() {
   usernameInput.value = username;
 
   try {
-    const result = await api('/api/login', {
+    const result = await api('/api/auth/local/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
 
     token = result.token;
-    currentUsername = username;
     sessionStorage.setItem('authToken', token);
-    showApp();
+
+    if (getRoleFromToken(token) === 'admin') {
+      window.location.href = '/admin';
+      return;
+    }
+
+    currentUsername = username;
+    proceedToAppFlow();
   } catch (err) {
     loginError.textContent = err.message;
   } finally {
@@ -308,7 +423,7 @@ async function logout() {
         method: 'POST',
         headers: { Authorization: `Bearer ${currentToken}` },
       });
-    } catch (_err) {}
+    } catch (_err) { }
   }
 
   resetPreparedState(true);
@@ -318,7 +433,6 @@ async function logout() {
 
 function resetPreparedState(clearProgress = false) {
   preparedFiles = [];
-  preparedFolder = '';
   preparedSourceRootFolder = '';
   selectedDateMs = 0;
   preparedUploadType = 'sdcard';
@@ -330,24 +444,19 @@ function resetPreparedState(clearProgress = false) {
 }
 
 function getUploadCompleteMessage() {
-  const destinationFolder = document.getElementById('folderName').value.trim() || preparedFolder;
+  const destinationFolder = currentUsername;
   if (preparedUploadType === 'sdcard') {
-    const uploadedFolder = preparedSourceRootFolder || preparedFolder || destinationFolder;
-    return `Upload Complete.  Import your SD Card data from config>SDCARD>${destinationFolder}>${uploadedFolder}`;
+    const uploadedFolder = preparedSourceRootFolder || destinationFolder;
+    return `Upload Complete.  Import your SD Card data from config>Documents>SDCARD>${destinationFolder}>${uploadedFolder}`;
   }
 
-  return `Upload Complete.  Import your Oximetry data from config>SDCARD>${destinationFolder}>Oximetry`;
+  return `Upload Complete.  Import your Oximetry data from config>Documents>SDCARD>${destinationFolder}>Oximetry`;
 }
 
 async function scanAndPrepare() {
-  setMessage('');
   resetPreparedState(true);
 
-  const folder = document.getElementById('folderName').value.trim();
-  if (!folderNameValid(folder)) {
-    setMessage('Folder name must be 1-64 chars, only letters/numbers/_/-.', true);
-    return;
-  }
+
 
   const files = Array.from(document.getElementById('directoryInput').files || []);
   if (files.length === 0) {
@@ -360,7 +469,7 @@ async function scanAndPrepare() {
 
   let existingNames = [];
   try {
-    const data = await api(`/api/folders/${encodeURIComponent(folder)}/files`);
+    const data = await api(`/api/files?_=${Date.now()}`);
     existingNames = Array.isArray(data.filenames) ? data.filenames : [];
   } catch (err) {
     setMessage(`Unable to load existing files: ${err.message}`, true);
@@ -502,7 +611,6 @@ async function scanAndPrepare() {
   }
 
   preparedFiles = eligible;
-  preparedFolder = folder;
   preparedSourceRootFolder = selectedRootFolder;
   selectedDateMs = selectedDate.getTime();
   preparedUploadType = uploadType;
@@ -595,7 +703,6 @@ function createUploadBatches(files) {
 function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, tinfoilHatMode, encryptionEnvelope }) {
   return new Promise((resolve, reject) => {
     const form = new FormData();
-    form.append('folder', preparedFolder);
     form.append('selectedDateMs', String(selectedDateMs));
     form.append('uploadType', preparedUploadType);
     if (preparedUploadType === 'wellue-spo2' && preparedWellueDbParents.length > 0) {
@@ -639,10 +746,10 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, t
       try {
         const body = JSON.parse(request.responseText);
         message = body.error || message;
-      } catch (_err) {}
+      } catch (_err) { }
 
-      if (request.status === 413) {
-        message = 'Upload rejected by gateway size limit. Reduce batch size and retry.';
+      if (request.status === 413 && message === 'Upload failed') {
+        message = 'Upload rejected by size limit. Please try selecting a more recent start date to reduce the number of files per upload.';
       }
 
       reject(new Error(message));
@@ -674,7 +781,7 @@ async function uploadPreparedFiles() {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   if (requiresChunking) {
-    setMessage(`Selected files total ${totalMb.toFixed(1)} MB, above Cloudflare's 100 MB request limit. Upload will run in ${batches.length} batches.`);
+    setMessage(`Selected files total ${totalMb.toFixed(1)} MB, above the 100 MB network threshold. Upload will run in ${batches.length} batches.`);
   } else {
     setMessage(`Uploading ${preparedFiles.length} files (${totalMb.toFixed(1)} MB)${tinfoilHatModeEnabled ? ' with Tinfoil Hat Mode enabled' : ''}...`);
   }
@@ -690,6 +797,8 @@ async function uploadPreparedFiles() {
         filesToUpload = encryptedPayload.encryptedFiles;
         encryptionEnvelope = encryptedPayload.envelope;
       }
+
+      setMessage(`Starting upload of batch ${batchIndex + 1}/${batches.length}...`);
 
       await uploadBatch({
         files: filesToUpload,
@@ -719,55 +828,128 @@ async function proceedToOscar() {
     return;
   }
 
+  const overlay = document.getElementById('oscarLoadingOverlay');
+  const mainAppCard = document.getElementById('appCard');
+
+  if (mainAppCard) mainAppCard.classList.add('hidden');
+  if (overlay) overlay.classList.remove('hidden');
 
   try {
     const result = await api('/api/oscar-launch', { method: 'POST' });
     if (!result || typeof result.launchUrl !== 'string') {
       throw new Error('Unable to open OSCAR right now.');
     }
-    window.open(result.launchUrl, '_blank', 'noopener,noreferrer');
+
+    // Hold the loading screen for 3 seconds to let VNC boot fully
+    setTimeout(() => {
+      window.location.href = result.launchUrl;
+    }, 3000);
+
   } catch (err) {
+    if (overlay) overlay.classList.add('hidden');
+    if (mainAppCard) mainAppCard.classList.remove('hidden');
     setMessage(`Unable to open OSCAR: ${err.message}`, true);
   }
 }
 
 async function deleteFolder() {
-  const folder = document.getElementById('folderName').value.trim();
-  if (!folderNameValid(folder)) {
-    setMessage('Enter a valid folder name to delete.', true);
-    return;
-  }
-
-  if (!window.confirm(`Delete all uploaded data for folder "${folder}"?`)) return;
+  if (!window.confirm(`Delete all uploaded data for your account?`)) return;
 
   try {
-    await api(`/api/folders/${encodeURIComponent(folder)}`, { method: 'DELETE' });
+    await api('/api/files', { method: 'DELETE' });
     resetPreparedState(true);
-    setMessage(`Deleted uploaded data for folder "${folder}".`);
+    setMessage(`Deleted uploaded data for your account.`);
   } catch (err) {
     setMessage(`Delete failed: ${err.message}`, true);
   }
+}
+
+// --- Share Link Logic ---
+
+async function handleGenerateShareLink() {
+  const genBtn = document.getElementById('genLinkBtn');
+  if (!genBtn) return;
+  const ogText = genBtn.innerText;
+  try {
+    genBtn.innerText = 'Generating...';
+    genBtn.disabled = true;
+
+    const result = await api('/api/share-links', { method: 'POST' });
+    const shareUrl = `${window.location.origin}/share/${result.token}`;
+
+    const output = document.getElementById('genLinkOutputSpan');
+    if (output) output.textContent = shareUrl;
+
+    showShareModal();
+    setMessage('');
+  } catch (err) {
+    setMessage(`Failed to generate link: ${err.message}`, true);
+  } finally {
+    genBtn.innerText = ogText;
+    genBtn.disabled = false;
+  }
+}
+
+const mainGenBtn = document.getElementById('genLinkBtn');
+if (mainGenBtn) mainGenBtn.addEventListener('click', handleGenerateShareLink);
+
+const copyBtn = document.getElementById('copyGenLinkBtn');
+if (copyBtn) {
+  copyBtn.addEventListener('click', () => {
+    const span = document.getElementById('genLinkOutputSpan');
+    if (span) {
+      navigator.clipboard.writeText(span.textContent);
+
+      const feedback = document.getElementById('genLinkCopyFeedback');
+      if (feedback) {
+        feedback.style.opacity = '1';
+        setTimeout(() => {
+          feedback.style.opacity = '0';
+        }, 2000);
+      }
+    }
+  });
+}
+
+const closeGenLinkBtn = document.getElementById('closeGenLinkBtn');
+if (closeGenLinkBtn) {
+  closeGenLinkBtn.addEventListener('click', hideShareModal);
+}
+
+const genLinkOverlay = document.getElementById('genLinkOverlay');
+if (genLinkOverlay) {
+  genLinkOverlay.addEventListener('click', (e) => {
+    if (e.target === genLinkOverlay) hideShareModal();
+  });
 }
 
 document.getElementById('loginForm').addEventListener('submit', (event) => {
   event.preventDefault();
   login();
 });
+
 document.getElementById('logoutBtn').addEventListener('click', logout);
+document.getElementById('directoryInput').addEventListener('click', () => {
+  setMessage('Scanning folder, please wait...');
+});
 document.getElementById('directoryInput').addEventListener('change', () => {
   scanAndPrepare();
-});
-document.getElementById('folderName').addEventListener('change', () => {
-  if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
-});
-document.getElementById('startDate').addEventListener('change', () => {
-  if (document.getElementById('directoryInput').files.length > 0) scanAndPrepare();
 });
 document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);
 document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
 document.getElementById('oscarBtn').addEventListener('click', proceedToOscar);
 
-configureDateInput();
-loadRandomBanner(loginBanner);
-loadRandomBanner(uploadBanner);
-checkSession();
+// Safe initialization sequence
+async function initApp() {
+  // 1. Always try to load banners first
+  try { await loadRandomBanner(loginBanner); } catch (e) { console.error("Banner load failed:", e); }
+  try { await loadRandomBanner(uploadBanner); } catch (e) { console.error("Banner load failed:", e); }
+
+  // 2. Auth/Session check
+  try { await checkSession(); } catch (e) { console.error("Session check failed:", e); }
+
+  // 3. UI Components
+  try { configureDateInput(); } catch (e) { console.error("Date input config failed:", e); }
+}
+
+initApp();

@@ -21,6 +21,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use bollard::container::{StopContainerOptions, RemoveContainerOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -31,6 +32,34 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = config::AppConfig::load()?;
     let shared_state = Arc::new(config::AppState::new(cfg.clone()).await?);
+
+    let cleaner_state = shared_state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let now = chrono::Utc::now().timestamp();
+            let mut to_remove = Vec::new();
+
+            {
+                let containers = cleaner_state.active_containers.read().await;
+                for (uuid, info) in containers.iter() {
+                    if now - info.last_active > 600 {
+                        to_remove.push((uuid.clone(), info.container_id.clone()));
+                    }
+                }
+            }
+
+            for (uuid, container_id) in to_remove {
+                tracing::info!("Evicting idle OSCAR container {}", container_id);
+                let _ = cleaner_state.docker.stop_container(&container_id, None::<StopContainerOptions>).await;
+                let _ = cleaner_state.docker.remove_container(&container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+
+                let mut containers = cleaner_state.active_containers.write().await;
+                containers.remove(&uuid);
+            }
+        }
+    });
 
     tracing::info!("Starting secure-uploader Rust version...");
 
@@ -43,13 +72,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/users/:uuid/reset-password", post(auth::reset_password_handler))
         .route("/invites", get(auth::list_invites_handler))
         .route("/invites", post(auth::generate_invite_handler))
+        .route("/invites/:code", delete(auth::revoke_invite_handler))
         .layer(middleware::from_fn(auth::admin_middleware))
         .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
 
     let api_routes = Router::new()
+        .route("/auth/discord/login", get(auth::discord_login))
         .route("/auth/discord/callback", get(auth::discord_callback))
-        .route("/auth/local/signup", post(auth::local_signup))
-        .route("/auth/local/login", post(auth::local_login))
+        .route("/auth/local/signup", post(auth::local_signup).layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_rate_limit_middleware)))
+        .route("/auth/local/login", post(auth::local_login).layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_rate_limit_middleware)))
+        .route("/banner-images", get(upload::list_banner_images))
         .nest("/admin", admin_api_routes)
         .merge(
             Router::new()
@@ -60,6 +92,10 @@ async fn main() -> anyhow::Result<()> {
                 .route("/files", get(upload::list_files))
                 .route("/upload", post(upload::handle_upload))
                 .route("/files", delete(upload::delete_folder))
+                .route("/share-links", get(auth::list_share_links))
+                .route("/share-links", post(auth::create_share_link))
+                .route("/share-links/:token", delete(auth::delete_share_link))
+                .route("/share/:share_token", get(proxy::oscar_share_launch))
                 .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware))
         )
         .with_state(shared_state.clone());
@@ -96,11 +132,15 @@ async fn main() -> anyhow::Result<()> {
         .layer(middleware::from_fn(auth::admin_middleware))
         .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
 
+    let invite_page_route = Router::new()
+        .route("/invite", get(|| async { Html(include_str!("../public/invite.html")) }));
+
     let app = Router::new()
         .nest("/api", api_routes)
         .merge(oscar_login_route)
         .merge(proxy_routes)
         .merge(admin_page_route)
+        .merge(invite_page_route)
         .route("/privacy-security-policy", get(|| async { Html(include_str!("../public/privacy-security-policy.html")) }))
         .route("/how-to-uploader", get(|| async { Html(include_str!("../public/how-to-uploader.html")) }))
         .route("/faq", get(|| async { Html(include_str!("../public/faq.html")) }))
@@ -117,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Listening on http://{} (internal, behind nginx TLS)", addr);
 
     axum_server::bind(addr)
-        .serve(app.into_make_service())
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await?;
 
     Ok(())
@@ -135,9 +175,13 @@ async fn add_security_headers(req: Request, next: Next) -> Response {
         headers.insert(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(
-                "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com 'unsafe-eval' 'unsafe-hashes' 'sha256-+OsIn6RhyCZCUkkvtHxFtP0kU3CGdGeLjDd9Fzqdl3o='; style-src 'self' 'unsafe-hashes' 'sha256-+OsIn6RhyCZCUkkvtHxFtP0kU3CGdGeLjDd9Fzqdl3o='; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
             ),
         );
+        headers.insert(header::VARY, HeaderValue::from_static("Authorization"));
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store, no-cache, must-revalidate, proxy-revalidate"));
+        headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+        headers.insert(header::EXPIRES, HeaderValue::from_static("0"));
     }
     
     response

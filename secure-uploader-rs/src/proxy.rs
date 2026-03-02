@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
-use crate::config::AppState;
+use crate::config::{AppState, ContainerInfo};
 use crate::auth::{Claims, OscarClaims};
+use bollard::container::{Config, CreateContainerOptions, StartContainerOptions, InspectContainerOptions};
+use bollard::models::HostConfig;
 
 #[derive(Deserialize)]
 pub struct OscarLaunchQuery {
@@ -27,10 +29,127 @@ struct LaunchTokenClaims {
     pub exp: i64,
 }
 
+pub async fn ensure_oscar_container(
+    state: &Arc<AppState>,
+    owner_uuid: &str,
+    owner_username: &str,
+) -> Result<(), (StatusCode, axum::Json<serde_json::Value>)> {
+    let host_path = std::env::var("DOCKER_HOST_PATH").unwrap_or_else(|_| ".".to_string());
+    let docker_network = std::env::var("DOCKER_NETWORK").unwrap_or_else(|_| "oscar-shareable_internal".to_string());
+    
+    // Safety check: ensure owner_username is sanitized to avoid path traversal
+    let username = crate::utils::sanitize_folder_name(owner_username).unwrap_or(owner_uuid.to_string());
+    let container_name = format!("oscar-session-{}", owner_uuid);
+
+    // Ensure directories exist on host before container start to prevent Docker from creating them as root
+    let uploads_dir = std::path::PathBuf::from("./data/uploads").join(&username);
+    let profiles_dir = std::path::PathBuf::from("./data/profiles").join(&username);
+    let _ = tokio::fs::create_dir_all(&uploads_dir).await;
+    let _ = tokio::fs::create_dir_all(&profiles_dir).await;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::chown;
+        let _ = chown(&uploads_dir, Some(911), Some(911));
+        let _ = chown(&profiles_dir, Some(911), Some(911));
+    }
+
+    let docker = &state.docker;
+    let mut ip_address = String::new();
+
+    match docker.inspect_container(&container_name, None::<InspectContainerOptions>).await {
+        Ok(info) => {
+            if !info.state.as_ref().and_then(|s| s.running).unwrap_or(false) {
+                let _ = docker.start_container(&container_name, None::<StartContainerOptions<String>>).await;
+            }
+            if let Some(net) = info.network_settings.and_then(|n| n.networks) {
+                if let Some(n) = net.get(&docker_network) {
+                    ip_address = n.ip_address.clone().unwrap_or_default();
+                }
+            }
+        },
+        Err(e) => {
+            if e.to_string().contains("404") || e.to_string().contains("No such container") {
+                let options = Some(CreateContainerOptions {
+                    name: container_name.clone(),
+                    platform: None,
+                });
+                let config = Config {
+                    image: Some("custom-oscar-vnc:latest".to_string()),
+                    host_config: Some(HostConfig {
+                        binds: Some(vec![
+                            format!("{}/data/profiles/{}:/config/Documents/OSCAR_Data:rw", host_path, username),
+                            format!("{}/data/uploads/{}:/config/Documents/SDCARD:rw", host_path, username),
+                        ]),
+                        network_mode: Some(docker_network.clone()),
+                        shm_size: Some(1024 * 1024 * 1024),
+                        security_opt: Some(vec!["no-new-privileges:true".to_string()]),
+                        ..Default::default()
+                    }),
+                    env: Some(vec![
+                        "PUID=911".to_string(),
+                        "PGID=911".to_string(),
+                        "TZ=America/Chicago".to_string(),
+                        "TITLE=OSCAR 1.7.0".to_string(),
+                        "START_DOCKER=false".to_string(),
+                        "DISABLE_IPV6=true".to_string(),
+                        "NO_DECOR=true".to_string(),
+                        "NO_GAMEPAD=true".to_string(),
+                        "HARDEN_DESKTOP=true".to_string(),
+                        "HARDEN_OPENBOX=true".to_string(),
+                        "SELKIES_ENABLE_CURSORS=true".to_string(),
+                    ]),
+                    ..Default::default()
+                };
+
+                if let Err(err) = docker.create_container(options, config).await {
+                    tracing::error!("Failed to create container {}: {}", container_name, err);
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Failed to provision OSCAR environment" }))));
+                }
+
+                if let Err(err) = docker.start_container(&container_name, None::<StartContainerOptions<String>>).await {
+                    tracing::error!("Failed to start container {}: {}", container_name, err);
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Failed to start OSCAR environment" }))));
+                }
+
+                // Wait slightly for networking to settle
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                if let Ok(info) = docker.inspect_container(&container_name, None::<InspectContainerOptions>).await {
+                    if let Some(net) = info.network_settings.and_then(|n| n.networks) {
+                        if let Some(n) = net.get(&docker_network) {
+                            ip_address = n.ip_address.clone().unwrap_or_default();
+                        }
+                    }
+                }
+            } else {
+                tracing::error!("Error inspecting container {}: {}", container_name, e);
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Internal container error" }))));
+            }
+        }
+    }
+
+    if ip_address.is_empty() {
+        tracing::error!("Could not query network IP for container {}", container_name);
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Networking failure. OSCAR did not attach to bridge correctly." }))));
+    }
+
+    {
+        let mut containers = state.active_containers.write().await;
+        containers.insert(owner_uuid.to_string(), ContainerInfo {
+            container_id: container_name.clone(),
+            ip_address,
+            last_active: chrono::Utc::now().timestamp(),
+        });
+    }
+
+    Ok(())
+}
+
 pub async fn oscar_launch(
     State(state): State<Arc<AppState>>,
     req: Request,
-) -> impl IntoResponse {
+) -> Response {
     let claims = req.extensions().get::<Claims>().unwrap();
     
     let user_agent = req.headers().get(header::USER_AGENT).and_then(|h| h.to_str().ok()).unwrap_or("");
@@ -44,6 +163,10 @@ pub async fn oscar_launch(
 
     let jti = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
+
+    if let Err(e) = ensure_oscar_container(&state, &claims.uuid, &claims.username).await {
+        return e.into_response();
+    }
     
     let launch_claims = LaunchTokenClaims {
         sub: claims.uuid.clone(),
@@ -62,7 +185,70 @@ pub async fn oscar_launch(
 
     axum::Json(serde_json::json!({
         "launchUrl": format!("/oscar/login?token={}", urlencoding::encode(&token))
-    }))
+    })).into_response()
+}
+
+pub async fn oscar_share_launch(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(share_token): axum::extract::Path<String>,
+    req: Request,
+) -> Response {
+    let owner_uuid = match state.db.get_share_link_owner(&share_token) {
+        Ok(Some(uuid)) => uuid,
+        Ok(None) => return (StatusCode::FORBIDDEN, axum::Json(serde_json::json!({ "error": "Invalid or expired share link" }))).into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Database error" }))).into_response(),
+    };
+
+    let owner = match state.db.get_user_by_uuid(&owner_uuid) {
+        Ok(Some(u)) => u,
+        _ => return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({ "error": "Profile owner not found" }))).into_response(),
+    };
+    let owner_username = owner.username.unwrap_or(owner.uuid.clone());
+
+    if let Err(e) = ensure_oscar_container(&state, &owner_uuid, &owner_username).await {
+        return e.into_response();
+    }
+
+    let user_agent = req.headers().get(header::USER_AGENT).and_then(|h| h.to_str().ok()).unwrap_or("");
+    let accept_language = req.headers().get(header::ACCEPT_LANGUAGE).and_then(|h| h.to_str().ok()).unwrap_or("");
+    let fp_str = format!("{}\n{}", user_agent, accept_language);
+    
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(fp_str.as_bytes());
+    let fp = URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+    let jti = uuid::Uuid::new_v4().to_string();
+    let guest_sid = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp();
+
+    // Create an ephemeral auth session for the guest tied to the owner's UUID
+    {
+        let mut sessions = state.active_auth_sessions.write().await;
+        sessions.insert(guest_sid.clone(), crate::config::SessionInfo {
+            uuid: owner_uuid.clone(),
+            expires_at: now + 8 * 60 * 60,
+        });
+    }
+
+    let launch_claims = LaunchTokenClaims {
+        sub: owner_uuid,
+        sid: guest_sid,
+        fp,
+        jti,
+        purpose: "oscar-launch".into(),
+        exp: now + 120, // 2 minutes
+    };
+
+    let token = encode(
+        &Header::default(),
+        &launch_claims,
+        &EncodingKey::from_secret(state.config.jwt_secret.as_bytes())
+    ).unwrap();
+
+    axum::Json(serde_json::json!({
+        "launchUrl": format!("/oscar/login?token={}", urlencoding::encode(&token))
+    })).into_response()
 }
 
 /// Dedicated handler for /oscar/login.
@@ -167,7 +353,32 @@ pub async fn proxy_handler(
     }
     
     let qs = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
-    let target_url = format!("{}{}{}", state.config.oscar_base_url, path, qs);
+    
+    let claims = match req.extensions().get::<OscarClaims>() {
+        Some(c) => c,
+        None => return Response::builder().status(StatusCode::UNAUTHORIZED).body(Body::from("Missing OSCAR session claims")).unwrap(),
+    };
+
+    let target_ip = {
+        let containers = state.active_containers.read().await;
+        if let Some(info) = containers.get(&claims.uuid) {
+            info.ip_address.clone()
+        } else {
+            return Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(Body::from("Container session expired or stopped. Please return to the homepage and relaunch OSCAR."))
+                .unwrap();
+        }
+    };
+
+    {
+        let mut containers = state.active_containers.write().await;
+        if let Some(info) = containers.get_mut(&claims.uuid) {
+            info.last_active = chrono::Utc::now().timestamp();
+        }
+    }
+
+    let target_url = format!("http://{}:3000{}{}", target_ip, path, qs);
 
     // Filter hop-by-hop headers
     let hop_by_hop = vec![
