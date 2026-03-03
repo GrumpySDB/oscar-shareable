@@ -56,15 +56,42 @@ async fn collect_filenames_recursive(root: &PathBuf, current: &PathBuf) -> anyho
 }
 
 pub async fn delete_folder(
+    State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
 ) -> impl IntoResponse {
     let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
 
+    // 1. Evict active OSCAR container if it exists
+    let uuid = claims.uuid.clone();
+    let docker = state.docker.clone();
+    let state_arc = state.clone();
+
+    let mut containers = state_arc.active_containers.write().await;
+    if let Some(info) = containers.remove(&uuid) {
+        tracing::info!("Evicting OSCAR container {} due to data deletion request.", info.container_id);
+        let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
+        let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+    }
+    drop(containers);
+
+    // 2. Erase files
     let upload_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
     let profile_path = PathBuf::from(PROFILE_ROOT).join(&folder);
+    let app_config_path = PathBuf::from(&state.config.app_config_root).join(&folder);
     
     let _ = fs::remove_dir_all(&upload_path).await;
     let _ = fs::remove_dir_all(&profile_path).await;
+    let _ = fs::remove_dir_all(app_config_path).await;
+
+    // 3. Recreate template profile (Fresh Start)
+    let u_name = claims.username.clone();
+    let uuid_clone = claims.uuid.clone();
+    let config_clone = state.config.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Err(e) = crate::auth::create_user_profile(&u_name, &uuid_clone, &config_clone) {
+            tracing::error!("Failed to recreate template files for user {} after deletion: {}", u_name, e);
+        }
+    }).await;
     
     Json(serde_json::json!({ "deleted": folder }))
 }

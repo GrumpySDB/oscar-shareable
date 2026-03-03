@@ -3,3 +3,5 @@ cloudflared/config.yml
 nginx/nginx.conf
 .agents/
 data/
+secrets/
+certs/

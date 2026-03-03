@@ -13,7 +13,7 @@ use std::sync::Arc;
 use rsa::pkcs8::EncodePublicKey;
 
 use crate::config::{AppState, SessionInfo, UPLOAD_ROOT, PROFILE_ROOT};
-use bollard::container::{StopContainerOptions, RemoveContainerOptions};
+// Unused bollard imports removed
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -62,13 +62,16 @@ pub struct LoginResponse {
 
 #[derive(Deserialize)]
 pub struct DiscordCallbackQuery {
-    pub code: String,
+    pub code: Option<String>,
     pub state: Option<String>,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct DiscordLoginQuery {
     pub invite: Option<String>,
+    pub prompt: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -89,10 +92,11 @@ pub async fn discord_login(
     let client_id = &state.config.discord_client_id;
     let redirect_uri = urlencoding::encode(&state.config.discord_redirect_uri);
     let state_param = query.invite.unwrap_or_default();
+    let prompt = query.prompt.as_deref().unwrap_or("none");
     
     let url = format!(
-        "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}",
-        client_id, redirect_uri, state_param
+        "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}&prompt={}",
+        client_id, redirect_uri, state_param, prompt
     );
     
     axum::response::Redirect::to(&url)
@@ -102,6 +106,18 @@ pub async fn discord_callback(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(query): axum::extract::Query<DiscordCallbackQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    if let Some(err) = query.error {
+        if err == "consent_required" {
+            let state_param = query.state.unwrap_or_default();
+            let redirect_url = format!("/api/auth/discord/login?invite={}&prompt=consent", state_param);
+            return Ok(axum::response::Redirect::to(&redirect_url).into_response());
+        }
+        tracing::error!("Discord OAuth error: {} - {:?}", err, query.error_description);
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Discord authorization failed or was denied" }))));
+    }
+
+    let code_str = query.code.ok_or((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Missing code from Discord" }))))?;
+
     let client = &state.reqwest_client;
 
     // Exchange code for token
@@ -111,7 +127,7 @@ pub async fn discord_callback(
             ("client_id", state.config.discord_client_id.as_str()),
             ("client_secret", state.config.discord_client_secret.as_str()),
             ("grant_type", "authorization_code"),
-            ("code", query.code.as_str()),
+            ("code", code_str.as_str()),
             ("redirect_uri", state.config.discord_redirect_uri.as_str()),
         ])
         .send()
@@ -165,7 +181,7 @@ pub async fn discord_callback(
         let now = chrono::Utc::now().timestamp();
         let new_user = crate::db::User {
             uuid: uuid::Uuid::new_v4().to_string(),
-            username: Some(discord_user.username),
+            username: Some(discord_user.username.clone()),
             provider: "discord".to_string(),
             identifier: discord_user.id.clone(),
             role: "user".to_string(),
@@ -173,13 +189,23 @@ pub async fn discord_callback(
             last_accessed_at: Some(now),
         };
         
-        state.db.create_user(new_user.clone(), None).map_err(|e| {
+        state.db.create_user(new_user.clone(), None, None).map_err(|e| {
             tracing::error!("Failed to create user: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create user" })))
         })?;
         
         // Mark invite as used
         let _ = state.db.use_invite(invite_code, &new_user.uuid);
+        
+        // Create user profile templates
+        let u_name = discord_user.username.clone();
+        let uuid_clone = new_user.uuid.clone();
+        let config_clone = state.config.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Err(e) = create_user_profile(&u_name, &uuid_clone, &config_clone) {
+                tracing::error!("Failed to create template files for new discord user {}: {}", u_name, e);
+            }
+        }).await;
         
         user = Some(new_user);
     }
@@ -232,18 +258,28 @@ pub async fn local_signup(
     let recovery_phrase = mnemonic.to_string();
 
     let password_clone = password.clone();
-    let password_hash = tokio::task::spawn_blocking(move || {
+    let recovery_phrase_clone = recovery_phrase.clone();
+    let (password_hash, recovery_hash) = tokio::task::spawn_blocking(move || {
         use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
         use rand::rngs::OsRng;
         let mut rng = OsRng;
-        let salt = SaltString::generate(&mut rng);
         let argon2 = Argon2::default();
-        argon2.hash_password(password_clone.as_bytes(), &salt)
+        
+        let p_salt = SaltString::generate(&mut rng);
+        let p_hash = argon2.hash_password(password_clone.as_bytes(), &p_salt)
             .map(|h| h.to_string())
+            .map_err(|_| "Password hashing failed")?;
+            
+        let r_salt = SaltString::generate(&mut rng);
+        let r_hash = argon2.hash_password(recovery_phrase_clone.as_bytes(), &r_salt)
+            .map(|h| h.to_string())
+            .map_err(|_| "Recovery phrase hashing failed")?;
+            
+        Ok::<(_, _), &'static str>((p_hash, r_hash))
     })
     .await
     .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Internal error" }))))?
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Password hashing failed" }))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
 
     let uuid = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
@@ -257,13 +293,23 @@ pub async fn local_signup(
         last_accessed_at: Some(now),
     };
 
-    state.db.create_user(user.clone(), Some(password_hash)).map_err(|_| {
+    state.db.create_user(user.clone(), Some(password_hash), Some(recovery_hash)).map_err(|_| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create user" })))
     })?;
 
     state.db.use_invite(&payload.invite_code, &uuid).map_err(|_| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Invite update error" })))
     })?;
+
+    // Create user profile templates
+    let u_name = payload.username.clone();
+    let uuid_clone = uuid.clone();
+    let config_clone = state.config.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Err(e) = create_user_profile(&u_name, &uuid_clone, &config_clone) {
+            tracing::error!("Failed to create template files for new local user {}: {}", u_name, e);
+        }
+    }).await;
 
     let (headers, token_res) = issue_session(&state, user).await?;
     
@@ -300,6 +346,78 @@ pub async fn local_login(
             Ok((headers, token_res))
         }
         None => Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid credentials" })))),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LocalRecoveryPayload {
+    pub username: String,
+    pub recovery_phrase: String,
+}
+
+pub async fn local_recovery_handler(
+    State(state): State<Arc<AppState>>,
+    ExtractJson(payload): ExtractJson<LocalRecoveryPayload>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Basic input sanitization
+    let username = payload.username.trim();
+    let recovery_phrase = payload.recovery_phrase.trim();
+
+    if username.is_empty() || recovery_phrase.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Username and recovery phrase are required" }))));
+    }
+
+    if username.len() > 128 || recovery_phrase.len() > 512 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Input too long" }))));
+    }
+
+    let state_clone = state.clone();
+    let u_clone = username.to_string();
+    let r_clone = recovery_phrase.to_string();
+
+    let user_res = tokio::task::spawn_blocking(move || {
+        state_clone.db.verify_recovery_phrase("local", &u_clone, &r_clone)
+    })
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Internal task error" }))))?;
+
+    let user = user_res.map_err(|e| {
+        tracing::error!("Recovery verification error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Recovery error" })))
+    })?;
+
+    match user {
+        Some(u) => {
+            // Generate new password
+            let new_pw = uuid::Uuid::new_v4().simple().to_string();
+            let new_pw_clone = new_pw.clone();
+            
+            let password_hash = tokio::task::spawn_blocking(move || {
+                use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+                use rand::rngs::OsRng;
+                let salt = SaltString::generate(&mut OsRng);
+                Argon2::default()
+                    .hash_password(new_pw_clone.as_bytes(), &salt)
+                    .map(|h| h.to_string())
+            })
+            .await
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Internal error" }))))?
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Hash error" }))))?;
+
+            state.db.reset_user_password(&u.uuid, &password_hash).map_err(|_| {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to reset password" })))
+            })?;
+
+            // Clear active sessions for this user
+            let mut sessions = state.active_auth_sessions.write().await;
+            sessions.retain(|_, s| s.uuid != u.uuid);
+
+            Ok(Json(serde_json::json!({
+                "message": "Password successfully reset",
+                "new_password": new_pw
+            })))
+        }
+        None => Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid username or recovery phrase" })))),
     }
 }
 
@@ -368,11 +486,9 @@ pub async fn logout(
 
                     let uuid = token_data.claims.uuid.clone();
                     if let Some(info) = state.active_containers.write().await.remove(&uuid) {
-                        let docker = state.docker.clone();
+                        let state_clone = state.clone();
                         tokio::spawn(async move {
-                            tracing::info!("User logged out. Evicting OSCAR container {}.", info.container_id);
-                            let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
-                            let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+                            crate::proxy::cleanup_oscar_session(state_clone, uuid, info.container_id).await;
                         });
                     }
                 }
@@ -578,9 +694,23 @@ pub async fn list_users_handler(
     Ok(Json(serde_json::json!({ "users": sanitized_users })))
 }
 
+pub async fn delete_self_handler(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    delete_user_handler_impl(state, claims.uuid).await
+}
+
 pub async fn delete_user_handler(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(uuid_param): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    delete_user_handler_impl(state, uuid_param).await
+}
+
+async fn delete_user_handler_impl(
+    state: Arc<AppState>,
+    uuid_param: String,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // 1. Fetch user first to determine folder name and perform cleanup
     let user_opt = state.db.get_user_by_uuid(&uuid_param).map_err(|e| {
@@ -605,12 +735,10 @@ pub async fn delete_user_handler(
     {
         let mut containers = state.active_containers.write().await;
         if let Some(info) = containers.remove(&uuid_param) {
-            let docker = state.docker.clone();
+            let state_clone = state.clone();
             let upid = uuid_param.clone();
             tokio::spawn(async move {
-                tracing::info!("Evicting OSCAR container {} for deleted user {}.", info.container_id, upid);
-                let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
-                let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+                crate::proxy::cleanup_oscar_session(state_clone, upid, info.container_id).await;
             });
         }
     }
@@ -618,9 +746,11 @@ pub async fn delete_user_handler(
     // 4. Delete their files from filesystem
     let upload_path = PathBuf::from(UPLOAD_ROOT).join(&folder_name);
     let profile_path = PathBuf::from(PROFILE_ROOT).join(&folder_name);
+    let app_config_path = PathBuf::from(&state.config.app_config_root).join(&folder_name);
     
     let _ = fs::remove_dir_all(upload_path).await;
     let _ = fs::remove_dir_all(profile_path).await;
+    let _ = fs::remove_dir_all(app_config_path).await;
 
     // 5. Delete user from SQLite database. This cascade-deletes their invites and share_links.
     state.db.delete_user(&uuid_param).map_err(|e| {
@@ -817,4 +947,45 @@ pub async fn auth_rate_limit_middleware(
 
     drop(entry);
     Ok(next.run(req).await)
+}
+
+pub fn create_user_profile(username: &str, uuid: &str, config: &crate::config::AppConfig) -> std::io::Result<()> {
+    let folder_name = crate::utils::sanitize_folder_name(username).unwrap_or_else(|| uuid.to_string());
+    
+    let profile_user_dir = std::path::PathBuf::from(crate::config::PROFILE_ROOT)
+        .join(&folder_name)
+        .join("Profiles")
+        .join(&folder_name);
+        
+    let app_config_dir = std::path::PathBuf::from(&config.app_config_root)
+        .join(&folder_name);
+
+    std::fs::create_dir_all(&profile_user_dir)?;
+    std::fs::create_dir_all(&app_config_dir)?;
+
+    let pref_xml = crate::templates::PREFERENCES_XML_TEMPLATE
+        .replace("{USERNAME}", &folder_name)
+        .replace("{VERSION}", &config.oscar_version);
+        
+    let prof_xml = crate::templates::PROFILE_XML_TEMPLATE
+        .replace("{USERNAME}", &folder_name)
+        .replace("{VERSION}", &config.oscar_version);
+
+    std::fs::write(std::path::PathBuf::from(crate::config::PROFILE_ROOT).join(&folder_name).join("Preferences.xml"), pref_xml)?;
+    std::fs::write(profile_user_dir.join("Profile.xml"), prof_xml)?;
+    std::fs::write(app_config_dir.join("OSCAR.conf"), crate::templates::OSCAR_CONF_TEMPLATE)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::chown;
+        // Best effort chown to the upload uid/gid so uploader can manage it correctly
+        let _ = chown(std::path::PathBuf::from(crate::config::PROFILE_ROOT).join(&folder_name), Some(config.upload_uid), Some(config.upload_gid));
+        let _ = chown(&app_config_dir, Some(config.upload_uid), Some(config.upload_gid));
+        let _ = chown(std::path::PathBuf::from(crate::config::PROFILE_ROOT).join(&folder_name).join("Preferences.xml"), Some(config.upload_uid), Some(config.upload_gid));
+        let _ = chown(&profile_user_dir, Some(config.upload_uid), Some(config.upload_gid));
+        let _ = chown(profile_user_dir.join("Profile.xml"), Some(config.upload_uid), Some(config.upload_gid));
+        let _ = chown(app_config_dir.join("OSCAR.conf"), Some(config.upload_uid), Some(config.upload_gid));
+    }
+
+    Ok(())
 }

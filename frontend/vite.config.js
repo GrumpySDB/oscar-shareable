@@ -11,6 +11,7 @@ export default defineConfig({
                 faq: resolve(__dirname, 'faq.html'),
                 howto: resolve(__dirname, 'how-to-uploader.html'),
                 privacy: resolve(__dirname, 'privacy-security-policy.html'),
+                recovery: resolve(__dirname, 'recovery.html'),
             },
         },
         outDir: 'dist',

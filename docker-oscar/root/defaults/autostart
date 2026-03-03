@@ -1,1 +1,15 @@
-OSCAR
+#!/bin/bash
+# Wait for Selkies log to indicate a client session has started
+LOG_FILE="/tmp/selkies.log"
+
+# Wait for log file to exist
+while [ ! -f "$LOG_FILE" ]; do
+  sleep 1
+done
+
+# Instantly wait for the exact log message without polling loops or artificial delays
+tail -F "$LOG_FILE" | grep -q -m 1 "Primary client connected"
+
+# OSCAR is executed immediately. The script process is replaced by OSCAR,
+# ensuring it won't restart on subsequent resolution changes.
+exec OSCAR

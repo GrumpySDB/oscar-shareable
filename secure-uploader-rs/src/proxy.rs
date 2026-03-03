@@ -11,7 +11,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 use crate::config::{AppState, ContainerInfo};
 use crate::auth::{Claims, OscarClaims};
-use bollard::container::{Config, CreateContainerOptions, StartContainerOptions, InspectContainerOptions};
+use bollard::container::{Config, CreateContainerOptions, StartContainerOptions, InspectContainerOptions, StopContainerOptions, RemoveContainerOptions};
 use bollard::models::HostConfig;
 
 #[derive(Deserialize)]
@@ -44,18 +44,53 @@ pub async fn ensure_oscar_container(
     // Ensure directories exist on host before container start to prevent Docker from creating them as root
     let uploads_dir = std::path::PathBuf::from("./data/uploads").join(&username);
     let profiles_dir = std::path::PathBuf::from("./data/profiles").join(&username);
+    let app_config_dir = std::path::PathBuf::from("./data/app_config").join(&username);
     let _ = tokio::fs::create_dir_all(&uploads_dir).await;
     let _ = tokio::fs::create_dir_all(&profiles_dir).await;
+    let _ = tokio::fs::create_dir_all(&app_config_dir).await;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::chown;
         let _ = chown(&uploads_dir, Some(911), Some(911));
         let _ = chown(&profiles_dir, Some(911), Some(911));
+        let _ = chown(&app_config_dir, Some(911), Some(911));
     }
 
     let docker = &state.docker;
     let mut ip_address = String::new();
+
+    let is_active = {
+        let containers = state.active_containers.read().await;
+        containers.contains_key(owner_uuid)
+    };
+
+    if !is_active {
+        // Enforce a strict cleanup before proceeding to prevent race conditions during rapid re-logins
+        let _ = docker.remove_container(&container_name, Some(RemoveContainerOptions { force: true, v: true, ..Default::default() })).await;
+        
+        // Wait until it's really gone
+        for _ in 0..20 {
+            if docker.inspect_container(&container_name, None::<InspectContainerOptions>).await.is_err() {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+        }
+
+        // Now meticulously purge lockfile since anything running previously is definitely dead
+        let profiles_dir = std::path::PathBuf::from("./data/profiles").join(&username).join("Profiles");
+        if let Ok(mut entries) = tokio::fs::read_dir(&profiles_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+                    let lockfile_path = entry.path().join("lockfile");
+                    if lockfile_path.exists() {
+                        tracing::info!("Pre-emptively purging lockfile at {:?}", lockfile_path);
+                        let _ = tokio::fs::remove_file(lockfile_path).await;
+                    }
+                }
+            }
+        }
+    }
 
     match docker.inspect_container(&container_name, None::<InspectContainerOptions>).await {
         Ok(info) => {
@@ -80,9 +115,13 @@ pub async fn ensure_oscar_container(
                         binds: Some(vec![
                             format!("{}/data/profiles/{}:/config/Documents/OSCAR_Data:rw", host_path, username),
                             format!("{}/data/uploads/{}:/config/Documents/SDCARD:rw", host_path, username),
+                            format!("{}/data/app_config/{}:/config/.config/OSCAR_Team:rw", host_path, username),
                         ]),
                         network_mode: Some(docker_network.clone()),
                         shm_size: Some(1024 * 1024 * 1024),
+                        memory: Some(1280 * 1024 * 1024), // 1280MB
+                        memory_swap: Some(1280 * 1024 * 1024), // No swap beyond 1280MB
+                        nano_cpus: Some(1_000_000_000), // 1.0 CPU
                         security_opt: Some(vec!["no-new-privileges:true".to_string()]),
                         ..Default::default()
                     }),
@@ -98,6 +137,16 @@ pub async fn ensure_oscar_container(
                         "HARDEN_DESKTOP=true".to_string(),
                         "HARDEN_OPENBOX=true".to_string(),
                         "SELKIES_ENABLE_CURSORS=true".to_string(),
+                        "SELKIES_AUDIO_ENABLED=false".to_string(),
+                        "SELKIES_GAMEPAD_ENABLED=false".to_string(),
+                        "SELKIES_UI_SIDEBAR_SHOW_GAMEPADS=false".to_string(),
+                        "SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD=false".to_string(),
+                        "SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS=false".to_string(),
+                        "SELKIES_UI_SIDEBAR_SHOW_SHARING=false".to_string(),
+                        "SELKIES_MICROPHONE_ENABLED=false".to_string(),
+                        "SELKIES_CLIPBOARD_ENABLED=false".to_string(),
+                        "SELKIES_SECOND_SCREEN=false".to_string(),
+                        "SELKIES_ENABLE_SHARING=false".to_string(),
                     ]),
                     ..Default::default()
                 };
@@ -344,6 +393,12 @@ pub async fn proxy_handler(
     State(state): State<Arc<AppState>>,
     req: Request,
 ) -> Response {
+    let accepts_html = req.headers()
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.contains("text/html"))
+        .unwrap_or(false);
+
     let mut path = req.uri().path().to_string();
     if path.starts_with("/oscar") {
         path = path.replacen("/oscar", "", 1);
@@ -354,16 +409,20 @@ pub async fn proxy_handler(
     
     let qs = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
     
-    let claims = match req.extensions().get::<OscarClaims>() {
-        Some(c) => c,
-        None => return Response::builder().status(StatusCode::UNAUTHORIZED).body(Body::from("Missing OSCAR session claims")).unwrap(),
-    };
+    let (target_ip, user_uuid) = {
+        let claims = match req.extensions().get::<OscarClaims>() {
+            Some(c) => c,
+            None => return Response::builder().status(StatusCode::UNAUTHORIZED).body(Body::from("Missing OSCAR session claims")).unwrap(),
+        };
 
-    let target_ip = {
         let containers = state.active_containers.read().await;
         if let Some(info) = containers.get(&claims.uuid) {
-            info.ip_address.clone()
+            (info.ip_address.clone(), claims.uuid.clone())
         } else {
+            if accepts_html {
+                return Redirect::to("/?timeout=1").into_response();
+            }
+
             return Response::builder()
                 .status(StatusCode::BAD_GATEWAY)
                 .body(Body::from("Container session expired or stopped. Please return to the homepage and relaunch OSCAR."))
@@ -372,9 +431,13 @@ pub async fn proxy_handler(
     };
 
     {
-        let mut containers = state.active_containers.write().await;
-        if let Some(info) = containers.get_mut(&claims.uuid) {
-            info.last_active = chrono::Utc::now().timestamp();
+        // Don't register activity for background polling or non-user requests
+        let is_polling = path.ends_with("/audio") || path.ends_with("/websockify");
+        if !is_polling {
+            let mut containers = state.active_containers.write().await;
+            if let Some(info) = containers.get_mut(&user_uuid) {
+                info.last_active = chrono::Utc::now().timestamp();
+            }
         }
     }
 
@@ -395,7 +458,7 @@ pub async fn proxy_handler(
         .unwrap_or(false);
 
     if is_upgrade {
-        return handle_websocket_upgrade(state, req, &target_url).await;
+        return handle_websocket_upgrade(state, req, &target_url, user_uuid).await;
     }
 
     let client = &state.reqwest_client;
@@ -436,18 +499,24 @@ pub async fn proxy_handler(
         }
         Err(e) => {
             tracing::error!("Proxy request failed: {}", e);
-            Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
-                .body(Body::from("Unable to connect to OSCAR service"))
-                .unwrap()
+            
+            if accepts_html {
+                Redirect::to("/?timeout=1").into_response()
+            } else {
+                Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(Body::from("Container session expired or stopped. Please return to the homepage and relaunch OSCAR."))
+                    .unwrap()
+            }
         }
     }
 }
 
 async fn handle_websocket_upgrade(
-    _state: Arc<AppState>,
+    state: Arc<AppState>,
     req: Request,
     target_url: &str,
+    user_uuid: String,
 ) -> Response {
     // Handling websockets. We convert the http url to ws or wss
     let ws_url = if target_url.starts_with("https://") {
@@ -482,9 +551,32 @@ async fn handle_websocket_upgrade(
                 let (mut server_tx, mut server_rx) = server_ws.split();
 
                 let client_to_server = async {
+                    let mut last_update = 0i64;
                     while let Some(Ok(msg)) = client_rx.next().await {
                         use axum::extract::ws::Message as AxumMsg;
                         use tokio_tungstenite::tungstenite::Message as TungMsg;
+
+                        let is_activity = match &msg {
+                            AxumMsg::Binary(b) if !b.is_empty() => {
+                                let t = b[0];
+                                t == 4 || t == 5 || t == 6
+                            },
+                            AxumMsg::Text(t) => {
+                                // VNC JSON payloads for events like mouse movements and key presses
+                                t.contains("mouse") || t.contains("key") || t.contains("touch") || t.contains("clipboard")
+                            },
+                            _ => false,
+                        };
+
+                        let now = chrono::Utc::now().timestamp();
+                        if is_activity && (now - last_update > 30) {
+                            let mut containers = state.active_containers.write().await;
+                            if let Some(info) = containers.get_mut(&user_uuid) {
+                                info.last_active = now;
+                            }
+                            last_update = now;
+                        }
+                        
                         let tung_msg = match msg {
                             AxumMsg::Text(t) => TungMsg::Text(t),
                             AxumMsg::Binary(b) => TungMsg::Binary(b),
@@ -526,4 +618,39 @@ async fn handle_websocket_upgrade(
             }
         }
     })
+}
+
+pub async fn cleanup_oscar_session(state: Arc<AppState>, uuid: String, container_id: String) {
+    let docker = &state.docker;
+    tracing::info!("Evicting OSCAR container {} and cleaning up resources for user {}.", container_id, uuid);
+
+    // Stop and remove the container, ensuring anonymous volumes are removed (v: true)
+    let _ = docker.stop_container(&container_id, None::<StopContainerOptions>).await;
+    let _ = docker.remove_container(
+        &container_id,
+        Some(RemoveContainerOptions {
+            force: true,
+            v: true, // IMPORTANT: removes anonymous volumes attached to container
+            ..Default::default()
+        }),
+    ).await;
+
+    // Purge the dangling lockfile from user profile directory
+    // We get the username from the DB, then sanitize it to match directory names
+    if let Ok(Some(user)) = state.db.get_user_by_uuid(&uuid) {
+        let username = crate::utils::sanitize_folder_name(user.username.as_deref().unwrap_or("")).unwrap_or(uuid.clone());
+        let profiles_dir = std::path::PathBuf::from("./data/profiles").join(&username).join("Profiles");
+        
+        if let Ok(mut entries) = tokio::fs::read_dir(&profiles_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+                    let lockfile_path = entry.path().join("lockfile");
+                    if lockfile_path.exists() {
+                        tracing::info!("Purging lockfile at {:?}", lockfile_path);
+                        let _ = tokio::fs::remove_file(lockfile_path).await;
+                    }
+                }
+            }
+        }
+    }
 }

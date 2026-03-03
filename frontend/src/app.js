@@ -24,6 +24,13 @@ const summary = document.getElementById('summaryCounts');
 const progressBar = document.getElementById('progressBar');
 const uploadBtn = document.getElementById('uploadBtn');
 
+const deleteConfirmOverlay = document.getElementById('deleteConfirmOverlay');
+const closeDeleteModalBtn = document.getElementById('closeDeleteModalBtn');
+const confirmDeleteData = document.getElementById('confirmDeleteData');
+const confirmDeleteAccount = document.getElementById('confirmDeleteAccount');
+const finalDeleteBtn = document.getElementById('finalDeleteBtn');
+const footerActions = document.querySelector('.footer-actions');
+
 const urlParams = new URLSearchParams(window.location.search);
 
 const errParam = urlParams.get('error');
@@ -42,6 +49,13 @@ if (loginTokenParam) {
 const legacyInviteCode = urlParams.get('invite');
 if (legacyInviteCode) {
   window.location.href = `/invite?code=${encodeURIComponent(legacyInviteCode)}`;
+}
+
+let isTimeoutFlow = false;
+const timeoutParam = urlParams.get('timeout');
+if (timeoutParam) {
+  isTimeoutFlow = true;
+  window.history.replaceState({}, document.title, window.location.pathname);
 }
 
 function handleShareLinkRouting() {
@@ -82,11 +96,13 @@ async function loadRandomBanner(imageElement) {
 function showLogin() {
   loginCard.classList.remove('hidden');
   appCard.classList.add('hidden');
+  footerActions?.classList.add('hidden');
 }
 
 function showApp() {
   loginCard.classList.add('hidden');
   appCard.classList.remove('hidden');
+  footerActions?.classList.remove('hidden');
 }
 
 function setMessage(message, isError = false, details = '') {
@@ -242,6 +258,12 @@ function isSpo2Filename(name) {
   return /^.+\.spo2$/i.test(trimmed);
 }
 
+function is14DigitOximetryFilename(name) {
+  if (typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  return /^\d{14}$/.test(trimmed);
+}
+
 
 function extractDateFromPath(file) {
   const relativePath = getRelativePath(file);
@@ -346,6 +368,9 @@ function hideShareModal() {
 
 async function checkSession() {
   if (!token) {
+    if (isTimeoutFlow) {
+      loginError.textContent = 'Your session has timed out. Please log in again.';
+    }
     showLogin();
     return;
   }
@@ -359,11 +384,26 @@ async function checkSession() {
     }
 
     currentUsername = getUsernameFromToken(token);
-    proceedToAppFlow();
+
+    if (isTimeoutFlow) {
+      const overlay = document.getElementById('timeoutOverlay');
+      const mainAppCard = document.getElementById('appCard');
+      const loginCardMain = document.getElementById('loginCard');
+      if (mainAppCard) mainAppCard.classList.add('hidden');
+      if (loginCardMain) loginCardMain.classList.add('hidden');
+      if (footerActions) footerActions.classList.add('hidden');
+      if (overlay) overlay.classList.remove('hidden');
+      isTimeoutFlow = false;
+    } else {
+      proceedToAppFlow();
+    }
   } catch (_err) {
     token = null;
     currentUsername = '';
     sessionStorage.removeItem('authToken');
+    if (isTimeoutFlow) {
+      loginError.textContent = 'Your session has timed out. Please log in again.';
+    }
     showLogin();
   }
 }
@@ -444,13 +484,12 @@ function resetPreparedState(clearProgress = false) {
 }
 
 function getUploadCompleteMessage() {
-  const destinationFolder = currentUsername;
   if (preparedUploadType === 'sdcard') {
-    const uploadedFolder = preparedSourceRootFolder || destinationFolder;
-    return `Upload Complete.  Import your SD Card data from config>Documents>SDCARD>${destinationFolder}>${uploadedFolder}`;
+    const uploadedFolder = preparedSourceRootFolder || currentUsername;
+    return `Upload Complete.  Import your SD Card data from /config/Documents/SDCARD/${uploadedFolder}`;
   }
 
-  return `Upload Complete.  Import your Oximetry data from config>Documents>SDCARD>${destinationFolder}>Oximetry`;
+  return `Upload Complete.  Import your Oximetry data from /config/Documents/SDCARD/Oximetry`;
 }
 
 async function scanAndPrepare() {
@@ -479,7 +518,8 @@ async function scanAndPrepare() {
   const existingSet = new Set(existingNames);
   const hasSpo2 = files.some((file) => isSpo2Filename(getBasename(file)));
   const dbO2Files = files.filter((file) => getBasename(file).toLowerCase() === 'db_o2.db');
-  const isWellueOximetry = dbO2Files.length > 0;
+  const fourteenDigitFiles = files.filter((file) => is14DigitOximetryFilename(getBasename(file)) && file.size < 250 * 1024);
+  const isWellueOximetry = dbO2Files.length > 0 || fourteenDigitFiles.length > 0;
   const wellueDbParents = Array.from(new Set(
     dbO2Files
       .map((file) => {
@@ -552,6 +592,16 @@ async function scanAndPrepare() {
         continue;
       }
 
+      eligible.push(file);
+      continue;
+    }
+
+    if (uploadType === 'wellue-spo2' && is14DigitOximetryFilename(basename) && file.size < 250 * 1024) {
+      const destinationPath = `Oximetry/${basename}`;
+      if (existingSet.has(destinationPath)) {
+        skippedExisting += 1;
+        continue;
+      }
       eligible.push(file);
       continue;
     }
@@ -716,7 +766,21 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, t
       form.append('encryptionEnvelope', JSON.stringify(encryptionEnvelope));
     }
     for (const file of files) {
-      form.append('files', file, getRelativePath(file));
+      let relativePath = getRelativePath(file);
+      if (preparedUploadType === 'spo2') {
+        relativePath = `Oximetry/${getBasename(file)}`;
+      } else if (preparedUploadType === 'wellue-spo2') {
+        const basename = getBasename(file);
+        if (is14DigitOximetryFilename(basename)) {
+          relativePath = `Oximetry/${basename}`;
+        } else {
+          const parts = relativePath.split('/');
+          const fileName = parts[parts.length - 1] || '';
+          const directFolder = parts.length >= 2 ? parts[parts.length - 2] : '';
+          relativePath = `Oximetry/${directFolder}/${fileName}`;
+        }
+      }
+      form.append('files', file, relativePath);
     }
 
     const request = new XMLHttpRequest();
@@ -832,6 +896,7 @@ async function proceedToOscar() {
   const mainAppCard = document.getElementById('appCard');
 
   if (mainAppCard) mainAppCard.classList.add('hidden');
+  if (footerActions) footerActions.classList.add('hidden');
   if (overlay) overlay.classList.remove('hidden');
 
   try {
@@ -852,15 +917,53 @@ async function proceedToOscar() {
   }
 }
 
-async function deleteFolder() {
-  if (!window.confirm(`Delete all uploaded data for your account?`)) return;
+function showDeleteModal() {
+  if (deleteConfirmOverlay) deleteConfirmOverlay.classList.remove('hidden');
+}
+
+function hideDeleteModal() {
+  if (deleteConfirmOverlay) {
+    deleteConfirmOverlay.classList.add('hidden');
+    confirmDeleteData.checked = false;
+    confirmDeleteAccount.checked = false;
+    confirmDeleteData.disabled = false;
+    finalDeleteBtn.disabled = true;
+  }
+}
+
+function handleToggleChanges() {
+  if (confirmDeleteAccount.checked) {
+    confirmDeleteData.checked = true;
+    confirmDeleteData.disabled = true;
+  } else {
+    confirmDeleteData.disabled = false;
+  }
+  finalDeleteBtn.disabled = !(confirmDeleteData.checked || confirmDeleteAccount.checked);
+}
+
+async function handleFinalDeletion() {
+  const accountDelete = confirmDeleteAccount.checked;
+  const originalFinalText = finalDeleteBtn.textContent;
 
   try {
-    await api('/api/files', { method: 'DELETE' });
-    resetPreparedState(true);
-    setMessage(`Deleted uploaded data for your account.`);
+    finalDeleteBtn.disabled = true;
+    finalDeleteBtn.textContent = 'Deleting...';
+
+    if (accountDelete) {
+      await api('/api/account', { method: 'DELETE' });
+      hideDeleteModal();
+      setMessage('Your account and all data have been deleted. Logging out...');
+      setTimeout(() => logout(), 2500);
+    } else if (confirmDeleteData.checked) {
+      await api('/api/files', { method: 'DELETE' });
+      resetPreparedState(true);
+      hideDeleteModal();
+      setMessage('Your uploaded data has been deleted.');
+    }
   } catch (err) {
-    setMessage(`Delete failed: ${err.message}`, true);
+    setMessage(`Deletion failed: ${err.message}`, true);
+    finalDeleteBtn.disabled = false;
+    finalDeleteBtn.textContent = originalFinalText;
   }
 }
 
@@ -936,8 +1039,23 @@ document.getElementById('directoryInput').addEventListener('change', () => {
   scanAndPrepare();
 });
 document.getElementById('uploadBtn').addEventListener('click', uploadPreparedFiles);
-document.getElementById('deleteBtn').addEventListener('click', deleteFolder);
+document.getElementById('deleteBtn').addEventListener('click', showDeleteModal);
+closeDeleteModalBtn?.addEventListener('click', hideDeleteModal);
+confirmDeleteData?.addEventListener('change', handleToggleChanges);
+confirmDeleteAccount?.addEventListener('change', handleToggleChanges);
+finalDeleteBtn?.addEventListener('click', handleFinalDeletion);
+
+deleteConfirmOverlay?.addEventListener('click', (e) => {
+  if (e.target === deleteConfirmOverlay) hideDeleteModal();
+});
+
 document.getElementById('oscarBtn').addEventListener('click', proceedToOscar);
+document.getElementById('recreateSessionBtn')?.addEventListener('click', proceedToOscar);
+document.getElementById('timeoutReturnBtn')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  document.getElementById('timeoutOverlay')?.classList.add('hidden');
+  logout();
+});
 
 // Safe initialization sequence
 async function initApp() {

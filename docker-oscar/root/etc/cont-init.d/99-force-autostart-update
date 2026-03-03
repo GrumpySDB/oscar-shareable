@@ -1,0 +1,5 @@
+#!/usr/bin/with-contenv bash
+mkdir -p /config/.config/openbox
+cp /defaults/autostart /config/.config/openbox/autostart
+chown abc:abc /config/.config/openbox/autostart
+chmod +x /config/.config/openbox/autostart

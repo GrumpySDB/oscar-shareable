@@ -37,6 +37,7 @@ impl Database {
             [],
         )?;
         let _ = conn.execute("ALTER TABLE users ADD COLUMN last_accessed_at INTEGER", []);
+        let _ = conn.execute("ALTER TABLE users ADD COLUMN argon2_recovery_phrase_hash TEXT", []);
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS invites (
@@ -146,18 +147,19 @@ impl Database {
         }
     }
 
-    pub fn create_user(&self, user: User, password_hash: Option<String>) -> Result<()> {
+    pub fn create_user(&self, user: User, password_hash: Option<String>, recovery_phrase_hash: Option<String>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
         conn.execute(
-            "INSERT INTO users (uuid, username, provider, identifier, argon2_password_hash, role, created_at, last_accessed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO users (uuid, username, provider, identifier, argon2_password_hash, argon2_recovery_phrase_hash, role, created_at, last_accessed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 user.uuid,
                 user.username,
                 user.provider,
                 user.identifier,
                 password_hash,
+                recovery_phrase_hash,
                 user.role,
                 now,
                 now,
@@ -204,6 +206,36 @@ impl Database {
             params![now, uuid],
         )?;
         Ok(())
+    }
+
+    pub fn verify_recovery_phrase(&self, provider: &str, identifier: &str, recovery_phrase: &str) -> Result<Option<User>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT uuid, username, provider, identifier, argon2_recovery_phrase_hash, role, created_at, last_accessed_at FROM users WHERE provider = ?1 AND identifier = ?2")?;
+        
+        let mut rows = stmt.query(params![provider, identifier])?;
+        if let Some(row) = rows.next()? {
+            let hash: Option<String> = row.get(4)?;
+            if let Some(h) = hash {
+                use argon2::{
+                    password_hash::{PasswordHash, PasswordVerifier},
+                    Argon2,
+                };
+                if PasswordHash::new(&h).and_then(|parsed_hash| {
+                    Argon2::default().verify_password(recovery_phrase.as_bytes(), &parsed_hash)
+                }).is_ok() {
+                    return Ok(Some(User {
+                        uuid: row.get(0)?,
+                        username: row.get(1)?,
+                        provider: row.get(2)?,
+                        identifier: row.get(3)?,
+                        role: row.get(5)?,
+                        created_at: row.get(6)?,
+                        last_accessed_at: row.get(7)?,
+                    }));
+                }
+            }
+        }
+        Ok(None)
     }
 
     pub fn validate_invite(&self, code: &str) -> Result<bool> {

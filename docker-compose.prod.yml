@@ -77,8 +77,8 @@ services:
 
   uploader:
     container_name: uploader
-    build:
-      context: .
+    # Pull pre-built image from GHCR
+    image: ghcr.io/${GITHUB_USERNAME:-grumpysdb}/oscar-shareable-uploader:latest
     expose:
       - "8080"
     group_add:
@@ -129,11 +129,8 @@ services:
       - internal
 
   oscar:
-    build:
-      context: ./docker-oscar
-      args:
-        - OSCAR_VERSION=${OSCAR_VERSION:-1.7.1}
-    image: custom-oscar-vnc:latest
+    # Pull pre-built image from GHCR
+    image: ghcr.io/${GITHUB_USERNAME:-grumpysdb}/oscar-shareable-oscar:latest
     profiles: [ "template" ]
     container_name: oscar-template
     restart: "no"

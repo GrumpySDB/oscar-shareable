@@ -4,6 +4,7 @@ pub mod proxy;
 pub mod upload;
 pub mod utils;
 pub mod db;
+pub mod templates;
 
 use axum::{
     extract::{DefaultBodyLimit, Request},
@@ -21,7 +22,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use bollard::container::{StopContainerOptions, RemoveContainerOptions};
+use bollard::container::{StopContainerOptions, RemoveContainerOptions, ListContainersOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -32,6 +33,39 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = config::AppConfig::load()?;
     let shared_state = Arc::new(config::AppState::new(cfg.clone()).await?);
+
+    // Orphan cleanup and volume pruning
+    {
+        let docker_clone = shared_state.docker.clone();
+        tokio::spawn(async move {
+            tracing::info!("Scanning for orphaned OSCAR containers...");
+            let mut filters = std::collections::HashMap::new();
+            filters.insert("name".to_string(), vec!["oscar-session-".to_string()]);
+            
+            let options = ListContainersOptions {
+                all: true,
+                filters,
+                ..Default::default()
+            };
+            
+            if let Ok(containers) = docker_clone.list_containers(Some(options)).await {
+                for c in containers {
+                    if let Some(names) = c.names {
+                        if names.iter().any(|n| n.starts_with("/oscar-session-")) {
+                            if let Some(id) = c.id {
+                                tracing::info!("Removing orphaned container {}", id);
+                                let _ = docker_clone.stop_container(&id, None::<StopContainerOptions>).await;
+                                let _ = docker_clone.remove_container(&id, Some(RemoveContainerOptions { force: true, v: true, ..Default::default() })).await;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            tracing::info!("Pruning dangling Docker volumes...");
+            let _ = docker_clone.prune_volumes(None::<bollard::volume::PruneVolumesOptions<String>>).await;
+        });
+    }
 
     let cleaner_state = shared_state.clone();
     tokio::spawn(async move {
@@ -44,16 +78,19 @@ async fn main() -> anyhow::Result<()> {
             {
                 let containers = cleaner_state.active_containers.read().await;
                 for (uuid, info) in containers.iter() {
-                    if now - info.last_active > 600 {
+                    let timeout = cleaner_state.config.oscar_idle_timeout_seconds;
+                    if now - info.last_active > timeout {
                         to_remove.push((uuid.clone(), info.container_id.clone()));
                     }
                 }
             }
 
             for (uuid, container_id) in to_remove {
-                tracing::info!("Evicting idle OSCAR container {}", container_id);
-                let _ = cleaner_state.docker.stop_container(&container_id, None::<StopContainerOptions>).await;
-                let _ = cleaner_state.docker.remove_container(&container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+                let state_clone = cleaner_state.clone();
+                let uuid_clone = uuid.clone();
+                tokio::spawn(async move {
+                    crate::proxy::cleanup_oscar_session(state_clone, uuid_clone, container_id).await;
+                });
 
                 let mut containers = cleaner_state.active_containers.write().await;
                 containers.remove(&uuid);
@@ -81,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/discord/callback", get(auth::discord_callback))
         .route("/auth/local/signup", post(auth::local_signup).layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_rate_limit_middleware)))
         .route("/auth/local/login", post(auth::local_login).layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_rate_limit_middleware)))
+        .route("/auth/local/recover", post(auth::local_recovery_handler).layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_rate_limit_middleware)))
         .route("/banner-images", get(upload::list_banner_images))
         .nest("/admin", admin_api_routes)
         .merge(
@@ -92,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/files", get(upload::list_files))
                 .route("/upload", post(upload::handle_upload))
                 .route("/files", delete(upload::delete_folder))
+                .route("/account", delete(auth::delete_self_handler))
                 .route("/share-links", get(auth::list_share_links))
                 .route("/share-links", post(auth::create_share_link))
                 .route("/share-links/:token", delete(auth::delete_share_link))
@@ -144,6 +183,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/privacy-security-policy", get(|| async { Html(include_str!("../public/privacy-security-policy.html")) }))
         .route("/how-to-uploader", get(|| async { Html(include_str!("../public/how-to-uploader.html")) }))
         .route("/faq", get(|| async { Html(include_str!("../public/faq.html")) }))
+        .route("/recovery", get(|| async { Html(include_str!("../public/recovery.html")) }))
+        .route("/recovery/", get(|| async { Html(include_str!("../public/recovery.html")) }))
         .fallback_service(serve_dir)
         .layer(security_headers)
         .layer(TraceLayer::new_for_http())

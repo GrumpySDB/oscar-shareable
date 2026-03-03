@@ -21,6 +21,7 @@ pub struct AppConfig {
     pub http_port: u16,
     pub oscar_base_url: url::Url,
     pub auth_session_ttl_seconds: u64,
+    pub oscar_idle_timeout_seconds: i64,
     pub upload_uid: u32,
     pub upload_gid: u32,
     pub app_encryption_private_key: RsaPrivateKey,
@@ -29,17 +30,29 @@ pub struct AppConfig {
     pub discord_client_secret: String,
     pub discord_redirect_uri: String,
     pub super_admin_id: String,
+    pub oscar_version: String,
+    pub app_config_root: String,
 }
 
 impl AppConfig {
+    fn get_env_or_file(key: &str) -> Option<String> {
+        if let Ok(file_path) = env::var(format!("{}_FILE", key)) {
+            if let Ok(content) = std::fs::read_to_string(&file_path) {
+                return Some(content.trim().to_string());
+            }
+        }
+        env::var(key).ok()
+    }
+
     pub fn load() -> Result<Self> {
-        let jwt_secret = env::var("JWT_SECRET").context("JWT_SECRET must be set")?;
-        let app_username = env::var("APP_USERNAME").unwrap_or_else(|_| "shared-user".to_string());
-        let app_password = env::var("APP_PASSWORD").context("APP_PASSWORD must be set")?;
+        let jwt_secret = Self::get_env_or_file("JWT_SECRET").context("JWT_SECRET must be set")?;
+        let app_username = Self::get_env_or_file("APP_USERNAME").unwrap_or_else(|| "shared-user".to_string());
+        let app_password = Self::get_env_or_file("APP_PASSWORD").context("APP_PASSWORD must be set")?;
         // HTTP port for the internal Docker network listener (TLS is terminated by nginx)
         let http_port = env::var("HTTP_PORT").unwrap_or_else(|_| "8080".to_string()).parse()?;
         let oscar_base_url = url::Url::parse(&env::var("OSCAR_BASE_URL").unwrap_or_else(|_| "http://oscar:3000".to_string()))?;
         let auth_session_ttl_seconds = env::var("AUTH_SESSION_TTL_SECONDS").unwrap_or_else(|_| "900".to_string()).parse()?;
+        let oscar_idle_timeout_seconds = env::var("OSCAR_IDLE_TIMEOUT_SECONDS").unwrap_or_else(|_| "300".to_string()).parse()?;
         let upload_uid = env::var("UPLOAD_UID").unwrap_or_else(|_| "911".to_string()).parse()?;
         let upload_gid = env::var("UPLOAD_GID").unwrap_or_else(|_| "911".to_string()).parse()?;
 
@@ -48,7 +61,7 @@ impl AppConfig {
             .parse()
             .context("Invalid MAX_UPLOAD_BATCH_BYTES")?;
 
-        let app_encryption_private_key = if let Ok(pem) = env::var("APP_ENCRYPTION_PRIVATE_KEY") {
+        let app_encryption_private_key = if let Some(pem) = Self::get_env_or_file("APP_ENCRYPTION_PRIVATE_KEY") {
             if pem.is_empty() {
                 RsaPrivateKey::new(&mut OsRng, 2048)?
             } else {
@@ -65,14 +78,17 @@ impl AppConfig {
             http_port,
             oscar_base_url,
             auth_session_ttl_seconds,
+            oscar_idle_timeout_seconds,
             upload_uid,
             upload_gid,
             app_encryption_private_key,
             max_upload_batch_bytes,
-            discord_client_id: env::var("DISCORD_CLIENT_ID").unwrap_or_default(),
-            discord_client_secret: env::var("DISCORD_CLIENT_SECRET").unwrap_or_default(),
-            discord_redirect_uri: env::var("DISCORD_REDIRECT_URI").unwrap_or_default(),
-            super_admin_id: env::var("SUPER_ADMIN_ID").unwrap_or_default(),
+            discord_client_id: Self::get_env_or_file("DISCORD_CLIENT_ID").unwrap_or_default(),
+            discord_client_secret: Self::get_env_or_file("DISCORD_CLIENT_SECRET").unwrap_or_default(),
+            discord_redirect_uri: Self::get_env_or_file("DISCORD_REDIRECT_URI").unwrap_or_default(),
+            super_admin_id: Self::get_env_or_file("SUPER_ADMIN_ID").unwrap_or_default(),
+            oscar_version: env::var("OSCAR_PROFILE_VERSION").unwrap_or_else(|_| "1.7.1+-plus".to_string()),
+            app_config_root: env::var("APP_CONFIG_ROOT").unwrap_or_else(|_| "./data/app_config".to_string()),
         })
     }
 }
