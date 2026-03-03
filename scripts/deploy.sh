@@ -45,11 +45,18 @@ done
 cd "$BASE_DEPLOY_DIR"
 
 # 3. Setup sub-directories
+# NOTE: In Rootless Docker, UID 911 inside the container maps to a subuid on the host.
+# We set 777 on data directories to ensure the container can write to its DB.
+# This is safe because the parent $BASE_DEPLOY_DIR is 711.
 DIRS=("data/uploads" "data/profiles" "data/app_config" "secrets" "certs")
 for DIR in "${DIRS[@]}"; do
     mkdir -p "$DIR"
     chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$DIR"
-    chmod 755 "$DIR"
+    if [[ "$DIR" == data/* ]]; then
+        chmod 777 "$DIR"
+    else
+        chmod 755 "$DIR"
+    fi
 done
 
 # 3. Provision secrets placeholder
