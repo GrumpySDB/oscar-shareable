@@ -11,55 +11,72 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-echo "Hardening Secure Uploader Environment in $BASE_DEPLOY_DIR..."
+echo "Implementing Asymmetric Ownership Hardening in $BASE_DEPLOY_DIR..."
 
-# 1. Ensure user and directories exist
-id -u "$DOCKER_APP_USER" &>/dev/null || useradd -m -s /bin/bash "$DOCKER_APP_USER"
-
+# 1. Setup Deployment Path (Root Owned)
 mkdir -p "$BASE_DEPLOY_DIR"
-chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$BASE_DEPLOY_DIR"
-chmod 711 "$BASE_DEPLOY_DIR"
+chown root:root "$BASE_DEPLOY_DIR"
+chmod 755 "$BASE_DEPLOY_DIR"
 
-# 2. Copy and migrate configuration
-# We assume the script is run from the root of the cloned repository
-FILES_TO_MIGRATE=("docker-compose.prod.yml" "cloudflared" "nginx")
+# 2. Identify Source Directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-for ITEM in "${FILES_TO_MIGRATE[@]}"; do
-    if [ -e "$ITEM" ]; then
-        if [ "$ITEM" == "docker-compose.prod.yml" ]; then
-            cp "$ITEM" "$BASE_DEPLOY_DIR/docker-compose.yml"
-            chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$BASE_DEPLOY_DIR/docker-compose.yml"
-            chmod 644 "$BASE_DEPLOY_DIR/docker-compose.yml"
-            echo "Migrated and renamed docker-compose.prod.yml -> $BASE_DEPLOY_DIR/docker-compose.yml"
-        else
-            cp -r "$ITEM" "$BASE_DEPLOY_DIR/"
-            chown -R "$DOCKER_APP_USER:$DOCKER_APP_USER" "$BASE_DEPLOY_DIR/$ITEM"
-            # Ensure directories are traversable but files are locked down
-            find "$BASE_DEPLOY_DIR/$ITEM" -type d -exec chmod 755 {} +
-            find "$BASE_DEPLOY_DIR/$ITEM" -type f -exec chmod 644 {} +
-            echo "Migrated directory: $ITEM"
+echo "Migrating configuration from $REPO_ROOT to $BASE_DEPLOY_DIR..."
+
+# 3. Migrate Immutable Config (Root Owned, Web Readable)
+# These files define the infrastructure. Making them root-owned prevents 
+# a compromised 'web' user from persisting or redirecting traffic.
+ITEMS_TO_MIGRATE=("$REPO_ROOT/docker-compose.prod.yml" "$REPO_ROOT/cloudflared" "$REPO_ROOT/nginx")
+
+for SRC in "${ITEMS_TO_MIGRATE[@]}"; do
+    if [ -e "$SRC" ]; then
+        ITEM_NAME=$(basename "$SRC")
+        DEST="$BASE_DEPLOY_DIR/$ITEM_NAME"
+        
+        # Rename the production compose file during migration
+        if [ "$ITEM_NAME" == "docker-compose.prod.yml" ]; then
+            DEST="$BASE_DEPLOY_DIR/docker-compose.yml"
         fi
+        
+        cp -r "$SRC" "$DEST"
+        chown -R root:root "$DEST"
+        
+        # Ensure directories are traversable and files are readable by web
+        if [ -d "$DEST" ]; then
+            find "$DEST" -type d -exec chmod 755 {} +
+            find "$DEST" -type f -exec chmod 644 {} +
+        else
+            chmod 644 "$DEST"
+        fi
+        
+        echo "Successfully migrated Immutable Config: $ITEM_NAME"
+    else
+        echo "Warning: Could not find $SRC to migrate."
     fi
 done
 
 cd "$BASE_DEPLOY_DIR"
 
-# 3. Setup sub-directories
-# NOTE: In Rootless Docker, UID 911 inside the container maps to a subuid on the host.
-# We set 777 on data directories to ensure the container can write to its DB.
-# This is safe because the parent $BASE_DEPLOY_DIR is 711.
+# 4. Provision Web-Owned Directories (Data & Secrets)
+# These must be accessible by the web user for the containers to function.
 DIRS=("data/uploads" "data/profiles" "data/app_config" "secrets" "certs")
 for DIR in "${DIRS[@]}"; do
     mkdir -p "$DIR"
     chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$DIR"
     if [[ "$DIR" == data/* ]]; then
+        # SQLite requirement: Must be writable by container's subuid.
+        # 777 is safe because the parent /opt/secure-uploader is restricted.
         chmod 777 "$DIR"
     else
-        chmod 755 "$DIR"
+        # secrets/ certs/ should be entry-restricted
+        chmod 750 "$DIR"
     fi
 done
 
-# 3. Provision secrets placeholder
+# 5. Provision Secrets (Web Owned, READ ONLY)
+# Rootless Docker daemon (web user) MUST be able to read these to mount them.
+# We set them to 400 so even the web user cannot accidentally modify them.
 SECRETS=(
     "secrets/jwt_secret.txt"
     "secrets/app_username.txt"
@@ -73,17 +90,20 @@ for SECRET in "${SECRETS[@]}"; do
         echo "Created empty secret: $SECRET"
     fi
     chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$SECRET"
-    chmod 644 "$SECRET"
+    chmod 400 "$SECRET"
 done
 
+# 6. Provision .env (Web Owned, READ ONLY)
 if [ ! -f ".env" ]; then
     touch .env
-    chown "$DOCKER_APP_USER:$DOCKER_APP_USER" .env
-    chmod 644 .env
     echo "Created empty .env"
 fi
+chown "$DOCKER_APP_USER:$DOCKER_APP_USER" .env
+chmod 400 .env
 
-echo "Provisioning complete."
-echo "ACTION REQUIRED: Populate .env and secrets/ then run the following as user '$DOCKER_APP_USER':"
+echo "--------------------------------------------------------"
+echo "Provisioning complete with Asymmetric Ownership."
+echo "ACTION REQUIRED: Populate .env and secrets/ as root, then run as user '$DOCKER_APP_USER':"
 echo "  cd $BASE_DEPLOY_DIR"
 echo "  docker compose up -d"
+echo "--------------------------------------------------------"

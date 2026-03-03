@@ -45,6 +45,7 @@ services:
       - CONTAINERS=1
       - IMAGES=1
       - NETWORKS=1
+      - VOLUMES=1
       - POST=1
       - DELETE=1
     networks:
@@ -56,7 +57,7 @@ services:
     image: nginx:stable-alpine
     container_name: nginx-internal
     volumes:
-      - ./nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/oscar.conf.template:ro
       - ./certs:/etc/nginx/certs:ro
     expose:
       - "80"
