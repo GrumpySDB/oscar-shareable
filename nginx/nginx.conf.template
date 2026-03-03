@@ -1,5 +1,5 @@
 server {
-    listen 80;
+    listen 80 default_server;
     server_name ${NGINX_SERVER_NAME_HTTP};
     client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};
 

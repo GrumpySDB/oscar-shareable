@@ -19,6 +19,8 @@ services:
       - .env
     environment:
       TUNNEL_TOKEN_FILE: /app/secrets/tunnel_token
+      CF_TUNNEL_ID: ${CF_TUNNEL_ID}
+      CF_HOSTNAME: ${CF_HOSTNAME}
     restart: unless-stopped
     volumes:
       - cloudflared-config:/etc/cloudflared:ro
@@ -61,13 +63,7 @@ services:
       - "443"
     env_file:
       - .env
-    environment:
-      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE}
-      NGINX_SERVER_NAME_HTTP: ${NGINX_SERVER_NAME_HTTP}
-      NGINX_SERVER_NAME_HTTPS: ${NGINX_SERVER_NAME_HTTPS}
-      UPLOADER_UPSTREAM: ${UPLOADER_UPSTREAM}
-      NGINX_SSL_CERT: ${NGINX_SSL_CERT}
-      NGINX_SSL_KEY: ${NGINX_SSL_KEY}
+    # env_file provides the variables for envsubst to use in templates
     restart: unless-stopped
     networks:
       - internal
