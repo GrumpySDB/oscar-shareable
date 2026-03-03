@@ -18,13 +18,14 @@ services:
     env_file:
       - .env
     environment:
-      TUNNEL_TOKEN_FILE: /app/secrets/tunnel_token
+      TUNNEL_TOKEN_FILE: /run/secrets/tunnel_token
       CF_TUNNEL_ID: ${CF_TUNNEL_ID}
       CF_HOSTNAME: ${CF_HOSTNAME}
+    secrets:
+      - tunnel_token
     restart: unless-stopped
     volumes:
       - cloudflared-config:/etc/cloudflared:ro
-      - ./secrets/tunnel_token.txt:/app/secrets/tunnel_token:ro
     depends_on:
       config-prepper:
         condition: service_completed_successfully
@@ -90,19 +91,20 @@ services:
       DOCKER_HOST_PATH: .
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       OSCAR_PROFILE_VERSION: ${OSCAR_PROFILE_VERSION:-1.7.1+-plus}
-      JWT_SECRET_FILE: /app/secrets/jwt_secret
-      APP_USERNAME_FILE: /app/secrets/app_username
-      APP_PASSWORD_FILE: /app/secrets/app_password
-      DISCORD_CLIENT_SECRET_FILE: /app/secrets/discord_client_secret
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      APP_USERNAME_FILE: /run/secrets/app_username
+      APP_PASSWORD_FILE: /run/secrets/app_password
+      DISCORD_CLIENT_SECRET_FILE: /run/secrets/discord_client_secret
+    secrets:
+      - jwt_secret
+      - app_username
+      - app_password
+      - discord_client_secret
     restart: unless-stopped
     volumes:
       - ./data/uploads:/app/data/uploads
       - ./data/profiles:/app/data/profiles
       - ./data/app_config:/app/data/app_config
-      - ./secrets/jwt_secret.txt:/app/secrets/jwt_secret:ro
-      - ./secrets/app_username.txt:/app/secrets/app_username:ro
-      - ./secrets/app_password.txt:/app/secrets/app_password:ro
-      - ./secrets/discord_client_secret.txt:/app/secrets/discord_client_secret:ro
     read_only: true
     tmpfs:
       - /tmp:size=512m
@@ -164,8 +166,18 @@ services:
 volumes:
   cloudflared-config:
 
-    # Using bind mounts for secrets to ensure Rootless Docker compatibility
-    # (Removed secrets section)
+
+secrets:
+  jwt_secret:
+    file: ${DOCKER_HOST_PATH:-.}/secrets/jwt_secret.txt
+  app_username:
+    file: ${DOCKER_HOST_PATH:-.}/secrets/app_username.txt
+  app_password:
+    file: ${DOCKER_HOST_PATH:-.}/secrets/app_password.txt
+  tunnel_token:
+    file: ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt
+  discord_client_secret:
+    file: ${DOCKER_HOST_PATH:-.}/secrets/discord_client_secret.txt
 
 networks:
   internal:
