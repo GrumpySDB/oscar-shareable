@@ -4,7 +4,7 @@ services:
     image: nginx:stable-alpine
     container_name: config-prepper
     volumes:
-      - ${DOCKER_HOST_PATH:-.}/cloudflared:/template:ro
+      - ./cloudflared:/template:ro
       - cloudflared-config:/etc/cloudflared
     env_file:
       - .env
@@ -20,7 +20,9 @@ services:
     environment:
       TUNNEL_TOKEN_FILE: /run/secrets/tunnel_token
     secrets:
-      - tunnel_token
+      - source: tunnel_token
+        target: tunnel_token
+        mode: 444
     restart: unless-stopped
     volumes:
       - cloudflared-config:/etc/cloudflared:ro
@@ -55,8 +57,8 @@ services:
     image: nginx:stable-alpine
     container_name: nginx-internal
     volumes:
-      - ${DOCKER_HOST_PATH:-.}/nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ${DOCKER_HOST_PATH:-.}/certs:/etc/nginx/certs:ro
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./certs:/etc/nginx/certs:ro
     expose:
       - "80"
       - "443"
@@ -78,7 +80,7 @@ services:
   uploader:
     container_name: uploader
     # Pull pre-built image from GHCR
-    image: ghcr.io/${GITHUB_USERNAME:-grumpysdb}/oscar-shareable-uploader:latest
+    image: ghcr.io/grumpysdb/oscar-shareable-uploader:multi-user-redesign
     expose:
       - "8080"
     group_add:
@@ -91,7 +93,7 @@ services:
       UPLOAD_GID: 911
       OSCAR_BASE_URL: http://oscar:3000
       DATABASE_PATH: /app/data/uploads/db.sqlite
-      DOCKER_HOST_PATH: ${DOCKER_HOST_PATH:-/config/dev/oscar-shareable}
+      DOCKER_HOST_PATH: .
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       OSCAR_PROFILE_VERSION: ${OSCAR_PROFILE_VERSION:-1.7.1+-plus}
       JWT_SECRET_FILE: /run/secrets/jwt_secret
@@ -99,15 +101,23 @@ services:
       APP_PASSWORD_FILE: /run/secrets/app_password
       DISCORD_CLIENT_SECRET_FILE: /run/secrets/discord_client_secret
     secrets:
-      - jwt_secret
-      - app_username
-      - app_password
-      - discord_client_secret
+      - source: jwt_secret
+        target: jwt_secret
+        mode: 444
+      - source: app_username
+        target: app_username
+        mode: 444
+      - source: app_password
+        target: app_password
+        mode: 444
+      - source: discord_client_secret
+        target: discord_client_secret
+        mode: 444
     restart: unless-stopped
     volumes:
-      - ${DOCKER_HOST_PATH:-.}/data/uploads:/app/data/uploads
-      - ${DOCKER_HOST_PATH:-.}/data/profiles:/app/data/profiles
-      - ${DOCKER_HOST_PATH:-.}/data/app_config:/app/data/app_config
+      - ./data/uploads:/app/data/uploads
+      - ./data/profiles:/app/data/profiles
+      - ./data/app_config:/app/data/app_config
     read_only: true
     tmpfs:
       - /tmp:size=512m
@@ -130,16 +140,16 @@ services:
 
   oscar:
     # Pull pre-built image from GHCR
-    image: ghcr.io/${GITHUB_USERNAME:-grumpysdb}/oscar-shareable-oscar:latest
+    image: ghcr.io/grumpysdb/oscar-shareable-oscar:multi-user-redesign
     profiles: [ "template" ]
     container_name: oscar-template
     restart: "no"
     ports:
       - 127.0.0.1:3030:3000
     volumes:
-      - ${DOCKER_HOST_PATH:-.}/data/profiles:/config/Documents/OSCAR_Data:rw
-      - ${DOCKER_HOST_PATH:-.}/data/uploads:/config/Documents/SDCARD:rw
-      - ${DOCKER_HOST_PATH:-.}/data/app_config:/config/.config/OSCAR_Team:rw
+      - ./data/profiles:/config/Documents/OSCAR_Data:rw
+      - ./data/uploads:/config/Documents/SDCARD:rw
+      - ./data/app_config:/config/.config/OSCAR_Team:rw
     environment:
       PUID: "911"
       PGID: "911"
@@ -173,15 +183,15 @@ volumes:
 
 secrets:
   jwt_secret:
-    file: ${DOCKER_HOST_PATH:-.}/secrets/jwt_secret.txt
+    file: ./secrets/jwt_secret.txt
   app_username:
-    file: ${DOCKER_HOST_PATH:-.}/secrets/app_username.txt
+    file: ./secrets/app_username.txt
   app_password:
-    file: ${DOCKER_HOST_PATH:-.}/secrets/app_password.txt
+    file: ./secrets/app_password.txt
   tunnel_token:
-    file: ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt
+    file: ./secrets/tunnel_token.txt
   discord_client_secret:
-    file: ${DOCKER_HOST_PATH:-.}/secrets/discord_client_secret.txt
+    file: ./secrets/discord_client_secret.txt
 
 networks:
   internal:

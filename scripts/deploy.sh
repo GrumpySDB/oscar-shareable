@@ -1,31 +1,36 @@
 #!/bin/bash
 set -e
 
-echo "Starting Secure Uploader Deployment..."
+# --- Configuration ---
+DOCKER_APP_USER="web"                   # The non-sudo user who runs rootless docker
+BASE_DEPLOY_DIR="/opt/secure-uploader"  # The root of the production deployment
 
-# 1. Define required directories
-DIRS=("data/uploads" "data/profiles" "data/app_config" "secrets" "certs")
+# --- Root Check ---
+if [ "$(id -u)" -ne 0 ]; then
+    echo "This script must be run as root (or via sudo)."
+    exit 1
+fi
 
-# The internal container UID/GID mapping for rootless docker 
-# Usually, rootless docker maps the user's UID to 0 inside the container, but since
-# our uploader and oscar containers explicitly drop to UID 911, we need to ensure
-# the host directories are writable by the mapped subuid.
-# For simplicity in rootless setups, we will ensure the files belong to the user executing this script,
-# and we will rely on Docker's user namespace mapping. However, we will strictly lock down the host permissions.
-USER_ID=$(id -u)
-GROUP_ID=$(id -g)
+echo "Hardening Secure Uploader Environment in $BASE_DEPLOY_DIR..."
 
-echo "Setting up directories and enforcing strict permissions..."
+# 1. Ensure user and directories exist
+id -u "$DOCKER_APP_USER" &>/dev/null || useradd -m -s /bin/bash "$DOCKER_APP_USER"
+
+mkdir -p "$BASE_DEPLOY_DIR"
+chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$BASE_DEPLOY_DIR"
+chmod 711 "$BASE_DEPLOY_DIR"
+
+cd "$BASE_DEPLOY_DIR"
+
+# 2. Setup sub-directories
+DIRS=("data/uploads" "data/profiles" "data/app_config" "secrets" "certs" "cloudflared" "nginx")
 for DIR in "${DIRS[@]}"; do
-    if [ ! -d "$DIR" ]; then
-        mkdir -p "$DIR"
-        echo "Created directory: $DIR"
-    fi
-    # Restrict permissions: Only the owner can read/write/execute
-    chmod 700 "$DIR"
+    mkdir -p "$DIR"
+    chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$DIR"
+    chmod 755 "$DIR"
 done
 
-# 2. Define required secrets
+# 3. Provision secrets placeholder
 SECRETS=(
     "secrets/jwt_secret.txt"
     "secrets/app_username.txt"
@@ -33,37 +38,23 @@ SECRETS=(
     "secrets/tunnel_token.txt"
     "secrets/discord_client_secret.txt"
 )
-
-echo "Setting up secrets..."
 for SECRET in "${SECRETS[@]}"; do
     if [ ! -f "$SECRET" ]; then
         touch "$SECRET"
-        echo "Created empty secret file: $SECRET. PLEASE FILL THIS IN."
+        echo "Created empty secret: $SECRET"
     fi
-    # Strict permissions for secrets: read/write only by owner
-    chmod 600 "$SECRET"
+    chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$SECRET"
+    chmod 644 "$SECRET"
 done
 
 if [ ! -f ".env" ]; then
-    echo "Creating empty .env file..."
     touch .env
-    chmod 600 .env
-    echo "PLEASE FILL IN THE .env FILE."
+    chown "$DOCKER_APP_USER:$DOCKER_APP_USER" .env
+    chmod 644 .env
+    echo "Created empty .env"
 fi
 
-# 3. Prompt for GitHub Container Registry Login if not logged in
-if ! docker info | grep -q 'ghcr.io'; then
-    echo "You do not appear to be logged into the GitHub Container Registry."
-    echo "Please log in using your GitHub username and a Personal Access Token (PAT) with read:packages access."
-    # We allow this to fail slightly gracefully if the user wants to cancel
-    docker login ghcr.io || echo "Warning: Login failed or cancelled. Pulling images might fail if repo is private."
-fi
-
-echo "Pulling latest images..."
-# The user's settings state to use `sudo docker compose`
-sudo docker compose -f docker-compose.prod.yml pull
-
-echo "Starting services..."
-sudo docker compose -f docker-compose.prod.yml up -d --remove-orphans
-
-echo "Deployment complete. Inspect logs with: sudo docker compose -f docker-compose.prod.yml logs -f"
+echo "Provisioning complete."
+echo "ACTION REQUIRED: Populate .env and secrets/ then run the following as user '$DOCKER_APP_USER':"
+echo "  cd $BASE_DEPLOY_DIR"
+echo "  docker compose -f docker-compose.prod.yml up -d"
