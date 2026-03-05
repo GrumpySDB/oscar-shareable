@@ -18,11 +18,9 @@ services:
     env_file:
       - .env
     environment:
-      TUNNEL_TOKEN_FILE: /run/secrets/tunnel_token
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
       CF_TUNNEL_ID: ${CF_TUNNEL_ID}
       CF_HOSTNAME: ${CF_HOSTNAME}
-    secrets:
-      - tunnel_token
     restart: unless-stopped
     volumes:
       - cloudflared-config:/etc/cloudflared:ro
@@ -41,7 +39,7 @@ services:
     container_name: docker-socket-proxy
     restart: unless-stopped
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${XDG_RUNTIME_DIR:-/var/run}/docker.sock:/var/run/docker.sock:ro
     environment:
       - CONTAINERS=1
       - IMAGES=1
@@ -75,7 +73,7 @@ services:
   uploader:
     container_name: uploader
     # Pull pre-built image from GHCR
-    image: ghcr.io/grumpysdb/oscar-shareable-uploader:multi-user-redesign
+    image: ghcr.io/grumpysdb/oscar-shareable-uploader:${DOCKER_IMAGE_TAG:-latest}
     expose:
       - "8080"
     group_add:
@@ -88,9 +86,11 @@ services:
       UPLOAD_GID: 911
       OSCAR_BASE_URL: http://oscar:3000
       DATABASE_PATH: /app/data/uploads/db.sqlite
-      DOCKER_HOST_PATH: .
+      DOCKER_HOST_PATH: ${DOCKER_HOST_PATH:-/opt/secure-uploader}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       OSCAR_PROFILE_VERSION: ${OSCAR_PROFILE_VERSION:-1.7.1+-plus}
+      OSCAR_DOCKER_IMAGE: ghcr.io/grumpysdb/oscar-shareable-oscar:${DOCKER_IMAGE_TAG:-latest}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-secure-uploader_internal}
       JWT_SECRET_FILE: /run/secrets/jwt_secret
       APP_USERNAME_FILE: /run/secrets/app_username
       APP_PASSWORD_FILE: /run/secrets/app_password
@@ -126,7 +126,7 @@ services:
 
   oscar:
     # Pull pre-built image from GHCR
-    image: ghcr.io/grumpysdb/oscar-shareable-oscar:multi-user-redesign
+    image: ghcr.io/grumpysdb/oscar-shareable-oscar:${DOCKER_IMAGE_TAG:-latest}
     profiles: [ "template" ]
     container_name: oscar-template
     restart: "no"
@@ -174,8 +174,6 @@ secrets:
     file: ${DOCKER_HOST_PATH:-.}/secrets/app_username.txt
   app_password:
     file: ${DOCKER_HOST_PATH:-.}/secrets/app_password.txt
-  tunnel_token:
-    file: ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt
   discord_client_secret:
     file: ${DOCKER_HOST_PATH:-.}/secrets/discord_client_secret.txt
 

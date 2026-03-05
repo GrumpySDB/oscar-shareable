@@ -84,12 +84,16 @@ SECRETS=(
     "secrets/tunnel_token.txt"
     "secrets/discord_client_secret.txt"
 )
+# Calculate the rootless subuid mapped to container UID 911 for the 'web' user
+TARGET_UID=$(awk -F: '/^'$DOCKER_APP_USER':/ {print $2 + 910}' /etc/subuid)
+
 for SECRET in "${SECRETS[@]}"; do
     if [ ! -f "$SECRET" ]; then
         touch "$SECRET"
         echo "Created empty secret: $SECRET"
     fi
-    chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$SECRET"
+    # Assign strict ownership to the container mapping, blocking the host web user
+    chown "$TARGET_UID:$TARGET_UID" "$SECRET"
     chmod 400 "$SECRET"
 done
 

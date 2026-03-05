@@ -31,6 +31,7 @@ pub struct AppConfig {
     pub discord_redirect_uri: String,
     pub super_admin_id: String,
     pub oscar_version: String,
+    pub oscar_docker_image: String,
     pub app_config_root: String,
 }
 
@@ -88,6 +89,7 @@ impl AppConfig {
             discord_redirect_uri: Self::get_env_or_file("DISCORD_REDIRECT_URI").unwrap_or_default(),
             super_admin_id: Self::get_env_or_file("SUPER_ADMIN_ID").unwrap_or_default(),
             oscar_version: env::var("OSCAR_PROFILE_VERSION").unwrap_or_else(|_| "1.7.1+-plus".to_string()),
+            oscar_docker_image: env::var("OSCAR_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/grumpysdb/oscar-shareable-oscar:latest".to_string()),
             app_config_root: env::var("APP_CONFIG_ROOT").unwrap_or_else(|_| "./data/app_config".to_string()),
         })
     }

@@ -110,7 +110,7 @@ pub async fn ensure_oscar_container(
                     platform: None,
                 });
                 let config = Config {
-                    image: Some("custom-oscar-vnc:latest".to_string()),
+                    image: Some(state.config.oscar_docker_image.clone()),
                     host_config: Some(HostConfig {
                         binds: Some(vec![
                             format!("{}/data/profiles/{}:/config/Documents/OSCAR_Data:rw", host_path, username),
