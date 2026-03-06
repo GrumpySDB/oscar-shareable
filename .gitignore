@@ -5,3 +5,5 @@ nginx/nginx.conf
 data/
 secrets/
 certs/
+session.json
+template.json
