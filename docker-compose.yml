@@ -19,6 +19,8 @@ services:
       - .env
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+      CF_TUNNEL_ID: ${CF_TUNNEL_ID}
+      CF_HOSTNAME: ${CF_HOSTNAME}
     restart: unless-stopped
     volumes:
       - cloudflared-config:/etc/cloudflared:ro
@@ -42,6 +44,7 @@ services:
       - CONTAINERS=1
       - IMAGES=1
       - NETWORKS=1
+      - VOLUMES=1
       - POST=1
       - DELETE=1
     networks:
@@ -53,20 +56,14 @@ services:
     image: nginx:stable-alpine
     container_name: nginx-internal
     volumes:
-      - ${DOCKER_HOST_PATH:-.}/nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${DOCKER_HOST_PATH:-.}/nginx/nginx.conf.template:/etc/nginx/templates/oscar.conf.template:ro
       - ${DOCKER_HOST_PATH:-.}/certs:/etc/nginx/certs:ro
     expose:
       - "80"
       - "443"
     env_file:
       - .env
-    environment:
-      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE}
-      NGINX_SERVER_NAME_HTTP: ${NGINX_SERVER_NAME_HTTP}
-      NGINX_SERVER_NAME_HTTPS: ${NGINX_SERVER_NAME_HTTPS}
-      UPLOADER_UPSTREAM: ${UPLOADER_UPSTREAM}
-      NGINX_SSL_CERT: ${NGINX_SSL_CERT}
-      NGINX_SSL_KEY: ${NGINX_SSL_KEY}
+    # env_file provides the variables for envsubst to use in templates
     restart: unless-stopped
     networks:
       - internal
@@ -92,8 +89,8 @@ services:
       DOCKER_HOST_PATH: ${DOCKER_HOST_PATH:-/opt/secure-uploader}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       OSCAR_PROFILE_VERSION: ${OSCAR_PROFILE_VERSION:-1.7.1+-plus}
-      OSCAR_DOCKER_IMAGE: ghcr.io/grumpysdb/oscar-shareable-oscar:${DOCKER_IMAGE_TAG:-latest}
-      DOCKER_NETWORK: ${DOCKER_NETWORK:-secure-uploader_internal}
+      OSCAR_DOCKER_IMAGE: custom-oscar-vnc:latest
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-oscar-shareable_internal}
       JWT_SECRET_FILE: /run/secrets/jwt_secret
       APP_USERNAME_FILE: /run/secrets/app_username
       APP_PASSWORD_FILE: /run/secrets/app_password
@@ -111,7 +108,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=512m
-      - /run
       - /var/tmp
     deploy:
       resources:
@@ -187,3 +183,4 @@ secrets:
 networks:
   internal:
     driver: bridge
+    name: oscar-shareable_internal

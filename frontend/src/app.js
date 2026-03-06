@@ -64,11 +64,25 @@ function handleShareLinkRouting() {
     const tokenPart = path.replace('/share/', '').trim();
     if (tokenPart) {
       sessionStorage.setItem('pendingShareLaunchToken', tokenPart);
+      sessionStorage.setItem('pendingShareLaunchTimestamp', Date.now().toString());
       window.history.replaceState({}, document.title, '/');
     }
   }
 }
 handleShareLinkRouting();
+
+function enforceShareTokenExpiry() {
+  const timestamp = sessionStorage.getItem('pendingShareLaunchTimestamp');
+  if (timestamp) {
+    const ageMs = Date.now() - Number(timestamp);
+    const twoHours = 2 * 60 * 60 * 1000;
+    if (ageMs > twoHours) {
+      sessionStorage.removeItem('pendingShareLaunchToken');
+      sessionStorage.removeItem('pendingShareLaunchTimestamp');
+    }
+  }
+}
+enforceShareTokenExpiry();
 
 const loginBanner = document.getElementById('loginBanner');
 const uploadBanner = document.getElementById('uploadBanner');
@@ -97,12 +111,28 @@ function showLogin() {
   loginCard.classList.remove('hidden');
   appCard.classList.add('hidden');
   footerActions?.classList.add('hidden');
+
+  const warning = document.getElementById('shareLinkWarning');
+  if (warning) {
+    if (sessionStorage.getItem('pendingShareLaunchToken')) {
+      warning.classList.remove('hidden');
+    } else {
+      warning.classList.add('hidden');
+    }
+  }
 }
 
 function showApp() {
   loginCard.classList.add('hidden');
   appCard.classList.remove('hidden');
   footerActions?.classList.remove('hidden');
+
+  const welcomeBox = document.getElementById('welcomeBox');
+  const welcomeUsername = document.getElementById('welcomeUsername');
+  if (welcomeBox && welcomeUsername) {
+    welcomeUsername.textContent = currentUsername;
+    welcomeBox.classList.remove('hidden');
+  }
 }
 
 function setMessage(message, isError = false, details = '') {
@@ -328,8 +358,6 @@ async function api(path, options = {}) {
 async function proceedToAppFlow() {
   const pendingToken = sessionStorage.getItem('pendingShareLaunchToken');
   if (pendingToken) {
-    sessionStorage.removeItem('pendingShareLaunchToken');
-
     const overlay = document.getElementById('oscarLoadingOverlay');
     const mainAppCard = document.getElementById('appCard');
     const loginCardMain = document.getElementById('loginCard');
@@ -343,6 +371,11 @@ async function proceedToAppFlow() {
       if (!result || typeof result.launchUrl !== 'string') {
         throw new Error('Unable to open shared profile right now.');
       }
+
+      sessionStorage.setItem('lastShareLaunchToken', pendingToken);
+      sessionStorage.removeItem('pendingShareLaunchToken');
+      window.history.replaceState({}, document.title, '/?timeout=1');
+
       setTimeout(() => {
         window.location.href = result.launchUrl;
       }, 3000);
@@ -367,23 +400,16 @@ function hideShareModal() {
 }
 
 async function checkSession() {
-  if (!token) {
-    if (isTimeoutFlow) {
-      loginError.textContent = 'Your session has timed out. Please log in again.';
-    }
-    showLogin();
-    return;
-  }
-
   try {
-    await api('/api/session');
+    const result = await api('/api/session');
 
-    if (getRoleFromToken(token) === 'admin') {
+    const role = result.role || getRoleFromToken(token);
+    if (role === 'admin') {
       window.location.href = '/admin';
       return;
     }
 
-    currentUsername = getUsernameFromToken(token);
+    currentUsername = result.username || getUsernameFromToken(token);
 
     if (isTimeoutFlow) {
       const overlay = document.getElementById('timeoutOverlay');
@@ -392,18 +418,21 @@ async function checkSession() {
       if (mainAppCard) mainAppCard.classList.add('hidden');
       if (loginCardMain) loginCardMain.classList.add('hidden');
       if (footerActions) footerActions.classList.add('hidden');
-      if (overlay) overlay.classList.remove('hidden');
+      if (overlay) {
+        overlay.classList.remove('hidden');
+      }
       isTimeoutFlow = false;
     } else {
       proceedToAppFlow();
     }
   } catch (_err) {
-    token = null;
-    currentUsername = '';
-    sessionStorage.removeItem('authToken');
     if (isTimeoutFlow) {
       loginError.textContent = 'Your session has timed out. Please log in again.';
     }
+
+    token = null;
+    currentUsername = '';
+    sessionStorage.removeItem('authToken');
     showLogin();
   }
 }
@@ -456,6 +485,7 @@ async function logout() {
   token = null;
   currentUsername = '';
   sessionStorage.removeItem('authToken');
+  sessionStorage.removeItem('pendingShareLaunchToken');
 
   if (currentToken) {
     try {
@@ -894,16 +924,28 @@ async function proceedToOscar() {
 
   const overlay = document.getElementById('oscarLoadingOverlay');
   const mainAppCard = document.getElementById('appCard');
+  const timeoutOverlay = document.getElementById('timeoutOverlay');
 
   if (mainAppCard) mainAppCard.classList.add('hidden');
   if (footerActions) footerActions.classList.add('hidden');
+  if (timeoutOverlay) timeoutOverlay.classList.add('hidden');
   if (overlay) overlay.classList.remove('hidden');
 
   try {
-    const result = await api('/api/oscar-launch', { method: 'POST' });
+    const shareToken = sessionStorage.getItem('pendingShareLaunchToken') || sessionStorage.getItem('lastShareLaunchToken');
+    const endpoint = shareToken ? `/api/share/${shareToken}` : '/api/oscar-launch';
+    const method = shareToken ? 'GET' : 'POST';
+    const result = await api(endpoint, { method });
+
     if (!result || typeof result.launchUrl !== 'string') {
       throw new Error('Unable to open OSCAR right now.');
     }
+
+    if (shareToken) {
+      sessionStorage.setItem('lastShareLaunchToken', shareToken);
+      sessionStorage.removeItem('pendingShareLaunchToken');
+    }
+    window.history.replaceState({}, document.title, '/?timeout=1');
 
     // Hold the loading screen for 3 seconds to let VNC boot fully
     setTimeout(() => {
@@ -912,6 +954,37 @@ async function proceedToOscar() {
 
   } catch (err) {
     if (overlay) overlay.classList.add('hidden');
+
+    if (err.status === 401) {
+      // Hide timeout overlay if it was showing
+      document.getElementById('timeoutOverlay')?.classList.add('hidden');
+
+      // Remove ?timeout=1 from URL to prevent looping
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('timeout')) {
+        url.searchParams.delete('timeout');
+        window.history.replaceState({}, document.title, url.pathname + url.search);
+      }
+
+      // Show uploader window
+      appCard.classList.remove('hidden');
+      const timeoutOverlay = document.getElementById('timeoutOverlay');
+      if (timeoutOverlay) {
+        timeoutOverlay.classList.remove('hidden');
+        const msgPara = timeoutOverlay.querySelector('p');
+        if (msgPara) msgPara.textContent = 'Login timeout, redirecting you back to the login screen...';
+
+        const btn = document.getElementById('recreateSessionBtn');
+        if (btn) btn.style.display = 'none';
+
+        setTimeout(() => {
+          timeoutOverlay.classList.add('hidden');
+          logout();
+        }, 3000);
+      }
+      return;
+    }
+
     if (mainAppCard) mainAppCard.classList.remove('hidden');
     setMessage(`Unable to open OSCAR: ${err.message}`, true);
   }
@@ -1051,8 +1124,23 @@ deleteConfirmOverlay?.addEventListener('click', (e) => {
 
 document.getElementById('oscarBtn').addEventListener('click', proceedToOscar);
 document.getElementById('recreateSessionBtn')?.addEventListener('click', proceedToOscar);
-document.getElementById('timeoutReturnBtn')?.addEventListener('click', (e) => {
-  e.preventDefault();
+document.getElementById('backToUploaderBtn')?.addEventListener('click', () => {
+  sessionStorage.removeItem('pendingShareLaunchToken');
+  sessionStorage.removeItem('pendingShareLaunchTimestamp');
+  sessionStorage.removeItem('lastShareLaunchToken');
+  const overlay = document.getElementById('timeoutOverlay');
+  if (overlay) overlay.classList.add('hidden');
+
+  // Remove ?timeout=1 from URL to prevent looping
+  const url = new URL(window.location.href);
+  if (url.searchParams.has('timeout')) {
+    url.searchParams.delete('timeout');
+    window.history.replaceState({}, document.title, url.pathname + url.search);
+  }
+
+  checkSession(); // Re-check session to update UI for regular user
+});
+document.getElementById('timeoutLogoutBtn')?.addEventListener('click', () => {
   document.getElementById('timeoutOverlay')?.classList.add('hidden');
   logout();
 });

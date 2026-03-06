@@ -12,6 +12,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use rsa::Oaep;
 use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
 use bollard::container::{StopContainerOptions, RemoveContainerOptions};
+use regex::{Regex, Captures};
 
 use crate::{
     auth::Claims,
@@ -113,6 +114,7 @@ pub async fn handle_upload(
     let mut tinfoil_hat_mode = false;
     let mut total_batches = 1usize;
     let mut batch_index = 0usize;
+    let mut upload_type = String::new();
     let mut raw_encryption_envelope_map = String::new();
 
     // --- Evict active OSCAR container if it exists ---
@@ -147,7 +149,7 @@ pub async fn handle_upload(
         else if name == "uploadSessionId" { let _ = field.text().await; }
         else if name == "totalBatches" { total_batches = field.text().await.unwrap_or_default().parse().unwrap_or(1); }
         else if name == "batchIndex" { batch_index = field.text().await.unwrap_or_default().parse().unwrap_or(0); }
-        else if name == "uploadType" { let _ = field.text().await; }
+        else if name == "uploadType" { upload_type = field.text().await.unwrap_or_default(); }
         else if name == "wellueDbParents" { let _ = field.text().await; }
         else if name == "encryptionEnvelope" { raw_encryption_envelope_map = field.text().await.unwrap_or_default(); }
         else if name == "files" {
@@ -217,6 +219,7 @@ pub async fn handle_upload(
     // --- Validate paths and decrypt payloads synchronously first ---
     // This ensures all security checks are done before any file touches disk,
     // and lets us return clean error responses if anything is wrong.
+    let first_file_name = temp_files.first().map(|(n, _)| n.clone());
     let mut write_tasks: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(temp_files.len());
 
     for (filename, payload) in temp_files {
@@ -311,9 +314,24 @@ pub async fn handle_upload(
         });
     }
 
-    // Drain remaining tasks
-    while let Some(Ok(true)) = join_set.join_next().await {
-        uploaded_count += 1;
+    // --- Update Profile.xml if this is an SD card upload ---
+    if upload_type == "sdcard" && batch_index + 1 == total_batches {
+        if let Some(first_file) = first_file_name {
+            let root_folder = first_file.split('/').next().unwrap_or("");
+            if !root_folder.is_empty() {
+                let username_dir = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+                let profile_xml_path = PathBuf::from(PROFILE_ROOT)
+                    .join(&username_dir)
+                    .join("Profiles")
+                    .join(&username_dir)
+                    .join("Profile.xml");
+
+                if profile_xml_path.exists() {
+                    let new_path = format!("/config/Documents/SDCARD/{}", root_folder);
+                    let _ = update_last_cpap_path(&profile_xml_path, &new_path).await;
+                }
+            }
+        }
     }
 
     (StatusCode::OK, Json(serde_json::json!({
@@ -321,6 +339,19 @@ pub async fn handle_upload(
         "batchIndex": batch_index,
         "totalBatches": total_batches
     })))
+}
+
+async fn update_last_cpap_path(path: &std::path::Path, new_value: &str) -> std::io::Result<()> {
+    let content = fs::read_to_string(path).await?;
+    // Simple regex-based replacement to avoid heavy XML parsing
+    // Target: <LastCPAPPath type="QString">/config/Documents/SDCARD</LastCPAPPath>
+    let re = Regex::new(r#"(<LastCPAPPath type="QString">)(.*?)(</LastCPAPPath>)"#).unwrap();
+    let updated = re.replace(&content, |caps: &Captures| {
+        format!("{}{}{}", &caps[1], new_value, &caps[3])
+    });
+
+    fs::write(path, updated.as_ref()).await?;
+    Ok(())
 }
 
 pub async fn list_banner_images() -> impl IntoResponse {

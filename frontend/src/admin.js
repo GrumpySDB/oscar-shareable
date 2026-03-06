@@ -180,6 +180,49 @@ document.getElementById('bulkDeleteBtn').addEventListener('click', async () => {
     }
 });
 
+// Modal Logic
+const resetCredsModal = document.getElementById('resetCredsModal');
+const resetCredsName = document.getElementById('resetCredsName');
+const resetPasswordText = document.getElementById('resetPasswordText');
+const resetRecoveryText = document.getElementById('resetRecoveryText');
+const closeResetCredsBtn = document.getElementById('closeResetCredsBtn');
+
+let passwordCopied = false;
+
+function setupCopy(elementId, textElementId, onCopyCallback) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    el.addEventListener('click', async () => {
+        const text = document.getElementById(textElementId).textContent;
+        try {
+            await navigator.clipboard.writeText(text);
+            el.classList.add('copied');
+            setTimeout(() => el.classList.remove('copied'), 2000);
+            if (onCopyCallback) onCopyCallback();
+        } catch (err) {
+            console.error('Copy failed', err);
+        }
+    });
+}
+
+function checkCanClose() {
+    if (passwordCopied) {
+        closeResetCredsBtn.disabled = false;
+        closeResetCredsBtn.style.opacity = '1';
+        closeResetCredsBtn.style.cursor = 'pointer';
+    }
+}
+
+setupCopy('copyResetPassword', 'resetPasswordText', () => {
+    passwordCopied = true;
+    checkCanClose();
+});
+setupCopy('copyResetRecovery', 'resetRecoveryText');
+
+closeResetCredsBtn.addEventListener('click', () => {
+    resetCredsModal.classList.add('hidden');
+});
+
 // Bulk Reset Password
 document.getElementById('bulkResetBtn').addEventListener('click', async () => {
     const checked = document.querySelectorAll('.userRowCheck:checked');
@@ -193,7 +236,18 @@ document.getElementById('bulkResetBtn').addEventListener('click', async () => {
 
     try {
         const res = await api(`/api/admin/users/${uuid}/reset-password`, { method: 'POST' });
-        prompt(`Password successfully reset for ${name}. Please copy the new password:`, res.new_password);
+
+        // Show modal
+        resetCredsName.textContent = name;
+        resetPasswordText.textContent = res.new_password;
+        resetRecoveryText.textContent = res.recovery_phrase;
+
+        passwordCopied = false;
+        closeResetCredsBtn.disabled = true;
+        closeResetCredsBtn.style.opacity = '0.55';
+        closeResetCredsBtn.style.cursor = 'not-allowed';
+
+        resetCredsModal.classList.remove('hidden');
         statusMessage.textContent = `Password reset for ${name}.`;
     } catch (err) {
         statusMessage.textContent = 'Reset failed: ' + err.message;

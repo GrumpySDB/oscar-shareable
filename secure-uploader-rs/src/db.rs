@@ -280,6 +280,19 @@ impl Database {
         Ok(())
     }
 
+    pub fn reset_user_credentials(&self, uuid: &str, new_password_hash: &str, new_recovery_phrase_hash: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "UPDATE users SET argon2_password_hash = ?1, argon2_recovery_phrase_hash = ?2 WHERE uuid = ?3 AND provider = 'local'",
+            params![new_password_hash, new_recovery_phrase_hash, uuid],
+        )?;
+        if affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+
     pub fn create_invite(&self, code: &str, created_by_uuid: &str, expires_at: i64, label: Option<String>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();

@@ -514,7 +514,7 @@ pub async fn session_check(
     axum::Extension(claims): axum::Extension<Claims>,
 ) -> impl IntoResponse {
     let _ = state.db.touch_user_access(&claims.uuid);
-    Json(serde_json::json!({ "ok": true }))
+    Json(serde_json::json!({ "ok": true, "username": claims.username, "role": claims.role }))
 }
 
 pub async fn get_public_key(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -765,17 +765,42 @@ pub async fn reset_password_handler(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(uuid_param): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let new_pw = uuid::Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    let new_pw = uuid::Uuid::new_v4().simple().to_string();
     
-    use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
-    use rand::rngs::OsRng;
-    let salt = SaltString::generate(&mut OsRng);
-    let password_hash = Argon2::default()
-        .hash_password(new_pw.as_bytes(), &salt)
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Hash error" }))))?
-        .to_string();
+    use bip39::Mnemonic;
+    use rand::{rngs::OsRng, RngCore};
+    let mut rng = OsRng;
+    let mut entropy = [0u8; 16];
+    rng.fill_bytes(&mut entropy);
+    let mnemonic = Mnemonic::from_entropy(&entropy).unwrap();
+    let recovery_phrase = mnemonic.to_string();
 
-    state.db.reset_user_password(&uuid_param, &password_hash).map_err(|_| {
+    let new_pw_clone = new_pw.clone();
+    let recovery_phrase_clone = recovery_phrase.clone();
+    
+    let (password_hash, recovery_hash) = tokio::task::spawn_blocking(move || {
+        use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+        use rand::rngs::OsRng;
+        let mut rng = OsRng;
+        let argon2 = Argon2::default();
+        
+        let p_salt = SaltString::generate(&mut rng);
+        let p_hash = argon2.hash_password(new_pw_clone.as_bytes(), &p_salt)
+            .map(|h| h.to_string())
+            .map_err(|_| "Password hashing failed")?;
+            
+        let r_salt = SaltString::generate(&mut rng);
+        let r_hash = argon2.hash_password(recovery_phrase_clone.as_bytes(), &r_salt)
+            .map(|h| h.to_string())
+            .map_err(|_| "Recovery phrase hashing failed")?;
+            
+        Ok::<(_, _), &'static str>((p_hash, r_hash))
+    })
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Internal error" }))))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+
+    state.db.reset_user_credentials(&uuid_param, &password_hash, &recovery_hash).map_err(|_| {
         (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Local user not found" })))
     })?;
 
@@ -783,7 +808,7 @@ pub async fn reset_password_handler(
     let mut sessions = state.active_auth_sessions.write().await;
     sessions.retain(|_, s| s.uuid != uuid_param);
 
-    Ok(Json(serde_json::json!({ "new_password": new_pw })))
+    Ok(Json(serde_json::json!({ "new_password": new_pw, "recovery_phrase": recovery_phrase })))
 }
 
 pub async fn require_oscar_session_middleware(

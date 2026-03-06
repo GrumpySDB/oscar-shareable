@@ -1,0 +1,328 @@
+[
+    {
+        "Id": "3bf571410f9bc33aa5d237b1d7db98349cff34ab2ba294e437593a2a6a2069fb",
+        "Created": "2026-03-05T18:30:32.185091269Z",
+        "Path": "/init",
+        "Args": [],
+        "State": {
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 3949443,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2026-03-05T18:30:42.524810898Z",
+            "FinishedAt": "0001-01-01T00:00:00Z"
+        },
+        "Image": "sha256:e65309eb003bc180032d85cd2b4277c9ed9b1782de76ff210fe138cbb713caab",
+        "ResolvConfPath": "/var/lib/docker/containers/3bf571410f9bc33aa5d237b1d7db98349cff34ab2ba294e437593a2a6a2069fb/resolv.conf",
+        "HostnamePath": "/var/lib/docker/containers/3bf571410f9bc33aa5d237b1d7db98349cff34ab2ba294e437593a2a6a2069fb/hostname",
+        "HostsPath": "/var/lib/docker/containers/3bf571410f9bc33aa5d237b1d7db98349cff34ab2ba294e437593a2a6a2069fb/hosts",
+        "LogPath": "/var/lib/docker/containers/3bf571410f9bc33aa5d237b1d7db98349cff34ab2ba294e437593a2a6a2069fb/3bf571410f9bc33aa5d237b1d7db98349cff34ab2ba294e437593a2a6a2069fb-json.log",
+        "Name": "/oscar-template",
+        "RestartCount": 0,
+        "Driver": "overlayfs",
+        "Platform": "linux",
+        "MountLabel": "",
+        "ProcessLabel": "",
+        "AppArmorProfile": "",
+        "ExecIDs": null,
+        "HostConfig": {
+            "Binds": [
+                "/var/lib/docker/volumes/8bf89abf7cf0d57f01385e8dbcaff2a1f46b5076774dfd0036fa3667e4b49b62/_data/dev/oscar-shareable/data/uploads:/config/Documents/SDCARD:rw",
+                "/var/lib/docker/volumes/8bf89abf7cf0d57f01385e8dbcaff2a1f46b5076774dfd0036fa3667e4b49b62/_data/dev/oscar-shareable/data/app_config:/config/.config/OSCAR_Team:rw",
+                "/var/lib/docker/volumes/8bf89abf7cf0d57f01385e8dbcaff2a1f46b5076774dfd0036fa3667e4b49b62/_data/dev/oscar-shareable/data/profiles:/config/Documents/OSCAR_Data:rw"
+            ],
+            "ContainerIDFile": "",
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {}
+            },
+            "NetworkMode": "oscar-shareable_internal",
+            "PortBindings": {
+                "3000/tcp": [
+                    {
+                        "HostIp": "127.0.0.1",
+                        "HostPort": "3030"
+                    }
+                ]
+            },
+            "RestartPolicy": {
+                "Name": "no",
+                "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "ConsoleSize": [
+                0,
+                0
+            ],
+            "CapAdd": null,
+            "CapDrop": null,
+            "CgroupnsMode": "private",
+            "Dns": null,
+            "DnsOptions": null,
+            "DnsSearch": null,
+            "ExtraHosts": [],
+            "GroupAdd": null,
+            "IpcMode": "private",
+            "Cgroup": "",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": [
+                "no-new-privileges:true"
+            ],
+            "UTSMode": "",
+            "UsernsMode": "",
+            "ShmSize": 67108864,
+            "Runtime": "runc",
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 0,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": null,
+            "BlkioDeviceReadBps": null,
+            "BlkioDeviceWriteBps": null,
+            "BlkioDeviceReadIOps": null,
+            "BlkioDeviceWriteIOps": null,
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": null,
+            "DeviceCgroupRules": null,
+            "DeviceRequests": null,
+            "MemoryReservation": 0,
+            "MemorySwap": 0,
+            "MemorySwappiness": null,
+            "OomKillDisable": null,
+            "PidsLimit": null,
+            "Ulimits": null,
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "Mounts": [
+                {
+                    "Type": "volume",
+                    "Source": "94ff96421540728f6bac80f606a022ec6f80a5e4d0971378d923b4b6e729ba52",
+                    "Target": "/config"
+                }
+            ],
+            "MaskedPaths": [
+                "/proc/acpi",
+                "/proc/asound",
+                "/proc/interrupts",
+                "/proc/kcore",
+                "/proc/keys",
+                "/proc/latency_stats",
+                "/proc/sched_debug",
+                "/proc/scsi",
+                "/proc/timer_list",
+                "/proc/timer_stats",
+                "/sys/devices/virtual/powercap",
+                "/sys/firmware"
+            ],
+            "ReadonlyPaths": [
+                "/proc/bus",
+                "/proc/fs",
+                "/proc/irq",
+                "/proc/sys",
+                "/proc/sysrq-trigger"
+            ]
+        },
+        "Storage": {
+            "RootFS": {
+                "Snapshot": {
+                    "Name": "overlayfs"
+                }
+            }
+        },
+        "Mounts": [
+            {
+                "Type": "bind",
+                "Source": "/var/lib/docker/volumes/8bf89abf7cf0d57f01385e8dbcaff2a1f46b5076774dfd0036fa3667e4b49b62/_data/dev/oscar-shareable/data/uploads",
+                "Destination": "/config/Documents/SDCARD",
+                "Mode": "rw",
+                "RW": true,
+                "Propagation": "rslave"
+            },
+            {
+                "Type": "bind",
+                "Source": "/var/lib/docker/volumes/8bf89abf7cf0d57f01385e8dbcaff2a1f46b5076774dfd0036fa3667e4b49b62/_data/dev/oscar-shareable/data/app_config",
+                "Destination": "/config/.config/OSCAR_Team",
+                "Mode": "rw",
+                "RW": true,
+                "Propagation": "rslave"
+            },
+            {
+                "Type": "bind",
+                "Source": "/var/lib/docker/volumes/8bf89abf7cf0d57f01385e8dbcaff2a1f46b5076774dfd0036fa3667e4b49b62/_data/dev/oscar-shareable/data/profiles",
+                "Destination": "/config/Documents/OSCAR_Data",
+                "Mode": "rw",
+                "RW": true,
+                "Propagation": "rslave"
+            },
+            {
+                "Type": "volume",
+                "Name": "94ff96421540728f6bac80f606a022ec6f80a5e4d0971378d923b4b6e729ba52",
+                "Source": "/var/lib/docker/volumes/94ff96421540728f6bac80f606a022ec6f80a5e4d0971378d923b4b6e729ba52/_data",
+                "Destination": "/config",
+                "Driver": "local",
+                "Mode": "z",
+                "RW": true,
+                "Propagation": ""
+            }
+        ],
+        "Config": {
+            "Hostname": "3bf571410f9b",
+            "Domainname": "",
+            "User": "",
+            "AttachStdin": false,
+            "AttachStdout": true,
+            "AttachStderr": true,
+            "ExposedPorts": {
+                "3000/tcp": {},
+                "3001/tcp": {}
+            },
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+                "SELKIES_UI_SIDEBAR_SHOW_SHARING=false",
+                "SELKIES_SECOND_SCREEN=false",
+                "SELKIES_MICROPHONE_ENABLED=false",
+                "SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS=false",
+                "SELKIES_AUDIO_ENABLED=false",
+                "NO_GAMEPAD=true",
+                "HARDEN_DESKTOP=true",
+                "NO_DECOR=true",
+                "SELKIES_ENABLE_SHARING=false",
+                "TZ=America/Chicago",
+                "SELKIES_UI_SIDEBAR_SHOW_GAMEPADS=false",
+                "PUID=911",
+                "SELKIES_GAMEPAD_ENABLED=false",
+                "SELKIES_ENABLE_CURSORS=true",
+                "DISABLE_IPV6=true",
+                "SELKIES_CLIPBOARD_ENABLED=false",
+                "START_DOCKER=false",
+                "HARDEN_OPENBOX=true",
+                "TITLE=OSCAR latest",
+                "SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD=false",
+                "PGID=911",
+                "PATH=/lsiopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME=/config",
+                "LANGUAGE=en_US.UTF-8",
+                "LANG=en_US.UTF-8",
+                "TERM=xterm",
+                "S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0",
+                "S6_VERBOSITY=1",
+                "S6_STAGE2_HOOK=/docker-mods",
+                "VIRTUAL_ENV=/lsiopy",
+                "DISPLAY=:1",
+                "PERL5LIB=/usr/local/bin",
+                "PULSE_RUNTIME_PATH=/defaults",
+                "SELKIES_INTERPOSER=/usr/lib/selkies_joystick_interposer.so",
+                "NVIDIA_DRIVER_CAPABILITIES=all",
+                "DISABLE_ZINK=false",
+                "DISABLE_DRI3=false"
+            ],
+            "Cmd": null,
+            "Image": "custom-oscar-vnc:latest",
+            "Volumes": {
+                "/config": {}
+            },
+            "WorkingDir": "/",
+            "Entrypoint": [
+                "/init"
+            ],
+            "Labels": {
+                "build_version": "Linuxserver.io version:- 39b41211-ls79 Build-date:- 2026-02-28T02:57:48+00:00",
+                "com.docker.compose.config-hash": "90c73ec2469cb04adb0b12682274aebc1264acc0bf0ac569579f521ed42ddc12",
+                "com.docker.compose.container-number": "1",
+                "com.docker.compose.depends_on": "",
+                "com.docker.compose.image": "sha256:e65309eb003bc180032d85cd2b4277c9ed9b1782de76ff210fe138cbb713caab",
+                "com.docker.compose.oneoff": "False",
+                "com.docker.compose.project": "oscar-shareable",
+                "com.docker.compose.project.config_files": "/config/dev/oscar-shareable/docker-compose.yml",
+                "com.docker.compose.project.working_dir": "/config/dev/oscar-shareable",
+                "com.docker.compose.replace": "oscar-template",
+                "com.docker.compose.service": "oscar",
+                "com.docker.compose.version": "5.1.0",
+                "maintainer": "thelamer",
+                "org.opencontainers.image.authors": "linuxserver.io",
+                "org.opencontainers.image.created": "2026-02-28T02:57:48+00:00",
+                "org.opencontainers.image.description": "baseimage-selkies image by linuxserver.io",
+                "org.opencontainers.image.documentation": "https://docs.linuxserver.io/images/docker-baseimage-selkies",
+                "org.opencontainers.image.licenses": "GPL-3.0-only",
+                "org.opencontainers.image.ref.name": "2612b4d96ec5856b28cf5d51900bf9b584cb451b",
+                "org.opencontainers.image.revision": "2612b4d96ec5856b28cf5d51900bf9b584cb451b",
+                "org.opencontainers.image.source": "https://github.com/linuxserver/docker-baseimage-selkies",
+                "org.opencontainers.image.title": "Baseimage-selkies",
+                "org.opencontainers.image.url": "https://github.com/linuxserver/docker-baseimage-selkies/packages",
+                "org.opencontainers.image.vendor": "linuxserver.io",
+                "org.opencontainers.image.version": "39b41211-ls79"
+            }
+        },
+        "NetworkSettings": {
+            "SandboxID": "080156d50780d91d03d4f235e94f44aa12fadf682da4c7aae4683c6a845dda65",
+            "SandboxKey": "/var/run/docker/netns/080156d50780",
+            "Ports": {
+                "3000/tcp": [
+                    {
+                        "HostIp": "127.0.0.1",
+                        "HostPort": "3030"
+                    }
+                ],
+                "3001/tcp": null
+            },
+            "Networks": {
+                "oscar-shareable_internal": {
+                    "IPAMConfig": null,
+                    "Links": null,
+                    "Aliases": [
+                        "oscar-template",
+                        "oscar"
+                    ],
+                    "DriverOpts": null,
+                    "GwPriority": 0,
+                    "NetworkID": "50917f0f10862b079844eded7994e296e12b88b53f86118f6780800a797c7fd8",
+                    "EndpointID": "acfd93e863175c2126732636e24672b0d2f8eab2c3906ce89cd8e977875a64f2",
+                    "Gateway": "172.19.0.1",
+                    "IPAddress": "172.19.0.4",
+                    "MacAddress": "2a:c2:5e:56:af:23",
+                    "IPPrefixLen": 16,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": [
+                        "oscar-template",
+                        "oscar",
+                        "3bf571410f9b"
+                    ]
+                }
+            }
+        },
+        "ImageManifestDescriptor": {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:40cae12c0d78391ebf60076cce9e99b8ca596effca7de82c4b096e3072123cb8",
+            "size": 2769,
+            "platform": {
+                "architecture": "amd64",
+                "os": "linux"
+            }
+        }
+    }
+]

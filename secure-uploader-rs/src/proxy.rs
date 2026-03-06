@@ -146,7 +146,7 @@ pub async fn ensure_oscar_container(
                         "SELKIES_MICROPHONE_ENABLED=false".to_string(),
                         "SELKIES_CLIPBOARD_ENABLED=false".to_string(),
                         "SELKIES_SECOND_SCREEN=false".to_string(),
-                        "SELKIES_ENABLE_SHARING=false".to_string(),
+                        "SELKIES_ENABLE_SHARING=true".to_string(),
                     ]),
                     ..Default::default()
                 };
@@ -210,13 +210,55 @@ pub async fn oscar_launch(
     hasher.update(fp_str.as_bytes());
     let fp = URL_SAFE_NO_PAD.encode(hasher.finalize());
 
-    let jti = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
 
+    // Optimization: Check if user already has a valid OSCAR session cookie and an active container
+    let has_valid_session = if let Some(cookie_header) = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()) {
+        let mut oscar_session = None;
+        for cookie_str in cookie_header.split(';') {
+            let trimmed = cookie_str.trim();
+            if let Some(val) = trimmed.strip_prefix("oscar_session=") {
+                oscar_session = Some(val.to_string());
+                break;
+            }
+        }
+        
+        if let Some(token) = oscar_session {
+            if let Ok(token_data) = decode::<OscarClaims>(
+                &token,
+                &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
+                &Validation::default(),
+            ) {
+                let oscar_claims = token_data.claims;
+                if oscar_claims.uuid == claims.uuid && oscar_claims.scope == "oscar" && oscar_claims.exp > now {
+                    let containers = state.active_containers.read().await;
+                    containers.contains_key(&oscar_claims.uuid)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if has_valid_session {
+        tracing::info!("oscar_launch: User {} already has active session and container, redirecting directly to /oscar/", claims.uuid);
+        return axum::Json(serde_json::json!({
+            "launchUrl": "/oscar/"
+        })).into_response();
+    }
+
+    tracing::info!("oscar_launch: Launching personal session for user {}", claims.uuid);
     if let Err(e) = ensure_oscar_container(&state, &claims.uuid, &claims.username).await {
         return e.into_response();
     }
     
+    let jti = uuid::Uuid::new_v4().to_string();
     let launch_claims = LaunchTokenClaims {
         sub: claims.uuid.clone(),
         sid: claims.sid.clone(),
@@ -253,6 +295,8 @@ pub async fn oscar_share_launch(
         _ => return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({ "error": "Profile owner not found" }))).into_response(),
     };
     let owner_username = owner.username.unwrap_or(owner.uuid.clone());
+
+    tracing::info!("oscar_share_launch: Attempting to launch shared profile. Owner={}, LinkToken={}", owner_uuid, share_token);
 
     if let Err(e) = ensure_oscar_container(&state, &owner_uuid, &owner_username).await {
         return e.into_response();
@@ -417,8 +461,10 @@ pub async fn proxy_handler(
 
         let containers = state.active_containers.read().await;
         if let Some(info) = containers.get(&claims.uuid) {
+            tracing::debug!("proxy_handler: Routing request for user {} to container {} at {}", claims.uuid, info.container_id, info.ip_address);
             (info.ip_address.clone(), claims.uuid.clone())
         } else {
+            tracing::warn!("proxy_handler: No active container found for user {}", claims.uuid);
             if accepts_html {
                 return Redirect::to("/?timeout=1").into_response();
             }
@@ -562,14 +608,24 @@ async fn handle_websocket_upgrade(
                                 t == 4 || t == 5 || t == 6
                             },
                             AxumMsg::Text(t) => {
-                                // VNC JSON payloads for events like mouse movements and key presses
-                                t.contains("mouse") || t.contains("key") || t.contains("touch") || t.contains("clipboard")
+                                let tl = t.to_lowercase();
+                                tl.contains("mouse") || tl.contains("key") || tl.contains("touch") || tl.contains("clipboard")
                             },
                             _ => false,
                         };
 
                         let now = chrono::Utc::now().timestamp();
                         if is_activity && (now - last_update > 30) {
+                            match &msg {
+                                AxumMsg::Binary(b) if !b.is_empty() => {
+                                    tracing::info!("Proxy: User activity detected (Binary type: {}) for user {}", b[0], user_uuid);
+                                }
+                                AxumMsg::Text(t) => {
+                                    let snippet = t.chars().take(50).collect::<String>();
+                                    tracing::info!("Proxy: User activity detected (Text: {}...) for user {}", snippet, user_uuid);
+                                }
+                                _ => {}
+                            }
                             let mut containers = state.active_containers.write().await;
                             if let Some(info) = containers.get_mut(&user_uuid) {
                                 info.last_active = now;
@@ -582,16 +638,28 @@ async fn handle_websocket_upgrade(
                             AxumMsg::Binary(b) => TungMsg::Binary(b),
                             AxumMsg::Ping(p) => TungMsg::Ping(p),
                             AxumMsg::Pong(p) => TungMsg::Pong(p),
-                            AxumMsg::Close(_) => TungMsg::Close(None),
+                            AxumMsg::Close(_) => {
+                                tracing::debug!("Proxy: Client sent Close message");
+                                TungMsg::Close(None)
+                            },
                         };
-                        if server_tx.send(tung_msg).await.is_err() {
+                        if let Err(e) = server_tx.send(tung_msg).await {
+                            tracing::error!("Proxy: Failed to forward message back to server: {}", e);
                             break;
                         }
                     }
+                    tracing::debug!("Proxy: client_to_server loop terminated");
                 };
 
                 let server_to_client = async {
-                    while let Some(Ok(msg)) = server_rx.next().await {
+                    while let Some(msg_result) = server_rx.next().await {
+                        let msg = match msg_result {
+                            Ok(m) => m,
+                            Err(e) => {
+                                tracing::error!("Proxy: Error reading from server WS: {}", e);
+                                break;
+                            }
+                        };
                         use axum::extract::ws::Message as AxumMsg;
                         use tokio_tungstenite::tungstenite::Message as TungMsg;
                         let ax_msg = match msg {
@@ -599,13 +667,18 @@ async fn handle_websocket_upgrade(
                             TungMsg::Binary(b) => AxumMsg::Binary(b),
                             TungMsg::Ping(p) => AxumMsg::Ping(p),
                             TungMsg::Pong(p) => AxumMsg::Pong(p),
-                            TungMsg::Close(_) => AxumMsg::Close(None),
+                            TungMsg::Close(_) => {
+                                tracing::debug!("Proxy: Server sent Close message");
+                                AxumMsg::Close(None)
+                            },
                             TungMsg::Frame(_) => continue,
                         };
-                        if client_tx.send(ax_msg).await.is_err() {
+                        if let Err(e) = client_tx.send(ax_msg).await {
+                            tracing::error!("Proxy: Failed to forward message back to client: {}", e);
                             break;
                         }
                     }
+                    tracing::debug!("Proxy: server_to_client loop terminated");
                 };
 
                 tokio::select! {

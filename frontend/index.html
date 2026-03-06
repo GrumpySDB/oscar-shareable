@@ -17,6 +17,22 @@
       <img id="loginBanner" class="screen-banner hidden" alt="Random welcome image" />
       <h1>OSCAR Secure Uploader</h1>
       <p class="subtle">Sign in to upload SD card data.</p>
+
+      <div id="shareLinkWarning" class="hidden"
+        style="background: linear-gradient(135deg, #fffbea 0%, #fff3cd 100%); border-left: 4px solid #ffc107; padding: 1rem; border-radius: 6px; margin-bottom: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; align-items: flex-start; gap: 0.75rem;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d39e00"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+        <div>
+          <strong style="color: #856404; display: block; margin-bottom: 0.25rem;">Authentication Required</strong>
+          <span style="color: #664d03; font-size: 0.95rem; line-height: 1.4; display: block;">You need to log in or
+            create an account to view this shared profile.</span>
+        </div>
+      </div>
+
       <form id="loginForm" novalidate>
         <label for="username">Username</label>
         <input id="username" type="text" autocomplete="username" maxlength="128" />
@@ -49,11 +65,25 @@
     <section id="appCard" class="card hidden">
       <img id="uploadBanner" class="screen-banner hidden" alt="Random upload image" />
       <div class="header-row">
-        <h2>Upload SD Card or Oximetry Data</h2>
+        <h2>Securely Upload OSCAR Data</h2>
         <div class="header-actions">
           <a href="/how-to-uploader" class="header-link-btn">Help</a>
-          <button id="logoutBtn" class="ghost">Logout</button>
+          <button id="logoutBtn" class="logout-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Logout</span>
+          </button>
         </div>
+      </div>
+
+      <div id="welcomeBox" class="welcome-box hidden">
+        <div class="welcome-icon">👋</div>
+        <p>Welcome <strong id="welcomeUsername"></strong>. First upload your SD Card or Oximetry data, then proceed to
+          OSCAR to
+          finish importing it!</p>
       </div>
 
       <label for="startDate">Select Upload Start Date</label>
@@ -64,15 +94,23 @@
 
       <div class="label-row">
         <label>Upload Folder</label>
-        <button id="genLinkBtn" class="inline-share-btn" type="button">🔗 Sharing Link</button>
+        <button id="genLinkBtn" class="inline-share-btn" type="button">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+          </svg>
+          Create sharing link
+        </button>
       </div>
       <div class="folder-input-container">
-        <label for="directoryInput" class="custom-folder-btn">
+        <label for="directoryInput" class="custom-folder-btn"
+          data-tooltip="Select the ROOT of your CPAP SD Card, or your folder containing oximetry data">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
           </svg>
-          Choose OSCAR Folder
+          Choose Folder
         </label>
         <input id="directoryInput" type="file" webkitdirectory directory multiple class="hidden-input" />
       </div>
@@ -132,7 +170,14 @@
       <div class="header-row">
         <h1>Connection Lost</h1>
         <div class="header-actions">
-          <a href="/" id="timeoutReturnBtn" class="header-link-btn back-btn">Back to Login</a>
+          <button id="timeoutLogoutBtn" class="logout-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Logout</span>
+          </button>
         </div>
       </div>
       <div
@@ -147,8 +192,11 @@
         </div>
         <p style="color: var(--text); text-align: center; max-width: 400px; line-height: 1.5; font-size: 1.05rem;">Your
           OSCAR session has timed out or disconnected due to inactivity.</p>
-        <div style="margin-top: 1.5rem; width: 100%; max-width: 250px;">
+        <div
+          style="margin-top: 1.5rem; width: 100%; max-width: 250px; display: flex; flex-direction: column; gap: 0.8rem;">
           <button id="recreateSessionBtn" class="oscar-cta" style="margin-top: 0;">Recreate Session</button>
+          <button id="backToUploaderBtn" class="ghost"
+            style="width: 100%; border: 1px solid var(--accent); color: var(--accent);">Back to Uploader</button>
         </div>
       </div>
     </section>
