@@ -87,10 +87,24 @@ struct DiscordUser {
 
 pub async fn discord_login(
     State(state): State<Arc<AppState>>,
+    axum::extract::Host(host): axum::extract::Host,
+    axum::extract::HeaderMap(headers): axum::extract::HeaderMap,
     axum::extract::Query(query): axum::extract::Query<DiscordLoginQuery>,
 ) -> impl IntoResponse {
     let client_id = &state.config.discord_client_id;
-    let redirect_uri = urlencoding::encode(&state.config.discord_redirect_uri);
+    
+    // Dynamically determine redirect URI based on host
+    let proto = headers.get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("https");
+    
+    let redirect_uri_base = if host.is_empty() {
+        state.config.discord_redirect_uri.clone()
+    } else {
+        format!("{}://{}/api/auth/discord/callback", proto, host)
+    };
+    
+    let redirect_uri = urlencoding::encode(&redirect_uri_base);
     let state_param = query.invite.unwrap_or_default();
     let prompt = query.prompt.as_deref().unwrap_or("none");
     
@@ -104,6 +118,7 @@ pub async fn discord_login(
 
 pub async fn discord_callback(
     State(state): State<Arc<AppState>>,
+    axum::extract::HeaderMap(headers): axum::extract::HeaderMap,
     axum::extract::Query(query): axum::extract::Query<DiscordCallbackQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if let Some(err) = query.error {
@@ -121,6 +136,15 @@ pub async fn discord_callback(
     let client = &state.reqwest_client;
 
     // Exchange code for token
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or_default();
+    let proto = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()).unwrap_or("https");
+    
+    let redirect_uri = if host.is_empty() {
+        state.config.discord_redirect_uri.clone()
+    } else {
+        format!("{}://{}/api/auth/discord/callback", proto, host)
+    };
+
     let token_res = client
         .post("https://discord.com/api/oauth2/token")
         .form(&[
@@ -128,7 +152,7 @@ pub async fn discord_callback(
             ("client_secret", state.config.discord_client_secret.as_str()),
             ("grant_type", "authorization_code"),
             ("code", code_str.as_str()),
-            ("redirect_uri", state.config.discord_redirect_uri.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
         ])
         .send()
         .await
