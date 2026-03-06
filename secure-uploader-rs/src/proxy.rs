@@ -113,9 +113,9 @@ pub async fn ensure_oscar_container(
                     image: Some(state.config.oscar_docker_image.clone()),
                     host_config: Some(HostConfig {
                         binds: Some(vec![
-                            format!("{}/data/profiles/{}:/config/Documents/OSCAR_Data:ro", host_path, username),
-                            format!("{}/data/uploads/{}:/config/Documents/SDCARD:ro", host_path, username),
-                            format!("{}/data/app_config/{}:/config/.config/OSCAR_Team:ro", host_path, username),
+                            format!("{}/data/profiles/{}:/config/Documents/OSCAR_Data:rw", host_path, username),
+                            format!("{}/data/uploads/{}:/config/Documents/SDCARD:rw", host_path, username),
+                            format!("{}/data/app_config/{}:/config/.config/OSCAR_Team:rw", host_path, username),
                         ]),
                         network_mode: Some(docker_network.clone()),
                         shm_size: Some(1024 * 1024 * 1024),
