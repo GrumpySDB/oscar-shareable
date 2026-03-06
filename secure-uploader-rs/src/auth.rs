@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Request, State, ConnectInfo},
-    http::{header, StatusCode},
+    extract::{Request, State, ConnectInfo, Host, Query},
+    http::{header, StatusCode, HeaderMap},
     middleware::Next,
     response::{IntoResponse, Response, Json},
     Json as ExtractJson,
@@ -87,9 +87,9 @@ struct DiscordUser {
 
 pub async fn discord_login(
     State(state): State<Arc<AppState>>,
-    axum::extract::Host(host): axum::extract::Host,
-    axum::extract::HeaderMap(headers): axum::extract::HeaderMap,
-    axum::extract::Query(query): axum::extract::Query<DiscordLoginQuery>,
+    Host(host): Host,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<DiscordLoginQuery>,
 ) -> impl IntoResponse {
     let client_id = &state.config.discord_client_id;
     
@@ -118,8 +118,8 @@ pub async fn discord_login(
 
 pub async fn discord_callback(
     State(state): State<Arc<AppState>>,
-    axum::extract::HeaderMap(headers): axum::extract::HeaderMap,
-    axum::extract::Query(query): axum::extract::Query<DiscordCallbackQuery>,
+    req_headers: HeaderMap,
+    Query(query): Query<DiscordCallbackQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if let Some(err) = query.error {
         if err == "consent_required" {
@@ -136,8 +136,8 @@ pub async fn discord_callback(
     let client = &state.reqwest_client;
 
     // Exchange code for token
-    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or_default();
-    let proto = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()).unwrap_or("https");
+    let host = req_headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or_default();
+    let proto = req_headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()).unwrap_or("https");
     
     let redirect_uri = if host.is_empty() {
         state.config.discord_redirect_uri.clone()
