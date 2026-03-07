@@ -497,25 +497,39 @@ pub async fn logout(
     State(state): State<Arc<AppState>>,
     req: Request,
 ) -> impl IntoResponse {
-    if let Some(auth_header) = req.headers().get(header::AUTHORIZATION) {
-        if let Ok(token_str) = auth_header.to_str() {
-            if token_str.starts_with("Bearer ") {
-                let token = &token_str[7..];
-                if let Ok(token_data) = decode::<Claims>(
-                    token,
-                    &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-                    &Validation::default(),
-                ) {
-                    state.active_auth_sessions.write().await.remove(&token_data.claims.sid);
+    // Accept the JWT from either the Authorization Bearer header (frontend logout())
+    // or the auth_session cookie (overlay handleLogout, which sends no Bearer token).
+    let bearer_token = req.headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|s| s.to_string());
 
-                    let uuid = token_data.claims.uuid.clone();
-                    if let Some(info) = state.active_containers.write().await.remove(&uuid) {
-                        let state_clone = state.clone();
-                        tokio::spawn(async move {
-                            crate::proxy::cleanup_oscar_session(state_clone, uuid, info.container_id).await;
-                        });
-                    }
-                }
+    let cookie_token = req.headers()
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';')
+                .find(|c| c.trim().starts_with("auth_session="))
+                .map(|c| c.trim()["auth_session=".len()..].to_string())
+        });
+
+    let token_str = bearer_token.or(cookie_token);
+
+    if let Some(token) = token_str {
+        if let Ok(token_data) = decode::<Claims>(
+            &token,
+            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
+            &Validation::default(),
+        ) {
+            state.active_auth_sessions.write().await.remove(&token_data.claims.sid);
+
+            let uuid = token_data.claims.uuid.clone();
+            if let Some(info) = state.active_containers.write().await.remove(&uuid) {
+                let state_clone = state.clone();
+                tokio::spawn(async move {
+                    crate::proxy::cleanup_oscar_session(state_clone, uuid, info.container_id).await;
+                });
             }
         }
     }
@@ -525,13 +539,19 @@ pub async fn logout(
         .body(axum::body::Body::empty())
         .unwrap();
 
+    // Clear both session cookies so the browser cannot re-authenticate automatically.
     response.headers_mut().insert(
         header::SET_COOKIE,
-        "oscar_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure".parse().unwrap(),
+        "auth_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure".parse().unwrap(),
+    );
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        "oscar_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure".parse().unwrap(),
     );
 
     response
 }
+
 
 pub async fn session_check(
     State(state): State<Arc<AppState>>,

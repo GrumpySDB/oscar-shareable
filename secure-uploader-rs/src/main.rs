@@ -151,6 +151,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/oscar/", any(proxy::proxy_handler))
         .route("/oscar/*path", any(proxy::proxy_handler))
         .route("/websockify", any(proxy::proxy_handler))
+        // Overlay JS served from the Rust binary (injected into /oscar/ root HTML)
+        .route("/oscar-overlay.js", get(proxy::serve_overlay_script))
+        // Browser-side keepalive: updates last_active when the OSCAR tab is visible
+        .route("/api/oscar-keepalive", post(proxy::oscar_keepalive_handler))
+        // Browser-side disconnect signal: evicts container so next launch gets clean Selkies
+        .route("/api/oscar-disconnect", post(proxy::oscar_disconnect_handler))
         // proxy needs special Oscar session checking middleware
         .layer(middleware::from_fn_with_state(shared_state.clone(), auth::require_oscar_session_middleware));
 

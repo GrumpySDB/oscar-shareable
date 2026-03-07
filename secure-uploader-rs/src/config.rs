@@ -52,7 +52,7 @@ impl AppConfig {
         // HTTP port for the internal Docker network listener (TLS is terminated by nginx)
         let http_port = env::var("HTTP_PORT").unwrap_or_else(|_| "8080".to_string()).parse()?;
         let oscar_base_url = url::Url::parse(&env::var("OSCAR_BASE_URL").unwrap_or_else(|_| "http://oscar:3000".to_string()))?;
-        let auth_session_ttl_seconds = env::var("AUTH_SESSION_TTL_SECONDS").unwrap_or_else(|_| "900".to_string()).parse()?;
+        let auth_session_ttl_seconds = env::var("AUTH_SESSION_TTL_SECONDS").unwrap_or_else(|_| "3600".to_string()).parse()?;
         let oscar_idle_timeout_seconds = env::var("OSCAR_IDLE_TIMEOUT_SECONDS").unwrap_or_else(|_| "300".to_string()).parse()?;
         let upload_uid = env::var("UPLOAD_UID").unwrap_or_else(|_| "911".to_string()).parse()?;
         let upload_gid = env::var("UPLOAD_GID").unwrap_or_else(|_| "911".to_string()).parse()?;

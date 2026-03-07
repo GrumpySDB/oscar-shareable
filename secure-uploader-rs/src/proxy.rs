@@ -119,8 +119,8 @@ pub async fn ensure_oscar_container(
                         ]),
                         network_mode: Some(docker_network.clone()),
                         shm_size: Some(1024 * 1024 * 1024),
-                        memory: Some(1280 * 1024 * 1024), // 1280MB
-                        memory_swap: Some(1280 * 1024 * 1024), // No swap beyond 1280MB
+                        memory: Some(768 * 1024 * 1024), // 768MB
+                        memory_swap: Some(768 * 1024 * 1024), // No swap beyond 768MB
                         nano_cpus: Some(1_000_000_000), // 1.0 CPU
                         security_opt: Some(vec!["no-new-privileges:true".to_string()]),
                         ..Default::default()
@@ -129,6 +129,7 @@ pub async fn ensure_oscar_container(
                         "PUID=911".to_string(),
                         "PGID=911".to_string(),
                         "TZ=America/Chicago".to_string(),
+                        "MAX_RES=3840x2160".to_string(),
                         "TITLE=OSCAR 1.7.0".to_string(),
                         "START_DOCKER=false".to_string(),
                         "DISABLE_IPV6=true".to_string(),
@@ -144,7 +145,8 @@ pub async fn ensure_oscar_container(
                         "SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS=false".to_string(),
                         "SELKIES_UI_SIDEBAR_SHOW_SHARING=false".to_string(),
                         "SELKIES_MICROPHONE_ENABLED=false".to_string(),
-                        "SELKIES_CLIPBOARD_ENABLED=false".to_string(),
+                        "SELKIES_CLIPBOARD_IN_ENABLED=false".to_string(),
+                        "SELKIES_CLIPBOARD_OUT_ENABLED=true".to_string(),
                         "SELKIES_SECOND_SCREEN=false".to_string(),
                         "SELKIES_ENABLE_SHARING=true".to_string(),
                     ]),
@@ -212,47 +214,9 @@ pub async fn oscar_launch(
 
     let now = chrono::Utc::now().timestamp();
 
-    // Optimization: Check if user already has a valid OSCAR session cookie and an active container
-    let has_valid_session = if let Some(cookie_header) = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()) {
-        let mut oscar_session = None;
-        for cookie_str in cookie_header.split(';') {
-            let trimmed = cookie_str.trim();
-            if let Some(val) = trimmed.strip_prefix("oscar_session=") {
-                oscar_session = Some(val.to_string());
-                break;
-            }
-        }
-        
-        if let Some(token) = oscar_session {
-            if let Ok(token_data) = decode::<OscarClaims>(
-                &token,
-                &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-                &Validation::default(),
-            ) {
-                let oscar_claims = token_data.claims;
-                if oscar_claims.uuid == claims.uuid && oscar_claims.scope == "oscar" && oscar_claims.exp > now {
-                    let containers = state.active_containers.read().await;
-                    containers.contains_key(&oscar_claims.uuid)
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    if has_valid_session {
-        tracing::info!("oscar_launch: User {} already has active session and container, redirecting directly to /oscar/", claims.uuid);
-        return axum::Json(serde_json::json!({
-            "launchUrl": "/oscar/"
-        })).into_response();
-    }
-
+    // Always issue a fresh launch token — never shortcut to /oscar/ directly.
+    // This ensures Selkies always gets a clean signaling init rather than
+    // reconnecting to a potentially dirty WebSocket state from a prior session.
     tracing::info!("oscar_launch: Launching personal session for user {}", claims.uuid);
     if let Err(e) = ensure_oscar_container(&state, &claims.uuid, &claims.username).await {
         return e.into_response();
@@ -315,12 +279,12 @@ pub async fn oscar_share_launch(
     let guest_sid = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
 
-    // Create an ephemeral auth session for the guest tied to the owner's UUID
+    // Create an ephemeral auth session for the guest tied to the owner's UUID (1 hour)
     {
         let mut sessions = state.active_auth_sessions.write().await;
         sessions.insert(guest_sid.clone(), crate::config::SessionInfo {
             uuid: owner_uuid.clone(),
-            expires_at: now + 8 * 60 * 60,
+            expires_at: now + 60 * 60,
         });
     }
 
@@ -413,7 +377,7 @@ pub async fn oscar_login_handler(
         sid: claims.sid.clone(),
         fp: claims.fp,
         scope: "oscar".into(),
-        exp: now + 8 * 60 * 60, // 8 hours
+        exp: now + 60 * 60, // 1 hour
     };
 
     let session_token = encode(
@@ -422,7 +386,7 @@ pub async fn oscar_login_handler(
         &EncodingKey::from_secret(state.config.jwt_secret.as_bytes())
     ).unwrap();
 
-    let cookie_value = format!("oscar_session={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax; Secure", session_token, 8*60*60);
+    let cookie_value = format!("oscar_session={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax; Secure", session_token, 60*60);
     tracing::debug!("oscar_login_handler: setting cookie, redirecting to /oscar/, sid={}", claims.sid);
 
     let mut res = Redirect::to("/oscar/").into_response();
@@ -431,6 +395,34 @@ pub async fn oscar_login_handler(
         cookie_value.parse().unwrap()
     );
     res
+}
+
+pub async fn oscar_keepalive_handler(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+) -> Response {
+    let claims = match req.extensions().get::<OscarClaims>() {
+        Some(c) => c.clone(),
+        None => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+    {
+        let mut containers = state.active_containers.write().await;
+        if let Some(info) = containers.get_mut(&claims.uuid) {
+            info.last_active = chrono::Utc::now().timestamp();
+            tracing::debug!("oscar_keepalive: refreshed last_active for user {}", claims.uuid);
+        }
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+pub async fn serve_overlay_script() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "private, max-age=300"),
+        ],
+        include_str!("oscar_overlay.js"),
+    )
 }
 
 pub async fn proxy_handler(
@@ -442,6 +434,11 @@ pub async fn proxy_handler(
         .and_then(|v| v.to_str().ok())
         .map(|v| v.contains("text/html"))
         .unwrap_or(false);
+
+    // Capture the original path before stripping /oscar prefix so we know
+    // whether to inject the overlay script into the response HTML.
+    let original_path = req.uri().path().to_string();
+    let is_oscar_root = original_path == "/oscar" || original_path == "/oscar/";
 
     let mut path = req.uri().path().to_string();
     if path.starts_with("/oscar") {
@@ -512,6 +509,13 @@ pub async fn proxy_handler(
 
     for (name, value) in req.headers() {
         if !hop_by_hop.contains(&name.as_str()) {
+            // When buffering the oscar root page to inject the overlay script, we
+            // must NOT forward Accept-Encoding. reqwest disables automatic
+            // decompression when this header is manually set, which would cause
+            // bytes() to return raw compressed data → garbled UTF-8 on the page.
+            if is_oscar_root && name == header::ACCEPT_ENCODING {
+                continue;
+            }
             builder = builder.header(name.clone(), value.clone());
         }
     }
@@ -521,27 +525,86 @@ pub async fn proxy_handler(
 
     match builder.send().await {
         Ok(proxy_res) => {
-            let mut response = Response::builder().status(proxy_res.status());
-            
-            for (name, value) in proxy_res.headers() {
-                if name == "transfer-encoding" {
-                    continue;
-                }
-                if name == "content-security-policy" {
-                    if let Ok(val) = value.to_str() {
-                        let mut dirs: Vec<&str> = val.split(';').map(|s| s.trim()).filter(|s| !s.is_empty() && !s.to_lowercase().starts_with("frame-ancestors")).collect();
-                        dirs.push("frame-ancestors 'self'");
-                        response.headers_mut().unwrap().insert(
-                            name,
-                            HeaderValue::try_from(dirs.join("; ")).unwrap()
-                        );
+            let resp_status = proxy_res.status();
+
+            // Check if we should inject the overlay script into this response.
+            let is_html_response = proxy_res.headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|ct| ct.contains("text/html"))
+                .unwrap_or(false);
+
+            if is_oscar_root && is_html_response && resp_status.is_success() {
+                // Buffer full response so we can inject the overlay <script> tag.
+                // Collect headers first (before consuming body).
+                let headers_vec: Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)> =
+                    proxy_res.headers().iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+
+                let bytes = proxy_res.bytes().await.unwrap_or_default();
+                let original_html = String::from_utf8_lossy(&bytes);
+                let inject_tag = r#"<script src="/oscar-overlay.js"></script>"#;
+                let modified_html = if let Some(pos) = original_html.rfind("</body>") {
+                    let mut s = original_html.into_owned();
+                    s.insert_str(pos, inject_tag);
+                    s
+                } else {
+                    original_html.into_owned() + inject_tag
+                };
+                let modified_bytes = modified_html.into_bytes();
+
+                let mut response = Response::builder().status(resp_status);
+                for (name, value) in headers_vec {
+                    let name_str = name.as_str();
+                    // Drop hop-by-hop + content-length (body size has changed)
+                    if name_str == "transfer-encoding" || name_str == "content-length" {
                         continue;
                     }
+                    if name_str == "content-security-policy" {
+                        if let Ok(val) = value.to_str() {
+                            let mut dirs: Vec<&str> = val.split(';').map(|s| s.trim())
+                                .filter(|s| !s.is_empty() && !s.to_lowercase().starts_with("frame-ancestors"))
+                                .collect();
+                            dirs.push("frame-ancestors 'self'");
+                            if let Ok(hv) = HeaderValue::try_from(dirs.join("; ")) {
+                                response.headers_mut().unwrap().insert(
+                                    header::CONTENT_SECURITY_POLICY, hv
+                                );
+                            }
+                        }
+                        continue;
+                    }
+                    if let (Ok(axum_name), Ok(axum_value)) = (
+                        axum::http::HeaderName::from_bytes(name.as_str().as_bytes()),
+                        HeaderValue::from_bytes(value.as_bytes()),
+                    ) {
+                        response.headers_mut().unwrap().insert(axum_name, axum_value);
+                    }
                 }
-                response.headers_mut().unwrap().insert(name, value.clone());
+                response.body(Body::from(modified_bytes)).unwrap()
+            } else {
+                // Normal streaming passthrough.
+                let mut response = Response::builder().status(resp_status);
+                for (name, value) in proxy_res.headers() {
+                    if name == "transfer-encoding" {
+                        continue;
+                    }
+                    if name == "content-security-policy" {
+                        if let Ok(val) = value.to_str() {
+                            let mut dirs: Vec<&str> = val.split(';').map(|s| s.trim()).filter(|s| !s.is_empty() && !s.to_lowercase().starts_with("frame-ancestors")).collect();
+                            dirs.push("frame-ancestors 'self'");
+                            response.headers_mut().unwrap().insert(
+                                name,
+                                HeaderValue::try_from(dirs.join("; ")).unwrap()
+                            );
+                            continue;
+                        }
+                    }
+                    response.headers_mut().unwrap().insert(name, value.clone());
+                }
+                response.body(Body::from_stream(proxy_res.bytes_stream())).unwrap()
             }
-
-            response.body(Body::from_stream(proxy_res.bytes_stream())).unwrap()
         }
         Err(e) => {
             tracing::error!("Proxy request failed: {}", e);
@@ -596,101 +659,132 @@ async fn handle_websocket_upgrade(
                 let (mut client_tx, mut client_rx) = client_ws.split();
                 let (mut server_tx, mut server_rx) = server_ws.split();
 
-                let client_to_server = async {
-                    let mut last_update = 0i64;
-                    while let Some(Ok(msg)) = client_rx.next().await {
-                        use axum::extract::ws::Message as AxumMsg;
-                        use tokio_tungstenite::tungstenite::Message as TungMsg;
+                // NOTE: User input (mouse, keyboard) travels via WebRTC DataChannel
+                // peer-to-peer and is NEVER visible on this signaling WebSocket.
+                // Activity tracking is handled by the browser-side keepalive in
+                // oscar_overlay.js (POST /api/oscar-keepalive, Page Visibility aware).
+                //
+                // We use tokio::join! (not select!) so both halves run to completion.
+                // When either side drops the connection, that half sends an explicit
+                // WebSocket Close frame to the other side. This lets Selkies reset its
+                // signaling/ICE state cleanly instead of seeing a raw TCP teardown.
 
-                        let is_activity = match &msg {
-                            AxumMsg::Binary(b) if !b.is_empty() => {
-                                let t = b[0];
-                                t == 4 || t == 5 || t == 6
-                            },
-                            AxumMsg::Text(t) => {
-                                let tl = t.to_lowercase();
-                                tl.contains("mouse") || tl.contains("key") || tl.contains("touch") || tl.contains("clipboard")
-                            },
-                            _ => false,
-                        };
-
-                        let now = chrono::Utc::now().timestamp();
-                        if is_activity && (now - last_update > 30) {
-                            match &msg {
-                                AxumMsg::Binary(b) if !b.is_empty() => {
-                                    tracing::info!("Proxy: User activity detected (Binary type: {}) for user {}", b[0], user_uuid);
+                // client → server
+                let c2s = tokio::spawn(async move {
+                    use axum::extract::ws::Message as AxumMsg;
+                    use tokio_tungstenite::tungstenite::Message as TungMsg;
+                    loop {
+                        match client_rx.next().await {
+                            Some(Ok(msg)) => {
+                                let is_close = matches!(msg, AxumMsg::Close(_));
+                                let tung_msg = match msg {
+                                    AxumMsg::Text(t)   => TungMsg::Text(t),
+                                    AxumMsg::Binary(b) => TungMsg::Binary(b),
+                                    AxumMsg::Ping(p)   => TungMsg::Ping(p),
+                                    AxumMsg::Pong(p)   => TungMsg::Pong(p),
+                                    AxumMsg::Close(_)  => TungMsg::Close(None),
+                                };
+                                if let Err(e) = server_tx.send(tung_msg).await {
+                                    tracing::debug!("Proxy c2s: server send error: {}", e);
+                                    break;
                                 }
-                                AxumMsg::Text(t) => {
-                                    let snippet = t.chars().take(50).collect::<String>();
-                                    tracing::info!("Proxy: User activity detected (Text: {}...) for user {}", snippet, user_uuid);
-                                }
-                                _ => {}
+                                if is_close { break; }
                             }
-                            let mut containers = state.active_containers.write().await;
-                            if let Some(info) = containers.get_mut(&user_uuid) {
-                                info.last_active = now;
-                            }
-                            last_update = now;
-                        }
-                        
-                        let tung_msg = match msg {
-                            AxumMsg::Text(t) => TungMsg::Text(t),
-                            AxumMsg::Binary(b) => TungMsg::Binary(b),
-                            AxumMsg::Ping(p) => TungMsg::Ping(p),
-                            AxumMsg::Pong(p) => TungMsg::Pong(p),
-                            AxumMsg::Close(_) => {
-                                tracing::debug!("Proxy: Client sent Close message");
-                                TungMsg::Close(None)
-                            },
-                        };
-                        if let Err(e) = server_tx.send(tung_msg).await {
-                            tracing::error!("Proxy: Failed to forward message back to server: {}", e);
-                            break;
-                        }
-                    }
-                    tracing::debug!("Proxy: client_to_server loop terminated");
-                };
-
-                let server_to_client = async {
-                    while let Some(msg_result) = server_rx.next().await {
-                        let msg = match msg_result {
-                            Ok(m) => m,
-                            Err(e) => {
-                                tracing::error!("Proxy: Error reading from server WS: {}", e);
+                            Some(Err(e)) => {
+                                tracing::debug!("Proxy c2s: client recv error: {}", e);
                                 break;
                             }
-                        };
-                        use axum::extract::ws::Message as AxumMsg;
-                        use tokio_tungstenite::tungstenite::Message as TungMsg;
-                        let ax_msg = match msg {
-                            TungMsg::Text(t) => AxumMsg::Text(t),
-                            TungMsg::Binary(b) => AxumMsg::Binary(b),
-                            TungMsg::Ping(p) => AxumMsg::Ping(p),
-                            TungMsg::Pong(p) => AxumMsg::Pong(p),
-                            TungMsg::Close(_) => {
-                                tracing::debug!("Proxy: Server sent Close message");
-                                AxumMsg::Close(None)
-                            },
-                            TungMsg::Frame(_) => continue,
-                        };
-                        if let Err(e) = client_tx.send(ax_msg).await {
-                            tracing::error!("Proxy: Failed to forward message back to client: {}", e);
-                            break;
+                            None => break,
                         }
                     }
-                    tracing::debug!("Proxy: server_to_client loop terminated");
-                };
+                    // Propagate Close to server so Selkies can reset signaling cleanly.
+                    let _ = server_tx.send(TungMsg::Close(None)).await;
+                    tracing::debug!("Proxy c2s: loop done, Close sent to server");
+                });
 
-                tokio::select! {
-                    _ = client_to_server => {}
-                    _ = server_to_client => {}
-                }
+                // server → client
+                let s2c = tokio::spawn(async move {
+                    use axum::extract::ws::Message as AxumMsg;
+                    use tokio_tungstenite::tungstenite::Message as TungMsg;
+                    loop {
+                        match server_rx.next().await {
+                            Some(Ok(msg)) => {
+                                let is_close = matches!(msg, TungMsg::Close(_));
+                                let ax_msg = match msg {
+                                    TungMsg::Text(t)   => AxumMsg::Text(t),
+                                    TungMsg::Binary(b) => AxumMsg::Binary(b),
+                                    TungMsg::Ping(p)   => AxumMsg::Ping(p),
+                                    TungMsg::Pong(p)   => AxumMsg::Pong(p),
+                                    TungMsg::Close(_)  => AxumMsg::Close(None),
+                                    TungMsg::Frame(_)  => continue,
+                                };
+                                if let Err(e) = client_tx.send(ax_msg).await {
+                                    tracing::debug!("Proxy s2c: client send error: {}", e);
+                                    break;
+                                }
+                                if is_close { break; }
+                            }
+                            Some(Err(e)) => {
+                                tracing::debug!("Proxy s2c: server recv error: {}", e);
+                                break;
+                            }
+                            None => break,
+                        }
+                    }
+                    // Propagate Close to client so the browser knows the session ended.
+                    let _ = client_tx.send(AxumMsg::Close(None)).await;
+                    tracing::debug!("Proxy s2c: loop done, Close sent to client");
+                });
+
+                // Wait for both halves — neither is discarded prematurely.
+                let _ = tokio::join!(c2s, s2c);
             }
             Err(e) => {
                 tracing::error!("Failed to connect to backend WS: {}", e);
             }
         }
     })
+}
+
+/// Called by the frontend (via navigator.sendBeacon) when the user intentionally
+/// navigates away from the OSCAR view. We evict the container from the active map
+/// and initiate a graceful stop so the next launch always gets a clean Selkies process.
+pub async fn oscar_disconnect_handler(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+) -> Response {
+    let claims = match req.extensions().get::<OscarClaims>() {
+        Some(c) => c.clone(),
+        None => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    let user_uuid = claims.uuid.clone();
+
+    // Remove from active map immediately so the next oscar_launch triggers a clean
+    // container provision via ensure_oscar_container (which force-removes first).
+    let maybe_container = {
+        let mut containers = state.active_containers.write().await;
+        containers.remove(&user_uuid)
+    };
+
+    if let Some(info) = maybe_container {
+        let docker = state.docker.clone();
+        let container_id = info.container_id.clone();
+        let uuid_log = user_uuid.clone();
+        tokio::spawn(async move {
+            tracing::info!("oscar_disconnect: gracefully stopping container {} for user {}", container_id, uuid_log);
+            let _ = docker.stop_container(&container_id, Some(StopContainerOptions { t: 5 })).await;
+            let _ = docker.remove_container(
+                &container_id,
+                Some(RemoveContainerOptions { force: true, v: true, ..Default::default() }),
+            ).await;
+            tracing::info!("oscar_disconnect: container {} removed for user {}", container_id, uuid_log);
+        });
+    } else {
+        tracing::debug!("oscar_disconnect: no active container for user {}, nothing to evict", user_uuid);
+    }
+
+    StatusCode::NO_CONTENT.into_response()
 }
 
 pub async fn cleanup_oscar_session(state: Arc<AppState>, uuid: String, container_id: String) {

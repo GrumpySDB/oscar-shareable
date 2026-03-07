@@ -136,10 +136,15 @@ services:
       - ./data/profiles:/config/Documents/OSCAR_Data:rw
       - ./data/uploads:/config/Documents/SDCARD:rw
       - ./data/app_config:/config/.config/OSCAR_Team:rw
+    deploy:
+      resources:
+        limits:
+          memory: 768m
     environment:
       PUID: "911"
       PGID: "911"
       TZ: "America/Chicago"
+      MAX_RES: "3840x2160"
       TITLE: "OSCAR ${OSCAR_VERSION:-1.7.1}"
       START_DOCKER: "false"
       DISABLE_IPV6: "true"
@@ -155,7 +160,8 @@ services:
       SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS: "false"
       SELKIES_UI_SIDEBAR_SHOW_SHARING: "false"
       SELKIES_MICROPHONE_ENABLED: "false"
-      SELKIES_CLIPBOARD_ENABLED: "false"
+      SELKIES_CLIPBOARD_IN_ENABLED: "false"
+      SELKIES_CLIPBOARD_OUT_ENABLED: "true"
       SELKIES_SECOND_SCREEN: "false"
       SELKIES_ENABLE_SHARING: "false"
     networks:
