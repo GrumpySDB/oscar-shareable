@@ -22,7 +22,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use bollard::container::{StopContainerOptions, RemoveContainerOptions, ListContainersOptions};
+use bollard::container::{StopContainerOptions, RemoveContainerOptions, ListContainersOptions, InspectContainerOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -37,10 +37,12 @@ async fn main() -> anyhow::Result<()> {
     // Orphan cleanup and volume pruning
     {
         let docker_clone = shared_state.docker.clone();
+        let config_clone = cfg.clone();
         tokio::spawn(async move {
             tracing::info!("Scanning for orphaned OSCAR containers...");
             let mut filters = std::collections::HashMap::new();
-            filters.insert("name".to_string(), vec!["oscar-session-".to_string()]);
+            // Match both primary and ephemeral containers
+            filters.insert("name".to_string(), vec!["oscar-session-".to_string(), "oscar-ephemeral-".to_string()]);
             
             let options = ListContainersOptions {
                 all: true,
@@ -51,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
             if let Ok(containers) = docker_clone.list_containers(Some(options)).await {
                 for c in containers {
                     if let Some(names) = c.names {
-                        if names.iter().any(|n| n.starts_with("/oscar-session-")) {
+                        if names.iter().any(|n| n.starts_with("/oscar-session-") || n.starts_with("/oscar-ephemeral-")) {
                             if let Some(id) = c.id {
                                 tracing::info!("Removing orphaned container {}", id);
                                 let _ = docker_clone.stop_container(&id, None::<StopContainerOptions>).await;
@@ -64,6 +66,34 @@ async fn main() -> anyhow::Result<()> {
             
             tracing::info!("Pruning dangling Docker volumes...");
             let _ = docker_clone.prune_volumes(None::<bollard::volume::PruneVolumesOptions<String>>).await;
+
+            // Also cleanup orphaned ephemeral directories on disk
+            tracing::info!("Scanning for orphaned ephemeral directories...");
+            let profile_root = PathBuf::from(crate::config::PROFILE_ROOT);
+            let app_config_root = PathBuf::from(&config_clone.app_config_root);
+
+            let mut ephemeral_keys = std::collections::HashSet::new();
+            if let Ok(mut entries) = tokio::fs::read_dir(&profile_root).await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    if let Some(name) = entry.file_name().to_str() {
+                        if let Some(key) = name.strip_prefix("ephemeral_") {
+                            ephemeral_keys.insert(key.to_string());
+                        }
+                    }
+                }
+            }
+
+            for key in ephemeral_keys {
+                let container_name = format!("oscar-ephemeral-{}", key);
+                // If container doesn't exist, purge the directories
+                if docker_clone.inspect_container(&container_name, None::<InspectContainerOptions>).await.is_err() {
+                    tracing::info!("Purging orphaned ephemeral data for key {}", key);
+                    let p_dir = profile_root.join(format!("ephemeral_{}", key));
+                    let c_dir = app_config_root.join(format!("ephemeral_{}", key));
+                    let _ = tokio::fs::remove_dir_all(p_dir).await;
+                    let _ = tokio::fs::remove_dir_all(c_dir).await;
+                }
+            }
         });
     }
 
@@ -77,23 +107,22 @@ async fn main() -> anyhow::Result<()> {
 
             {
                 let containers = cleaner_state.active_containers.read().await;
-                for (uuid, info) in containers.iter() {
+                for (container_key, info) in containers.iter() {
                     let timeout = cleaner_state.config.oscar_idle_timeout_seconds;
                     if now - info.last_active > timeout {
-                        to_remove.push((uuid.clone(), info.container_id.clone()));
+                        to_remove.push((container_key.clone(), info.owner_uuid.clone(), info.container_id.clone()));
                     }
                 }
             }
 
-            for (uuid, container_id) in to_remove {
+            for (container_key, owner_uuid, container_id) in to_remove {
                 let state_clone = cleaner_state.clone();
-                let uuid_clone = uuid.clone();
                 tokio::spawn(async move {
-                    crate::proxy::cleanup_oscar_session(state_clone, uuid_clone, container_id).await;
+                    crate::proxy::cleanup_oscar_session(state_clone, owner_uuid, container_id).await;
                 });
 
                 let mut containers = cleaner_state.active_containers.write().await;
-                containers.remove(&uuid);
+                containers.remove(&container_key);
             }
         }
     });
@@ -101,7 +130,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting secure-uploader Rust version...");
 
     let public_dir = PathBuf::from("./public");
-    let serve_dir = ServeDir::new(&public_dir).not_found_service(ServeFile::new(public_dir.join("index.html")));
+    // serve_dir will be used as a fallback for the root to serve index.html, 
+    // but we'll handle assets and specific pages separately to ensure disk-freshness.
+    let serve_dir = ServeDir::new(&public_dir)
+        .fallback(ServeFile::new("./public/index.html"));
 
     let admin_api_routes = Router::new()
         .route("/users", get(auth::list_users_handler))
@@ -137,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/share/:share_token", get(proxy::oscar_share_launch))
                 .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware))
         )
+        .layer(DefaultBodyLimit::disable()) // Disable 2MB multipart limits explicitly for all API routes before nest
         .with_state(shared_state.clone());
 
     // /oscar/login is a separate route with its own launch-token auth (not session-cookie based).
@@ -173,12 +206,12 @@ async fn main() -> anyhow::Result<()> {
         .layer(middleware::from_fn(add_security_headers));
 
     let admin_page_route = Router::new()
-        .route("/admin", get(|| async { Html(include_str!("../public/admin.html")) }))
+        .route_service("/admin", ServeFile::new("./public/admin.html"))
         .layer(middleware::from_fn(auth::admin_middleware))
         .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
 
     let invite_page_route = Router::new()
-        .route("/invite", get(|| async { Html(include_str!("../public/invite.html")) }));
+        .route_service("/invite", ServeFile::new("./public/invite.html"));
 
     let app = Router::new()
         .nest("/api", api_routes)
@@ -186,11 +219,16 @@ async fn main() -> anyhow::Result<()> {
         .merge(proxy_routes)
         .merge(admin_page_route)
         .merge(invite_page_route)
-        .route("/privacy-security-policy", get(|| async { Html(include_str!("../public/privacy-security-policy.html")) }))
-        .route("/how-to-uploader", get(|| async { Html(include_str!("../public/how-to-uploader.html")) }))
-        .route("/faq", get(|| async { Html(include_str!("../public/faq.html")) }))
-        .route("/recovery", get(|| async { Html(include_str!("../public/recovery.html")) }))
-        .route("/recovery/", get(|| async { Html(include_str!("../public/recovery.html")) }))
+        .route_service("/", ServeFile::new("./public/index.html"))
+        .route_service("/privacy-security-policy", ServeFile::new("./public/privacy-security-policy.html"))
+        .route_service("/how-to-uploader", ServeFile::new("./public/how-to-uploader.html"))
+        .route_service("/faq", ServeFile::new("./public/faq.html"))
+        .route_service("/licensing", ServeFile::new("./public/licensing.html"))
+        .route_service("/recovery", ServeFile::new("./public/recovery.html"))
+        .route_service("/recovery/", ServeFile::new("./public/recovery.html"))
+        .route_service("/share/*path", ServeFile::new("./public/index.html"))
+        .nest_service("/assets", ServeDir::new("./public/assets"))
+        .nest_service("/images", ServeDir::new("./public/images"))
         .fallback_service(serve_dir)
         .layer(security_headers)
         .layer(TraceLayer::new_for_http())
@@ -222,7 +260,7 @@ async fn add_security_headers(req: Request, next: Next) -> Response {
         headers.insert(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(
-                "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
             ),
         );
         headers.insert(header::VARY, HeaderValue::from_static("Authorization"));

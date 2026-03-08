@@ -1,9 +1,10 @@
 use axum::{
-    extract::{Multipart, State},
-    Extension,
-    http::StatusCode,
+    extract::{State, Request},
+    http::{header, StatusCode},
     response::{IntoResponse, Json},
+    Extension,
 };
+use multer::{Constraints, Multipart as MulterMultipart, SizeLimit};
 use std::{path::PathBuf, sync::Arc};
 use tokio::{fs, io::AsyncWriteExt};
 use serde::Deserialize;
@@ -62,18 +63,29 @@ pub async fn delete_folder(
 ) -> impl IntoResponse {
     let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
 
-    // 1. Evict active OSCAR container if it exists
-    let uuid = claims.uuid.clone();
-    let docker = state.docker.clone();
-    let state_arc = state.clone();
+    // 1. Evict active OSCAR containers (primary and guest) if they exist
+    {
+        let mut containers = state.active_containers.write().await;
+        let mut to_cleanup = Vec::new();
+        let uuid_param = claims.uuid.clone();
+        
+        containers.retain(|_, info| {
+            if info.owner_uuid == uuid_param {
+                to_cleanup.push(info.container_id.clone());
+                false
+            } else {
+                true
+            }
+        });
 
-    let mut containers = state_arc.active_containers.write().await;
-    if let Some(info) = containers.remove(&uuid) {
-        tracing::info!("Evicting OSCAR container {} due to data deletion request.", info.container_id);
-        let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
-        let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+        for cid in to_cleanup {
+            let state_clone = state.clone();
+            let upid = uuid_param.clone();
+            tokio::spawn(async move {
+                crate::proxy::cleanup_oscar_session(state_clone, upid, cid).await;
+            });
+        }
     }
-    drop(containers);
 
     // 2. Erase files
     let upload_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
@@ -108,8 +120,35 @@ struct Envelope {
 pub async fn handle_upload(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
-    mut multipart: Multipart,
+    req: Request,
 ) -> impl IntoResponse {
+    let boundary = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|ct| ct.to_str().ok())
+        .and_then(|ct| multer::parse_boundary(ct).ok())
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Invalid or missing multipart boundary" })),
+        ));
+
+    let boundary = match boundary {
+        Ok(b) => b,
+        Err(e) => return e.into_response(),
+    };
+
+    // Explicitly set constraints to bypass Axum's hidden 2MB per-field limit.
+    // We allow up to 10MB per field (MAX_FILE_SIZE) and a total limit for the whole batch.
+    let constraints = Constraints::new()
+        .size_limit(
+            SizeLimit::new()
+                .per_field(MAX_FILE_SIZE as u64)
+                .whole_stream(state.config.max_upload_batch_bytes as u64)
+        );
+
+    let stream = req.into_body().into_data_stream();
+    let mut multipart = MulterMultipart::with_constraints(stream, boundary, constraints);
+
     let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
     let mut tinfoil_hat_mode = false;
     let mut total_batches = 1usize;
@@ -140,7 +179,19 @@ pub async fn handle_upload(
     let mut batch_bytes_total: usize = 0;
     let max_batch_bytes = state.config.max_upload_batch_bytes;
 
-    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::error!("Multipart error: {}", e);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": format!("Multipart parsing error: {}", e) })),
+                ).into_response();
+            }
+        };
+
         let name = field.name().unwrap_or("").to_string();
         
         if name == "folder" { let _ = field.text().await; } // Ignored, using claims.username
@@ -164,40 +215,60 @@ pub async fn handle_upload(
             let mut file_buf: Vec<u8> = Vec::new();
             let mut field = field;
 
-            while let Ok(Some(chunk)) = field.chunk().await {
-                let new_file_size = file_buf.len() + chunk.len();
-                if new_file_size > MAX_FILE_SIZE {
-                    // Individual file exceeds 10MB — not valid CPAP SD card data
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(serde_json::json!({
-                            "error": format!(
-                                "The file \"{}\" exceeds the 10 MB size limit. \
-                                 Files larger than 10 MB are not expected in CPAP data \
-                                 and have been rejected for your protection.",
-                                file_name
-                            )
-                        })),
-                    );
-                }
+            loop {
+                match field.chunk().await {
+                    Ok(Some(chunk)) => {
+                        let new_file_size = file_buf.len() + chunk.len();
 
-                let new_batch_total = batch_bytes_total + file_buf.len() + chunk.len();
-                if new_batch_total > max_batch_bytes {
-                    let limit_mb = max_batch_bytes / (1024 * 1024);
-                    return (
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        Json(serde_json::json!({
-                            "error": format!(
-                                "This upload batch exceeds the {} MB total size limit. \
-                                 Please try selecting a more recent start date to reduce \
-                                 the number of files per upload.",
-                                limit_mb
-                            )
-                        })),
-                    );
-                }
+                        if new_file_size > MAX_FILE_SIZE {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                Json(serde_json::json!({
+                                    "error": format!(
+                                        "The file \"{}\" exceeds the 10 MB size limit. \
+                                         Files larger than 10 MB are not expected in CPAP data \
+                                         and have been rejected for your protection.",
+                                        file_name
+                                    )
+                                })),
+                            ).into_response();
+                        }
 
-                file_buf.extend_from_slice(&chunk);
+                        let new_batch_total = batch_bytes_total + file_buf.len() + chunk.len();
+                        if new_batch_total > max_batch_bytes {
+                            let limit_mb = max_batch_bytes / (1024 * 1024);
+                            return (
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                Json(serde_json::json!({
+                                    "error": format!(
+                                        "This upload batch exceeds the {} MB total size limit. \
+                                         Please try selecting a more recent start date to reduce \
+                                         the number of files per upload.",
+                                        limit_mb
+                                    )
+                                })),
+                            ).into_response();
+                        }
+
+                        file_buf.extend_from_slice(&chunk);
+                    }
+                    Ok(None) => {
+                        break; // EOF
+                    }
+                    Err(e) => {
+                        tracing::error!("Error reading multipart chunk for file {}: {}", file_name, e);
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": format!(
+                                    "Failed to read file \"{}\" during upload. Connection may have been interrupted or a limit was hit: {}",
+                                    file_name,
+                                    e
+                                )
+                            })),
+                        ).into_response();
+                    }
+                }
             }
 
             if !file_buf.is_empty() {
@@ -235,11 +306,15 @@ pub async fn handle_upload(
         if tinfoil_hat_mode {
             if let Some(env) = envelopes.get(&sanitized_path).or_else(|| envelopes.get(&filename)) {
                 match decrypt_payload(&final_payload, env, &state.config.app_encryption_private_key) {
-                    Ok(decrypted) => final_payload = decrypted,
-                    Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Unable to decrypt {}", sanitized_path) }))),
+                    Ok(decrypted) => {
+                        final_payload = decrypted;
+                    }
+                    Err(_) => {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Unable to decrypt {}", sanitized_path) }))).into_response();
+                    }
                 }
             } else {
-                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Missing envelope for {}", sanitized_path) })));
+                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Missing envelope for {}", sanitized_path) }))).into_response();
             }
         }
 
@@ -314,6 +389,15 @@ pub async fn handle_upload(
         });
     }
 
+    // --- Final Drain of JoinSet ---
+    // Critical: Without this final loop, the remaining tasks in the JoinSet (up to MAX_CONCURRENT_WRITES)
+    // would be aborted when the JoinSet is dropped at the end of this function.
+    while let Some(res) = join_set.join_next().await {
+        if let Ok(true) = res {
+            uploaded_count += 1;
+        }
+    }
+
     // --- Update Profile.xml if this is an SD card upload ---
     if upload_type == "sdcard" && batch_index + 1 == total_batches {
         if let Some(first_file) = first_file_name {
@@ -338,7 +422,7 @@ pub async fn handle_upload(
         "uploaded": uploaded_count,
         "batchIndex": batch_index,
         "totalBatches": total_batches
-    })))
+    }))).into_response()
 }
 
 async fn update_last_cpap_path(path: &std::path::Path, new_value: &str) -> std::io::Result<()> {

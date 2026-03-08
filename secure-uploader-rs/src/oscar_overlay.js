@@ -30,7 +30,7 @@
   // lastShareLaunchToken present → user is viewing someone else's shared profile.
   var isSharedView = false;
   try {
-    isSharedView = !!sessionStorage.getItem('lastShareLaunchToken');
+    isSharedView = !!(document.body.dataset.guestSession === 'true' || sessionStorage.getItem('lastShareLaunchToken'));
   } catch (_e) { }
 
   // ─── Styles ──────────────────────────────────────────────────────────────────

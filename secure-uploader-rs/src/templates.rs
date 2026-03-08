@@ -87,7 +87,7 @@ pub const PROFILE_XML_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   <UserFlowRestriction type="QString">20</UserFlowRestriction>
   <PulseChangeDuration type="double">8</PulseChangeDuration>
   <UnitSystem type="int">1</UnitSystem>
-  <BackupCardData type="bool">true</BackupCardData>
+  <BackupCardData type="bool">false</BackupCardData>
   <EventPostcontext type="double">0</EventPostcontext>
   <PulseChangeBPM type="double">5</PulseChangeBPM>
   <ShowLeakRedline type="bool">true</ShowLeakRedline>

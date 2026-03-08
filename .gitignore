@@ -7,3 +7,6 @@ secrets/
 certs/
 session.json
 template.json
+Cargo.lock
+target/
+.vscode/

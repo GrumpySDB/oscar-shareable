@@ -4,8 +4,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description"
+    content="Frequently Asked Questions about the OSCAR Secure Uploader, including device support, troubleshooting, and security features." />
   <title>OSCAR Secure Upload FAQ</title>
   <link rel="stylesheet" href="./src/index.css" />
+  <script type="module" src="./src/faq.js"></script>
 </head>
 
 <body>
@@ -14,62 +17,190 @@
       <div class="header-row">
         <h1>Frequently Asked Questions</h1>
         <div class="header-actions">
-          <a href="/" class="header-link-btn back-btn">Back to Uploader</a>
+          <a href="/" class="header-link-btn back-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            Back to Uploader
+          </a>
         </div>
       </div>
 
-      <details>
-        <summary>What is Tinfoil Hat Mode (End-to-End Encryption)?</summary>
-        <p>
-          Tinfoil Hat Mode adds application-layer encryption in your browser before files are uploaded.
-          Files are encrypted with AES-256-GCM and the per-file key is wrapped with the uploader server's RSA public
-          key.
-          This means intermediaries only see ciphertext.
-        </p>
-        <p><strong>Why do this if HTTPS already exists?</strong></p>
-        <p>
-          Cloudflare-terminated TLS protects traffic on the network, but Cloudflare can still see plaintext while
-          proxying content.
-          Application-layer encryption helps address that shortcoming by keeping upload contents encrypted until they
-          reach the uploader origin,
-          where decryption happens server-side.
-        </p>
-        <p><strong>Is this required?</strong></p>
-        <p>
-          Not really required. Resmed SD card files used by OSCAR generally do not contain personal identity data.
-          This extra encryption is optional, provided as a courtesy, and included because it is a fun proof-of-concept.
-        </p>
-      </details>
+      <div class="faq-container" id="faqAccordion">
+        <!-- New Section 1 -->
+        <div class="faq-item">
+          <button class="faq-question">
+            <span>What device models does the uploader support?</span>
+            <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="faq-answer">
+            <div class="faq-answer-inner">
+              <div class="faq-answer-content">
+                <p>The uploader currently supports various <strong>Resmed Airsense 10 and 11</strong> CPAP devices. It
+                  also supports <strong>Wellue / Viatom</strong> oximetry data as well as <strong>Emay</strong> oximetry
+                  data.</p>
+                <p>As the developer does not have access to data samples from other models to test with, the uploader
+                  cannot yet support any other devices. Please reach out if you want to assist in getting support for
+                  your
+                  device!</p>
+              </div>
+            </div>
+          </div>
+        </div>
 
-      <details>
-        <summary>What is a local anonymous account and how does it work?</summary>
-        <p>
-          Local accounts are offered as a privacy-first option for users who wish to remain fully anonymous instead of
-          linking a third-party login like Discord.
-        </p>
-        <p>
-          It is an intentional choice by the developer not to collect or store your email address. Instead, a highly
-          secure password and a recovery phrase are generated for you automatically upon signup. By generating a
-          password for you, the application ensures you cannot accidentally reuse a password you have used in another
-          application, which protects your privacy and security.
-        </p>
-        <p>
-          Because no email address is collected, there is no traditional "forgot password" reset email option. If you
-          forget or lose your password and your recovery phrase, you must contact the administrator to have them
-          manually reset your password.
-        </p>
-      </details>
+        <!-- New Section 2 -->
+        <div class="faq-item">
+          <button class="faq-question">
+            <span>Why can't I upload my data?</span>
+            <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="faq-answer">
+            <div class="faq-answer-inner">
+              <div class="faq-answer-content">
+                <p>You may be selecting the wrong folder/location. OSCAR is a bit picky in how you select your data
+                  folder.</p>
+                <p>If you are uploading from a supported Resmed device, ensure that you are selecting the entire
+                  <strong>ROOT of your SD Card folder</strong> (so the entire SD card). <strong>Do not upload ONLY the
+                    DATALOG folder!</strong> The script will process the SD card contents locally in your browser, and
+                  it
+                  will only upload to the server the appropriate files necessary. It will not upload your entire SD
+                  Card,
+                  only the necessary new files within the selected date range.
+                </p>
+                <p>If you are uploading a wellue/viatom oximetry device data, look for the folder that contains the
+                  <code>db_o2.db</code> file and a numbered folder. You can select the numbered folder.
+                </p>
+                <p>For Emay data you can select the folder containing your <code>.spo2</code> files.</p>
+              </div>
+            </div>
+          </div>
+        </div>
 
-      <details>
-        <summary>What if I lose my password?</summary>
-        <p>
-          Because we do not collect email addresses, if you lose your generated password AND your recovery phrase, you
-          will not be able to log in. To reset your password, you must contact the site administrator and explain the
-          situation. They will be able to generate a new password for you.
-        </p>
-      </details>
+        <!-- New Section 3 -->
+        <div class="faq-item">
+          <button class="faq-question">
+            <span>Why is OSCAR laggy / slow / glitchy / looks weird?</span>
+            <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="faq-answer">
+            <div class="faq-answer-inner">
+              <div class="faq-answer-content">
+                <p>In most cases on most modern devices, it shouldn't be drastically different in terms of performance
+                  than OSCAR running on your home computer. However, some additional latency is expected due to the
+                  nature
+                  of running the application remotely from a VNC server and delivering to your web browser. Its not
+                  possible to be completely latency free in this current implementation.</p>
+                <p>However, you can tweak some of the display settings to see if it might help display it faster or
+                  better
+                  on your particular device. Click on the <strong>blue bar on the left side of the screen</strong>, and
+                  play around with display settings, screen settings, etc until you find something that works for you.
+                  You
+                  can also adjust screen resolution, UI scaling, anti-aliasing etc if you are having visual problems. I
+                  recommend applying <strong>"Use CSS cursors"</strong> because it helps OSCAR feel a little more
+                  responsive to your cursor movement.</p>
+                <p>The application is hosted in Montreal, Canada so the further away you are, the worse the latency may
+                  be. Its hosted on a modestly spec-ed VPS, so if there are multiple users accessing the service, the
+                  experience may degrade somewhat. Running OSCAR in a VPS requires a lot of compute resources compared
+                  to
+                  most web services, and high end hosting is not cheap. It is a free service (for you) which costs the
+                  developer money to make available, so please be patient.</p>
+              </div>
+            </div>
+          </div>
+        </div>
 
+        <!-- Existing: Tinfoil Hat -->
+        <div class="faq-item">
+          <button class="faq-question">
+            <span>What is Tinfoil Hat Mode (End-to-End Encryption)?</span>
+            <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="faq-answer">
+            <div class="faq-answer-inner">
+              <div class="faq-answer-content">
+                <p>Tinfoil Hat Mode adds application-layer encryption in your browser before files are uploaded. Files
+                  are
+                  encrypted with AES-256-GCM and the per-file key is wrapped with the uploader server's RSA public key.
+                  This means intermediaries only see ciphertext.</p>
+                <p><strong>Why do this if HTTPS already exists?</strong></p>
+                <p>Cloudflare-terminated TLS protects traffic on the network, but Cloudflare can still see plaintext
+                  while
+                  proxying content. Application-layer encryption helps address that shortcoming by keeping upload
+                  contents
+                  encrypted until they reach the uploader origin, where decryption happens server-side.</p>
+                <p><strong>Is this required?</strong></p>
+                <p>Not really required. Resmed SD card files used by OSCAR generally do not contain personal identity
+                  data. This extra encryption is optional, provided as a courtesy, and included because it is a fun
+                  proof-of-concept.</p>
+              </div>
+            </div>
+          </div>
+        </div>
 
+        <!-- Existing: Local Anonymous -->
+        <div class="faq-item">
+          <button class="faq-question">
+            <span>What is a local anonymous account and how does it work?</span>
+            <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="faq-answer">
+            <div class="faq-answer-inner">
+              <div class="faq-answer-content">
+                <p>Local accounts are offered as a privacy-first option for users who wish to remain fully anonymous
+                  instead of linking a third-party login like Discord.</p>
+
+                <p>It is an intentional choice by the developer not to collect or store your email address. Instead, a
+                  highly secure password and a recovery phrase are generated for you automatically upon signup. By
+                  generating a password for you, the application ensures you cannot accidentally reuse a password you
+                  have used in another application, which protects your privacy and security.</p>
+
+                <p>Because no email address is collected, there is no traditional "forgot password" reset email option.
+                  If
+                  you forget or lose your password and your recovery phrase, you must contact the administrator to have
+                  them manually reset your password.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Existing: Lose Password -->
+        <div class="faq-item">
+          <button class="faq-question">
+            <span>What if I lose my password?</span>
+            <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="faq-answer">
+            <div class="faq-answer-inner">
+              <div class="faq-answer-content">
+                <p>Because we do not collect email addresses, if you lose your generated password AND your recovery
+                  phrase, you will not be able to log in. To reset your password, you must contact the site
+                  administrator
+                  and explain the situation. They will be able to generate a new password for you.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -80,6 +211,8 @@
       <a href="/privacy-security-policy" class="policy-link">Privacy and Security Policy</a>
       <span class="footer-sep">•</span>
       <a href="/faq" class="policy-link">FAQ</a>
+      <span class="footer-sep">•</span>
+      <a href="/licensing" class="policy-link">Licensing</a>
       <span class="footer-sep">•</span>
       <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank"
         rel="noopener noreferrer">View Source on GitHub</a>

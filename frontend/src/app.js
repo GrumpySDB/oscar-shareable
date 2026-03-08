@@ -278,6 +278,47 @@ function getBasename(file) {
   return String(file?.name || '').split(/[\\/]/).pop() || '';
 }
 
+async function getAllFilesFromEntries(entries) {
+  const files = [];
+  async function process(entry) {
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      // Preserve the virtual path for later getRelativePath calls
+      // webkitRelativePath is normally read-only on File, so we'll 
+      // rely on a custom property if needed, but for drag-and-drop
+      // the relative path is typically what we want to reconstruct.
+      Object.defineProperty(file, 'webkitRelativePath', {
+        value: entry.fullPath.replace(/^\//, ''),
+        writable: false
+      });
+      files.push(file);
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const subEntries = await new Promise((resolve, reject) => {
+        let allEntries = [];
+        function readDir() {
+          reader.readEntries((results) => {
+            if (results.length === 0) {
+              resolve(allEntries);
+            } else {
+              allEntries = allEntries.concat(results);
+              readDir();
+            }
+          }, reject);
+        }
+        readDir();
+      });
+      for (const subEntry of subEntries) {
+        await process(subEntry);
+      }
+    }
+  }
+  for (const entry of entries) {
+    await process(entry);
+  }
+  return files;
+}
+
 function isTinfoilHatModeEnabled() {
   return document.getElementById('encryptionToggle')?.checked === true;
 }
@@ -385,6 +426,8 @@ async function proceedToAppFlow() {
       setMessage(`Unable to open shared profile: ${err.message}`, true);
     }
   } else {
+    // If we're entering the normal app flow, clear any stale share tokens
+    sessionStorage.removeItem('lastShareLaunchToken');
     showApp();
   }
 }
@@ -402,6 +445,10 @@ function hideShareModal() {
 async function checkSession() {
   try {
     const result = await api('/api/session');
+
+    if (result.authenticated === false) {
+      throw new Error('Not authenticated');
+    }
 
     const role = result.role || getRoleFromToken(token);
     if (role === 'admin') {
@@ -486,6 +533,7 @@ async function logout() {
   currentUsername = '';
   sessionStorage.removeItem('authToken');
   sessionStorage.removeItem('pendingShareLaunchToken');
+  sessionStorage.removeItem('lastShareLaunchToken');
 
   if (currentToken) {
     try {
@@ -522,12 +570,14 @@ function getUploadCompleteMessage() {
   return `Upload Complete.  Import your Oximetry data from /config/Documents/SDCARD/Oximetry`;
 }
 
-async function scanAndPrepare() {
+async function scanAndPrepare(manualFiles = null) {
   resetPreparedState(true);
 
+  let files = manualFiles;
+  if (!files) {
+    files = Array.from(document.getElementById('directoryInput').files || []);
+  }
 
-
-  const files = Array.from(document.getElementById('directoryInput').files || []);
   if (files.length === 0) {
     setMessage('Please choose an SD card folder first.', true);
     return;
@@ -892,17 +942,44 @@ async function uploadPreparedFiles() {
         encryptionEnvelope = encryptedPayload.envelope;
       }
 
-      setMessage(`Starting upload of batch ${batchIndex + 1}/${batches.length}...`);
+      let attempt = 0;
+      let success = false;
+      let lastError = null;
 
-      await uploadBatch({
-        files: filesToUpload,
-        batchIndex,
-        totalBatches: batches.length,
-        sessionId,
-        totalBytes,
-        tinfoilHatMode: tinfoilHatModeEnabled,
-        encryptionEnvelope,
-      });
+      while (attempt < 3 && !success) {
+        if (attempt > 0) {
+          const delay = 1000 * Math.pow(2, attempt);
+          setMessage(`Interruption detected. Retrying batch ${batchIndex + 1}/${batches.length} (Attempt ${attempt + 1}/3)... waiting ${delay / 1000}s`);
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          setMessage(`Starting upload of batch ${batchIndex + 1}/${batches.length}...`);
+        }
+
+        try {
+          await uploadBatch({
+            files: filesToUpload,
+            batchIndex,
+            totalBatches: batches.length,
+            sessionId,
+            totalBytes,
+            tinfoilHatMode: tinfoilHatModeEnabled,
+            encryptionEnvelope,
+          });
+          success = true;
+        } catch (error) {
+          lastError = error;
+          // Abort retries for deterministic rule-based failures (limits, validation)
+          if (error.message.includes('exceeds') || error.message.includes('rejected')) {
+            break;
+          }
+          console.warn(`Batch ${batchIndex + 1} failed on attempt ${attempt + 1}:`, error.message);
+          attempt += 1;
+        }
+      }
+
+      if (!success) {
+        throw new Error(lastError?.message || `Failed to definitively upload batch ${batchIndex + 1} after 3 attempts. Upload aborted.`);
+      }
     }
 
     progressBar.style.width = '100%';
@@ -932,7 +1009,14 @@ async function proceedToOscar() {
   if (overlay) overlay.classList.remove('hidden');
 
   try {
-    const shareToken = sessionStorage.getItem('pendingShareLaunchToken') || sessionStorage.getItem('lastShareLaunchToken');
+    // Only use a share token if one was explicitly pending for this specific flow.
+    // We should NOT fall back to lastShareLaunchToken here, as that is only for UI badges/persistence
+    // of an already-launched shared session.
+    const shareToken = sessionStorage.getItem('pendingShareLaunchToken');
+    if (!shareToken) {
+      // Ensure we clear any legacy share tokens when performing a personal launch
+      sessionStorage.removeItem('lastShareLaunchToken');
+    }
     const endpoint = shareToken ? `/api/share/${shareToken}` : '/api/oscar-launch';
     const method = shareToken ? 'GET' : 'POST';
     const result = await api(endpoint, { method });
@@ -1098,6 +1182,62 @@ if (genLinkOverlay) {
     if (e.target === genLinkOverlay) hideShareModal();
   });
 }
+
+// --- Drag and Drop Logic ---
+
+const dragOverlay = document.getElementById('dragOverlay');
+let dragCounter = 0;
+
+function showDrag() {
+  dragOverlay?.classList.remove('hidden');
+  document.body.classList.add('drag-active');
+}
+
+function hideDrag() {
+  dragOverlay?.classList.add('hidden');
+  document.body.classList.remove('drag-active');
+}
+
+window.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  dragCounter++;
+  if (dragCounter === 1) showDrag();
+});
+
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+});
+
+window.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter === 0) hideDrag();
+});
+
+window.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  hideDrag();
+
+  const items = e.dataTransfer.items;
+  if (!items) return;
+
+  setMessage('Processing dropped items...');
+  const entries = Array.from(items)
+    .map(item => item.webkitGetAsEntry())
+    .filter(Boolean);
+
+  try {
+    const droppedFiles = await getAllFilesFromEntries(entries);
+    if (droppedFiles.length > 0) {
+      scanAndPrepare(droppedFiles);
+    } else {
+      setMessage('No files found in dropped items.', true);
+    }
+  } catch (err) {
+    setMessage(`Error processing dropped items: ${err.message}`, true);
+  }
+});
 
 document.getElementById('loginForm').addEventListener('submit', (event) => {
   event.preventDefault();

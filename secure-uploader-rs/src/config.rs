@@ -112,12 +112,14 @@ pub struct ContainerInfo {
     pub container_id: String,
     pub ip_address: String,
     pub last_active: i64,
+    pub owner_uuid: String,
 }
 
 #[derive(Clone)]
 pub struct SessionInfo {
     pub uuid: String,
     pub expires_at: i64,
+    pub is_guest: bool,
 }
 
 #[derive(Clone)]

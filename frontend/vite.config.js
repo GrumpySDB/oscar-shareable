@@ -12,6 +12,7 @@ export default defineConfig({
                 howto: resolve(__dirname, 'how-to-uploader.html'),
                 privacy: resolve(__dirname, 'privacy-security-policy.html'),
                 recovery: resolve(__dirname, 'recovery.html'),
+                licensing: resolve(__dirname, 'licensing.html'),
             },
         },
         outDir: 'dist',

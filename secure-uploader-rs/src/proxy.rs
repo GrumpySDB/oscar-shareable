@@ -27,34 +27,101 @@ struct LaunchTokenClaims {
     pub jti: String,
     pub purpose: String,
     pub exp: i64,
+    pub container_key: String,
+}
+
+async fn create_ephemeral_profile(owner_username: &str, ephemeral_folder: &str) -> std::io::Result<()> {
+    let script = format!(r#"
+        PROFILE="{}"
+        EPHEM="{}"
+        mkdir -p data/profiles/$EPHEM/Profiles/$PROFILE
+        cp -r data/profiles/$PROFILE/Profiles/$PROFILE/*.xml data/profiles/$EPHEM/Profiles/$PROFILE/ 2>/dev/null || true
+        cp -r data/profiles/$PROFILE/Profiles/$PROFILE/lockfile data/profiles/$EPHEM/Profiles/$PROFILE/ 2>/dev/null || true
+        cp -r data/profiles/$PROFILE/Profiles/$PROFILE/*.dat data/profiles/$EPHEM/Profiles/$PROFILE/ 2>/dev/null || true
+        cp -r data/profiles/$PROFILE/Profiles/$PROFILE/*.shg data/profiles/$EPHEM/Profiles/$PROFILE/ 2>/dev/null || true
+        cp -r data/profiles/$PROFILE/Profiles/$PROFILE/*.cache data/profiles/$EPHEM/Profiles/$PROFILE/ 2>/dev/null || true
+        
+        for machine in data/profiles/$PROFILE/Profiles/$PROFILE/*/; do
+            [ -d "$machine" ] || continue
+            mname=$(basename "$machine")
+            mkdir -p "data/profiles/$EPHEM/Profiles/$PROFILE/$mname"
+            for item in "$machine"*; do
+                iname=$(basename "$item")
+                if [ -d "$item" ]; then
+                    ln -s "/original_profile/Profiles/$PROFILE/$mname/$iname" "data/profiles/$EPHEM/Profiles/$PROFILE/$mname/$iname"
+                else
+                    cp -r "$item" "data/profiles/$EPHEM/Profiles/$PROFILE/$mname/" 2>/dev/null || true
+                fi
+            done
+        done
+        
+        mkdir -p data/app_config/$EPHEM
+        cp -r data/app_config/$PROFILE/* data/app_config/$EPHEM/ 2>/dev/null || true
+    "#, owner_username, ephemeral_folder);
+
+    let status = tokio::process::Command::new("bash")
+        .arg("-c")
+        .arg(&script)
+        .status()
+        .await?;
+        
+    if !status.success() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to create ephemeral profile"));
+    }
+    
+    #[cfg(unix)]
+    {
+        let p_dir = format!("data/profiles/{}", ephemeral_folder);
+        let c_dir = format!("data/app_config/{}", ephemeral_folder);
+        let _ = tokio::process::Command::new("chown").args(&["-R", "911:911", &p_dir, &c_dir]).status().await;
+    }
+    
+    Ok(())
 }
 
 pub async fn ensure_oscar_container(
     state: &Arc<AppState>,
     owner_uuid: &str,
     owner_username: &str,
+    container_key: &str,
+    is_ephemeral: bool,
 ) -> Result<(), (StatusCode, axum::Json<serde_json::Value>)> {
     let host_path = std::env::var("DOCKER_HOST_PATH").unwrap_or_else(|_| ".".to_string());
     let docker_network = std::env::var("DOCKER_NETWORK").unwrap_or_else(|_| "oscar-shareable_internal".to_string());
     
-    // Safety check: ensure owner_username is sanitized to avoid path traversal
-    let username = crate::utils::sanitize_folder_name(owner_username).unwrap_or(owner_uuid.to_string());
-    let container_name = format!("oscar-session-{}", owner_uuid);
+    let base_username = crate::utils::sanitize_folder_name(owner_username).unwrap_or(owner_uuid.to_string());
+    let active_username = if is_ephemeral {
+        format!("ephemeral_{}", container_key)
+    } else {
+        base_username.clone()
+    };
+    
+    let container_name = if is_ephemeral {
+        format!("oscar-ephemeral-{}", container_key)
+    } else {
+        format!("oscar-session-{}", container_key)
+    };
 
-    // Ensure directories exist on host before container start to prevent Docker from creating them as root
-    let uploads_dir = std::path::PathBuf::from("./data/uploads").join(&username);
-    let profiles_dir = std::path::PathBuf::from("./data/profiles").join(&username);
-    let app_config_dir = std::path::PathBuf::from("./data/app_config").join(&username);
-    let _ = tokio::fs::create_dir_all(&uploads_dir).await;
-    let _ = tokio::fs::create_dir_all(&profiles_dir).await;
-    let _ = tokio::fs::create_dir_all(&app_config_dir).await;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::chown;
-        let _ = chown(&uploads_dir, Some(911), Some(911));
-        let _ = chown(&profiles_dir, Some(911), Some(911));
-        let _ = chown(&app_config_dir, Some(911), Some(911));
+    let uploads_dir = std::path::PathBuf::from("./data/uploads").join(&base_username); // SDCARD is always base_username
+    let profiles_dir = std::path::PathBuf::from("./data/profiles").join(&active_username);
+    let app_config_dir = std::path::PathBuf::from("./data/app_config").join(&active_username);
+    
+    if is_ephemeral {
+        if let Err(e) = create_ephemeral_profile(&base_username, &active_username).await {
+            tracing::error!("Failed to generate ephemeral profile: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Failed to generate temporary profile" }))));
+        }
+    } else {
+        let _ = tokio::fs::create_dir_all(&uploads_dir).await;
+        let _ = tokio::fs::create_dir_all(&profiles_dir).await;
+        let _ = tokio::fs::create_dir_all(&app_config_dir).await;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::chown;
+            let _ = chown(&uploads_dir, Some(911), Some(911));
+            let _ = chown(&profiles_dir, Some(911), Some(911));
+            let _ = chown(&app_config_dir, Some(911), Some(911));
+        }
     }
 
     let docker = &state.docker;
@@ -62,7 +129,7 @@ pub async fn ensure_oscar_container(
 
     let is_active = {
         let containers = state.active_containers.read().await;
-        containers.contains_key(owner_uuid)
+        containers.contains_key(container_key)
     };
 
     if !is_active {
@@ -77,8 +144,10 @@ pub async fn ensure_oscar_container(
             tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
         }
 
-        // Now meticulously purge lockfile since anything running previously is definitely dead
-        let profiles_dir = std::path::PathBuf::from("./data/profiles").join(&username).join("Profiles");
+        // Now meticulously purge physical lockfile from disk if starting a fresh primary session.
+        // We do this because the memory-based 'last_active' check already confirmed the container 
+        // isn't actually in use by a live session tab, so any remaining lockfile is stale.
+        let profiles_dir = std::path::PathBuf::from("./data/profiles").join(&active_username).join("Profiles");
         if let Ok(mut entries) = tokio::fs::read_dir(&profiles_dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
@@ -109,14 +178,20 @@ pub async fn ensure_oscar_container(
                     name: container_name.clone(),
                     platform: None,
                 });
+                let mut binds = vec![
+                    format!("{}/data/profiles/{}:/config/Documents/OSCAR_Data:rw", host_path, active_username),
+                    format!("{}/data/uploads/{}:/config/Documents/SDCARD:ro", host_path, base_username),
+                    format!("{}/data/app_config/{}:/config/.config/OSCAR_Team:rw", host_path, active_username),
+                ];
+                
+                if is_ephemeral {
+                    binds.push(format!("{}/data/profiles/{}:/original_profile:ro", host_path, base_username));
+                }
+
                 let config = Config {
                     image: Some(state.config.oscar_docker_image.clone()),
                     host_config: Some(HostConfig {
-                        binds: Some(vec![
-                            format!("{}/data/profiles/{}:/config/Documents/OSCAR_Data:rw", host_path, username),
-                            format!("{}/data/uploads/{}:/config/Documents/SDCARD:rw", host_path, username),
-                            format!("{}/data/app_config/{}:/config/.config/OSCAR_Team:rw", host_path, username),
-                        ]),
+                        binds: Some(binds),
                         network_mode: Some(docker_network.clone()),
                         shm_size: Some(1024 * 1024 * 1024),
                         memory: Some(768 * 1024 * 1024), // 768MB
@@ -130,7 +205,7 @@ pub async fn ensure_oscar_container(
                         "PGID=911".to_string(),
                         "TZ=America/Chicago".to_string(),
                         "MAX_RES=3840x2160".to_string(),
-                        "TITLE=OSCAR 1.7.0".to_string(),
+                        "TITLE=OSCAR (Web)".to_string(),
                         "START_DOCKER=false".to_string(),
                         "DISABLE_IPV6=true".to_string(),
                         "NO_DECOR=true".to_string(),
@@ -187,10 +262,11 @@ pub async fn ensure_oscar_container(
 
     {
         let mut containers = state.active_containers.write().await;
-        containers.insert(owner_uuid.to_string(), ContainerInfo {
+        containers.insert(container_key.to_string(), ContainerInfo {
             container_id: container_name.clone(),
             ip_address,
             last_active: chrono::Utc::now().timestamp(),
+            owner_uuid: owner_uuid.to_string(),
         });
     }
 
@@ -218,7 +294,8 @@ pub async fn oscar_launch(
     // This ensures Selkies always gets a clean signaling init rather than
     // reconnecting to a potentially dirty WebSocket state from a prior session.
     tracing::info!("oscar_launch: Launching personal session for user {}", claims.uuid);
-    if let Err(e) = ensure_oscar_container(&state, &claims.uuid, &claims.username).await {
+    let container_key = claims.uuid.clone();
+    if let Err(e) = ensure_oscar_container(&state, &claims.uuid, &claims.username, &container_key, false).await {
         return e.into_response();
     }
     
@@ -230,6 +307,7 @@ pub async fn oscar_launch(
         jti,
         purpose: "oscar-launch".into(),
         exp: now + 120, // 2 minutes
+        container_key,
     };
 
     let token = encode(
@@ -260,9 +338,13 @@ pub async fn oscar_share_launch(
     };
     let owner_username = owner.username.unwrap_or(owner.uuid.clone());
 
-    tracing::info!("oscar_share_launch: Attempting to launch shared profile. Owner={}, LinkToken={}", owner_uuid, share_token);
+    let guest_sid = uuid::Uuid::new_v4().to_string();
+    let container_key = guest_sid.clone();
 
-    if let Err(e) = ensure_oscar_container(&state, &owner_uuid, &owner_username).await {
+    tracing::info!("oscar_share_launch: Launching ephemeral guest session for owner {}. LinkToken={}, Sid={}", owner_uuid, share_token, guest_sid);
+
+    // Guests ALWAYS use ephemeral containers to ensure they never "squat" on the owner's primary container slot.
+    if let Err(e) = ensure_oscar_container(&state, &owner_uuid, &owner_username, &container_key, true).await {
         return e.into_response();
     }
 
@@ -276,15 +358,14 @@ pub async fn oscar_share_launch(
     let fp = URL_SAFE_NO_PAD.encode(hasher.finalize());
 
     let jti = uuid::Uuid::new_v4().to_string();
-    let guest_sid = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
 
-    // Create an ephemeral auth session for the guest tied to the owner's UUID (1 hour)
     {
         let mut sessions = state.active_auth_sessions.write().await;
         sessions.insert(guest_sid.clone(), crate::config::SessionInfo {
             uuid: owner_uuid.clone(),
             expires_at: now + 60 * 60,
+            is_guest: true,
         });
     }
 
@@ -295,6 +376,7 @@ pub async fn oscar_share_launch(
         jti,
         purpose: "oscar-launch".into(),
         exp: now + 120, // 2 minutes
+        container_key,
     };
 
     let token = encode(
@@ -362,15 +444,16 @@ pub async fn oscar_login_handler(
         consumed.insert(claims.jti, now + 120);
     }
 
-    // Verify the auth session is still active
-    {
+    let is_guest = {
         let mut sessions = state.active_auth_sessions.write().await;
         sessions.retain(|_, s| s.expires_at > now);
-        if !sessions.contains_key(&claims.sid) {
+        if let Some(s) = sessions.get(&claims.sid) {
+            s.is_guest
+        } else {
             tracing::debug!("oscar_login_handler: auth session {} not found", claims.sid);
             return Redirect::to("/").into_response();
         }
-    }
+    };
 
     let oscar_claims = OscarClaims {
         uuid: claims.sub,
@@ -378,6 +461,8 @@ pub async fn oscar_login_handler(
         fp: claims.fp,
         scope: "oscar".into(),
         exp: now + 60 * 60, // 1 hour
+        is_guest,
+        container_key: claims.container_key,
     };
 
     let session_token = encode(
@@ -407,9 +492,9 @@ pub async fn oscar_keepalive_handler(
     };
     {
         let mut containers = state.active_containers.write().await;
-        if let Some(info) = containers.get_mut(&claims.uuid) {
+        if let Some(info) = containers.get_mut(&claims.container_key) {
             info.last_active = chrono::Utc::now().timestamp();
-            tracing::debug!("oscar_keepalive: refreshed last_active for user {}", claims.uuid);
+            tracing::debug!("oscar_keepalive: refreshed last_active for container {}", claims.container_key);
         }
     }
     StatusCode::NO_CONTENT.into_response()
@@ -450,18 +535,18 @@ pub async fn proxy_handler(
     
     let qs = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
     
-    let (target_ip, user_uuid) = {
+    let (target_ip, container_key, is_guest) = {
         let claims = match req.extensions().get::<OscarClaims>() {
             Some(c) => c,
             None => return Response::builder().status(StatusCode::UNAUTHORIZED).body(Body::from("Missing OSCAR session claims")).unwrap(),
         };
 
         let containers = state.active_containers.read().await;
-        if let Some(info) = containers.get(&claims.uuid) {
-            tracing::debug!("proxy_handler: Routing request for user {} to container {} at {}", claims.uuid, info.container_id, info.ip_address);
-            (info.ip_address.clone(), claims.uuid.clone())
+        if let Some(info) = containers.get(&claims.container_key) {
+            tracing::debug!("proxy_handler: Routing request for user {} to container {}", claims.uuid, info.container_id);
+            (info.ip_address.clone(), claims.container_key.clone(), claims.is_guest)
         } else {
-            tracing::warn!("proxy_handler: No active container found for user {}", claims.uuid);
+            tracing::warn!("proxy_handler: No active container found for key {}", claims.container_key);
             if accepts_html {
                 return Redirect::to("/?timeout=1").into_response();
             }
@@ -478,7 +563,7 @@ pub async fn proxy_handler(
         let is_polling = path.ends_with("/audio") || path.ends_with("/websockify");
         if !is_polling {
             let mut containers = state.active_containers.write().await;
-            if let Some(info) = containers.get_mut(&user_uuid) {
+            if let Some(info) = containers.get_mut(&container_key) {
                 info.last_active = chrono::Utc::now().timestamp();
             }
         }
@@ -501,7 +586,7 @@ pub async fn proxy_handler(
         .unwrap_or(false);
 
     if is_upgrade {
-        return handle_websocket_upgrade(state, req, &target_url, user_uuid).await;
+        return handle_websocket_upgrade(state, req, &target_url, container_key).await;
     }
 
     let client = &state.reqwest_client;
@@ -544,15 +629,23 @@ pub async fn proxy_handler(
 
                 let bytes = proxy_res.bytes().await.unwrap_or_default();
                 let original_html = String::from_utf8_lossy(&bytes);
+                let mut modified_html = original_html.into_owned();
+                if is_guest {
+                    if let Some(pos) = modified_html.find("<body") {
+                        if let Some(end_bracket) = modified_html[pos..].find('>') {
+                            modified_html.insert_str(pos + end_bracket, " data-guest-session=\"true\"");
+                        }
+                    }
+                }
+
                 let inject_tag = r#"<script src="/oscar-overlay.js"></script>"#;
-                let modified_html = if let Some(pos) = original_html.rfind("</body>") {
-                    let mut s = original_html.into_owned();
-                    s.insert_str(pos, inject_tag);
-                    s
+                let final_html = if let Some(pos) = modified_html.rfind("</body>") {
+                    modified_html.insert_str(pos, inject_tag);
+                    modified_html
                 } else {
-                    original_html.into_owned() + inject_tag
+                    modified_html + inject_tag
                 };
-                let modified_bytes = modified_html.into_bytes();
+                let modified_bytes = final_html.into_bytes();
 
                 let mut response = Response::builder().status(resp_status);
                 for (name, value) in headers_vec {
@@ -622,10 +715,10 @@ pub async fn proxy_handler(
 }
 
 async fn handle_websocket_upgrade(
-    state: Arc<AppState>,
+    _state: Arc<AppState>,
     req: Request,
     target_url: &str,
-    user_uuid: String,
+    _container_key: String,
 ) -> Response {
     // Handling websockets. We convert the http url to ws or wss
     let ws_url = if target_url.starts_with("https://") {
@@ -758,27 +851,22 @@ pub async fn oscar_disconnect_handler(
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
+    let container_key = claims.container_key.clone();
     let user_uuid = claims.uuid.clone();
 
     // Remove from active map immediately so the next oscar_launch triggers a clean
     // container provision via ensure_oscar_container (which force-removes first).
     let maybe_container = {
         let mut containers = state.active_containers.write().await;
-        containers.remove(&user_uuid)
+        containers.remove(&container_key)
     };
 
     if let Some(info) = maybe_container {
-        let docker = state.docker.clone();
+        let state_clone = state.clone();
         let container_id = info.container_id.clone();
-        let uuid_log = user_uuid.clone();
+        let user_uuid = user_uuid.clone();
         tokio::spawn(async move {
-            tracing::info!("oscar_disconnect: gracefully stopping container {} for user {}", container_id, uuid_log);
-            let _ = docker.stop_container(&container_id, Some(StopContainerOptions { t: 5 })).await;
-            let _ = docker.remove_container(
-                &container_id,
-                Some(RemoveContainerOptions { force: true, v: true, ..Default::default() }),
-            ).await;
-            tracing::info!("oscar_disconnect: container {} removed for user {}", container_id, uuid_log);
+            cleanup_oscar_session(state_clone, user_uuid, container_id).await;
         });
     } else {
         tracing::debug!("oscar_disconnect: no active container for user {}, nothing to evict", user_uuid);
@@ -801,6 +889,15 @@ pub async fn cleanup_oscar_session(state: Arc<AppState>, uuid: String, container
             ..Default::default()
         }),
     ).await;
+    
+    // Check if this was an ephemeral profile, using string matching format "oscar-ephemeral-{key}"
+    if let Some(key) = container_id.strip_prefix("oscar-ephemeral-") {
+        tracing::info!("Cleaning up sparse ephemeral profile: ephemeral_{}", key);
+        let p_dir = std::path::PathBuf::from("./data/profiles").join(format!("ephemeral_{}", key));
+        let c_dir = std::path::PathBuf::from("./data/app_config").join(format!("ephemeral_{}", key));
+        let _ = tokio::fs::remove_dir_all(&p_dir).await;
+        let _ = tokio::fs::remove_dir_all(&c_dir).await;
+    }
 
     // Purge the dangling lockfile from user profile directory
     // We get the username from the DB, then sanitize it to match directory names

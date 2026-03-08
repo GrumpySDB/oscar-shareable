@@ -33,6 +33,8 @@ pub struct OscarClaims {
     pub fp: String,
     pub scope: String,
     pub exp: i64,
+    pub is_guest: bool,
+    pub container_key: String,
 }
 
 #[derive(Deserialize)]
@@ -458,6 +460,7 @@ async fn issue_session(
         SessionInfo {
             uuid: user.uuid.clone(),
             expires_at: exp,
+            is_guest: false,
         },
     );
 
@@ -604,6 +607,12 @@ pub async fn auth_middleware(
             if is_html_request {
                 return Ok(axum::response::Redirect::to("/").into_response());
             }
+            if req.uri().path() == "/api/session" {
+                return Ok((
+                    StatusCode::OK,
+                    Json(serde_json::json!({ "authenticated": false }))
+                ).into_response());
+            }
             return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({ "error": "Unauthorized" })),
@@ -622,6 +631,12 @@ pub async fn auth_middleware(
         Err(_) => {
             if is_html_request {
                 return Ok(axum::response::Redirect::to("/").into_response());
+            }
+            if req.uri().path() == "/api/session" {
+                return Ok((
+                    StatusCode::OK,
+                    Json(serde_json::json!({ "authenticated": false }))
+                ).into_response());
             }
             return Err((
                 StatusCode::UNAUTHORIZED,
@@ -651,6 +666,13 @@ pub async fn auth_middleware(
 
     if is_html_request {
         return Ok(axum::response::Redirect::to("/").into_response());
+    }
+
+    if req.uri().path() == "/api/session" {
+        return Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({ "authenticated": false }))
+        ).into_response());
     }
 
     Err((
@@ -775,14 +797,25 @@ async fn delete_user_handler_impl(
         sessions.retain(|_, s| s.uuid != uuid_param);
     }
     
-    // 3. Evict active OSCAR container if it exists
+    // 3. Evict active OSCAR containers (primary and guest) if they exist
     {
         let mut containers = state.active_containers.write().await;
-        if let Some(info) = containers.remove(&uuid_param) {
+        let mut to_cleanup = Vec::new();
+        
+        containers.retain(|_, info| {
+            if info.owner_uuid == uuid_param {
+                to_cleanup.push(info.container_id.clone());
+                false
+            } else {
+                true
+            }
+        });
+
+        for cid in to_cleanup {
             let state_clone = state.clone();
             let upid = uuid_param.clone();
             tokio::spawn(async move {
-                crate::proxy::cleanup_oscar_session(state_clone, upid, info.container_id).await;
+                crate::proxy::cleanup_oscar_session(state_clone, upid, cid).await;
             });
         }
     }
