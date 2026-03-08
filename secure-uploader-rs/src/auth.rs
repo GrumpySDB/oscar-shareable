@@ -76,6 +76,12 @@ pub struct DiscordLoginQuery {
     pub prompt: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct InviteValidationResponse {
+    pub code: String,
+    pub status: crate::db::InviteStatus,
+}
+
 #[derive(Deserialize)]
 struct DiscordTokenResponse {
     access_token: String,
@@ -728,6 +734,26 @@ pub async fn revoke_invite_handler(
         (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Invite not found or already deleted" })))
     })?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct ValidateInviteQuery {
+    pub code: String,
+}
+
+pub async fn validate_invite_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ValidateInviteQuery>,
+) -> Result<Json<InviteValidationResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let status = state.db.check_invite(&query.code).map_err(|e| {
+        tracing::error!("Database error checking invite {}: {}", query.code, e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+
+    Ok(Json(InviteValidationResponse {
+        code: query.code,
+        status,
+    }))
 }
 
 pub async fn list_invites_handler(

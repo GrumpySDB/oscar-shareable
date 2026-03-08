@@ -8,6 +8,7 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::config::{AppState, ContainerInfo};
 use crate::auth::{Claims, OscarClaims};
@@ -129,6 +130,33 @@ pub async fn ensure_oscar_container(
     let mut ip_address = String::new();
 
     let is_active = {
+        let mut to_cleanup = Vec::new();
+        {
+            let containers = state.active_containers.read().await;
+            if !is_ephemeral {
+                // For primary sessions, find any existing active containers for the SAME user
+                // but with DIFFERENT keys (stale sessions from a previous launch).
+                for (k, info) in containers.iter() {
+                    if info.owner_uuid == owner_uuid && k != container_key {
+                        to_cleanup.push((k.clone(), info.container_id.clone()));
+                    }
+                }
+            }
+        }
+
+        if !to_cleanup.is_empty() {
+            let mut containers = state.active_containers.write().await;
+            for (k, cid) in to_cleanup {
+                tracing::info!("Evicting stale session {} for user {} as a new session is launching.", k, owner_uuid);
+                containers.remove(&k);
+                let state_clone = state.clone();
+                let uuid_clone = owner_uuid.to_string();
+                tokio::spawn(async move {
+                    cleanup_oscar_session(state_clone, uuid_clone, cid).await;
+                });
+            }
+        }
+
         let containers = state.active_containers.read().await;
         containers.contains_key(container_key)
     };
@@ -294,8 +322,12 @@ pub async fn oscar_launch(
     // Always issue a fresh launch token — never shortcut to /oscar/ directly.
     // This ensures Selkies always gets a clean signaling init rather than
     // reconnecting to a potentially dirty WebSocket state from a prior session.
-    tracing::info!("oscar_launch: Launching personal session for user {}", claims.uuid);
-    let container_key = claims.uuid.clone();
+    
+    // Generate a unique container key for this launch to isolate transitions
+    // and prevent race conditions with disconnect beacons from old windows.
+    let container_key = format!("{}-{}", claims.uuid, &uuid::Uuid::new_v4().to_string()[..8]);
+    
+    tracing::info!("oscar_launch: Launching personal session for user {} with key {}", claims.uuid, container_key);
     if let Err(e) = ensure_oscar_container(&state, &claims.uuid, &claims.username, &container_key, false).await {
         return e.into_response();
     }
@@ -491,11 +523,20 @@ pub async fn oscar_keepalive_handler(
         Some(c) => c.clone(),
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
+    let query_params: std::collections::HashMap<String, String> = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
+        .into_owned()
+        .collect();
+
+    let container_key = query_params.get("key").cloned().unwrap_or_else(|| claims.container_key.clone());
+
     {
         let mut containers = state.active_containers.write().await;
-        if let Some(info) = containers.get_mut(&claims.container_key) {
-            info.last_active = chrono::Utc::now().timestamp();
-            tracing::debug!("oscar_keepalive: refreshed last_active for container {}", claims.container_key);
+        if let Some(info) = containers.get_mut(&container_key) {
+            // Simple security check: owner must match claims
+            if info.owner_uuid == claims.uuid {
+                info.last_active = chrono::Utc::now().timestamp();
+                tracing::debug!("oscar_keepalive: refreshed last_active for container {}", container_key);
+            }
         }
     }
     StatusCode::NO_CONTENT.into_response()
@@ -631,11 +672,15 @@ pub async fn proxy_handler(
                 let bytes = proxy_res.bytes().await.unwrap_or_default();
                 let original_html = String::from_utf8_lossy(&bytes);
                 let mut modified_html = original_html.into_owned();
-                if is_guest {
-                    if let Some(pos) = modified_html.find("<body") {
-                        if let Some(end_bracket) = modified_html[pos..].find('>') {
-                            modified_html.insert_str(pos + end_bracket, " data-guest-session=\"true\"");
+                
+                // Inject session metadata into the body tag for the frontend scripts
+                if let Some(pos) = modified_html.find("<body") {
+                    if let Some(end_bracket) = modified_html[pos..].find('>') {
+                        let mut injection = format!(" data-container-key=\"{}\"", container_key);
+                        if is_guest {
+                            injection.push_str(" data-guest-session=\"true\"");
                         }
+                        modified_html.insert_str(pos + end_bracket, &injection);
                     }
                 }
 
@@ -719,36 +764,60 @@ async fn handle_websocket_upgrade(
     _state: Arc<AppState>,
     req: Request,
     target_url: &str,
-    _container_key: String,
+    container_key: String,
 ) -> Response {
-    // Handling websockets. We convert the http url to ws or wss
     let ws_url = if target_url.starts_with("https://") {
         target_url.replacen("https://", "wss://", 1)
     } else {
         target_url.replacen("http://", "ws://", 1)
     };
 
-    let mut ws_req = reqwest::Request::new(reqwest::Method::GET, reqwest::Url::parse(&ws_url).unwrap());
-    for (k, v) in req.headers() {
-        ws_req.headers_mut().insert(k.clone(), v.clone());
+    // Forward essential companion headers
+    let mut forward_headers = Vec::new();
+    let header_names = [
+        header::USER_AGENT,
+        header::ACCEPT_LANGUAGE,
+        header::SEC_WEBSOCKET_PROTOCOL,
+    ];
+
+    for name in &header_names {
+        if let Some(value) = req.headers().get(name) {
+            forward_headers.push((name.clone(), value.clone()));
+        }
     }
 
-    // `axum` has an upgrade capability we can use to accept the client WS,
-    // but the simplest way is to manually do a tokio tunnel.
-    // For now we will return 502 Not Implemented properly, and implement in next iteration if needed 
-    // or use tokio-tungstenite to forward. 
-    // Let's implement full tunnel with tokio-tungstenite.
+    // Capture protocols for axum side
+    let protocols = req.headers().get(header::SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     use futures::{StreamExt, SinkExt};
     use axum::extract::FromRequestParts;
     let mut parts = req.into_parts().0;
-    let upgrade = match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+    
+    let mut upgrade = match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
         Ok(u) => u,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        Err(e) => {
+            tracing::error!("WebSocket upgrade extraction failed for key {}: {}", container_key, e);
+            return StatusCode::BAD_REQUEST.into_response();
+        }
     };
 
+    // Mirror sub-protocols
+    if let Some(ref p) = protocols {
+        let p_list: Vec<String> = p.split(',').map(|s| s.trim().to_string()).collect();
+        upgrade = upgrade.protocols(p_list);
+    }
+
     upgrade.on_upgrade(move |client_ws: axum::extract::ws::WebSocket| async move {
-        match tokio_tungstenite::connect_async(ws_url).await {
+        tracing::debug!("Started WebSocket tunnel for container key {}", container_key);
+
+        let mut request = ws_url.into_client_request().unwrap();
+        for (name, value) in forward_headers {
+            request.headers_mut().insert(name, value);
+        }
+
+        match tokio_tungstenite::connect_async(request).await {
             Ok((server_ws, _)) => {
                 let (mut client_tx, mut client_rx) = client_ws.split();
                 let (mut server_tx, mut server_rx) = server_ws.split();
@@ -852,13 +921,30 @@ pub async fn oscar_disconnect_handler(
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
-    let container_key = claims.container_key.clone();
     let user_uuid = claims.uuid.clone();
+
+    // Prioritize key from query parameter (explicitly sent by frontend)
+    // to avoid "Beacon Suicide" where a new session's cookie kills an old session's unload.
+    let query_params: std::collections::HashMap<String, String> = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
+        .into_owned()
+        .collect();
+
+    let container_key = query_params.get("key").cloned().unwrap_or_else(|| claims.container_key.clone());
 
     // Remove from active map immediately so the next oscar_launch triggers a clean
     // container provision via ensure_oscar_container (which force-removes first).
     let maybe_container = {
         let mut containers = state.active_containers.write().await;
+        
+        // Security check: If we're using a key from the query string, 
+        // verify it belongs to the authenticated user.
+        if let Some(info) = containers.get(&container_key) {
+            if info.owner_uuid != user_uuid {
+                tracing::warn!("oscar_disconnect: user {} tried to disconnect unauthorized key {}", user_uuid, container_key);
+                return StatusCode::FORBIDDEN.into_response();
+            }
+        }
+        
         containers.remove(&container_key)
     };
 

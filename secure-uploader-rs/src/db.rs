@@ -246,6 +246,40 @@ impl Database {
         Ok(exists)
     }
 
+    pub fn check_invite(&self, code: &str) -> Result<InviteStatus> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let mut stmt = conn.prepare("SELECT used_by_uuid, expires_at FROM invites WHERE code = ?1")?;
+        
+        let mut rows = stmt.query(params![code])?;
+        if let Some(row) = rows.next()? {
+            let used_by_uuid: Option<String> = row.get(0)?;
+            let expires_at: i64 = row.get(1)?;
+            
+            if used_by_uuid.is_some() {
+                Ok(InviteStatus::Used)
+            } else if expires_at <= now {
+                Ok(InviteStatus::Expired)
+            } else {
+                Ok(InviteStatus::Valid)
+            }
+        } else {
+            Ok(InviteStatus::NotFound)
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InviteStatus {
+    Valid,
+    Expired,
+    Used,
+    NotFound,
+}
+
+impl Database {
+
     pub fn use_invite(&self, code: &str, user_uuid: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
