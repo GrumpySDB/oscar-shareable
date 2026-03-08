@@ -35,6 +35,7 @@ async fn create_ephemeral_profile(owner_username: &str, ephemeral_folder: &str) 
         PROFILE="{}"
         EPHEM="{}"
         mkdir -p data/profiles/$EPHEM/Profiles/$PROFILE
+        cp -r data/profiles/$PROFILE/*.xml data/profiles/$EPHEM/ 2>/dev/null || true
         cp -r data/profiles/$PROFILE/Profiles/$PROFILE/*.xml data/profiles/$EPHEM/Profiles/$PROFILE/ 2>/dev/null || true
         cp -r data/profiles/$PROFILE/Profiles/$PROFILE/lockfile data/profiles/$EPHEM/Profiles/$PROFILE/ 2>/dev/null || true
         cp -r data/profiles/$PROFILE/Profiles/$PROFILE/*.dat data/profiles/$EPHEM/Profiles/$PROFILE/ 2>/dev/null || true
