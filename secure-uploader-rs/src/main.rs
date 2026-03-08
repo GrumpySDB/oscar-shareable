@@ -10,7 +10,7 @@ use axum::{
     extract::{DefaultBodyLimit, Request},
     http::{header, HeaderValue},
     middleware::{self, Next},
-    response::{Html, Response},
+    response::Response,
     routing::{delete, get, post, any},
     Router,
 };
@@ -151,6 +151,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/local/signup", post(auth::local_signup).layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_rate_limit_middleware)))
         .route("/auth/local/login", post(auth::local_login).layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_rate_limit_middleware)))
         .route("/auth/local/recover", post(auth::local_recovery_handler).layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_rate_limit_middleware)))
+        .route("/auth/invite/validate", get(auth::validate_invite_handler))
         .route("/banner-images", get(upload::list_banner_images))
         .nest("/admin", admin_api_routes)
         .merge(

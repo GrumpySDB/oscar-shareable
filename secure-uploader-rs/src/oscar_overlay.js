@@ -9,7 +9,8 @@
 
   function sendKeepalive() {
     if (document.visibilityState === 'visible') {
-      fetch('/api/oscar-keepalive', { method: 'POST' }).catch(function () { });
+      var key = document.body.dataset.containerKey || '';
+      fetch('/api/oscar-keepalive?key=' + encodeURIComponent(key), { method: 'POST' }).catch(function () { });
     }
   }
 
@@ -212,8 +213,8 @@
   ) + ' Uploader';
   uploaderBtn.addEventListener('click', function () {
     // Signal the backend to cleanly stop the container before we navigate away.
-    // sendBeacon is guaranteed to fire even during page unload.
-    navigator.sendBeacon('/api/oscar-disconnect');
+    var key = document.body.dataset.containerKey || '';
+    navigator.sendBeacon('/api/oscar-disconnect?key=' + encodeURIComponent(key));
     window.location.href = '/';
   });
   toolbar.appendChild(uploaderBtn);
@@ -316,8 +317,8 @@
   }
 
   function handleLogout() {
-    // Disconnect signal first (best-effort; logout also cleans up server-side)
-    navigator.sendBeacon('/api/oscar-disconnect');
+    var key = document.body.dataset.containerKey || '';
+    navigator.sendBeacon('/api/oscar-disconnect?key=' + encodeURIComponent(key));
     fetch('/api/logout', { method: 'POST' }).catch(function () { }).then(function () {
       window.location.href = '/';
     });
@@ -326,7 +327,8 @@
   // Safety net: fire disconnect beacon for any navigation not caught by our buttons
   // (back/forward, direct URL change, tab close).
   window.addEventListener('beforeunload', function () {
-    navigator.sendBeacon('/api/oscar-disconnect');
+    var key = document.body.dataset.containerKey || '';
+    navigator.sendBeacon('/api/oscar-disconnect?key=' + encodeURIComponent(key));
   });
 
 }());

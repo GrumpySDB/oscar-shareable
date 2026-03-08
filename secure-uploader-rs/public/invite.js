@@ -8,6 +8,38 @@ if (!inviteCode) {
     document.getElementById('authOptions').replaceChildren(p);
 } else {
     document.getElementById('discordSignupBtn').href = `/api/auth/discord/login?invite=${encodeURIComponent(inviteCode)}`;
+    validateInvite(inviteCode);
+}
+
+async function validateInvite(code) {
+    try {
+        const res = await fetch(`/api/auth/invite/validate?code=${encodeURIComponent(code)}`);
+        if (!res.ok) throw new Error('Failed to validate invite');
+
+        const data = await res.json();
+        if (data.status !== 'valid') {
+            showExpiredPage(data.status);
+        }
+    } catch (err) {
+        console.error('Invite validation error:', err);
+    }
+}
+
+function showExpiredPage(status) {
+    const inviteCard = document.getElementById('inviteCard');
+    const inviteExpiredCard = document.getElementById('inviteExpiredCard');
+    const expiredMessage = document.getElementById('expiredMessage');
+
+    if (status === 'used') {
+        expiredMessage.textContent = 'This invite link has already been used to create an account.';
+    } else if (status === 'expired') {
+        expiredMessage.textContent = 'This invite link has expired and is no longer valid.';
+    } else {
+        expiredMessage.textContent = 'This invite link is invalid or has been revoked.';
+    }
+
+    inviteCard.classList.add('hidden');
+    inviteExpiredCard.classList.remove('hidden');
 }
 
 function sanitizeUsernameInput(value) {
