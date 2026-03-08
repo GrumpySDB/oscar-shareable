@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="./src/index.css" />
+</head>
+
+<body>
+    <main class="container">
+        <section class="card" id="adminCard">
+            <div class="header-row">
+                <h2>Admin Dashboard</h2>
+                <div class="header-actions">
+                    <a href="/" class="header-link-btn back-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="19" y1="12" x2="5" y2="12"></line>
+                            <polyline points="12 19 5 12 12 5"></polyline>
+                        </svg>
+                        Back to App
+                    </a>
+                    <button id="logoutBtn" class="logout-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="19" y1="12" x2="5" y2="12"></line>
+                            <polyline points="12 19 5 12 12 5"></polyline>
+                        </svg>
+                        <span>Logout</span>
+                    </button>
+                </div>
+            </div>
+            <p class="subtle">Manage users and generate invites.</p>
+
+            <div class="tabs">
+                <button id="tabUsers" class="tab active">Users</button>
+                <button id="tabInvites" class="tab">Invites</button>
+            </div>
+
+            <div id="usersPanel" class="panel active">
+                <div class="panel-header">
+                    <h3>System Users</h3>
+                    <input type="text" id="userSearch" class="search-input" placeholder="Search by username or ID..." />
+                </div>
+                <div class="table-wrapper">
+                    <table id="usersTable">
+                        <thead>
+                            <tr>
+                                <th class="col-checkbox"><input type="checkbox" id="userSelectAll" /></th>
+                                <th>Username</th>
+                                <th>Provider</th>
+                                <th>Role</th>
+                                <th>Created</th>
+                                <th>Last Accessed</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="bulk-actions">
+                    <button id="bulkDeleteBtn" class="danger" disabled>Delete Selected</button>
+                    <button id="bulkResetBtn" class="ghost" disabled>Reset Password (Single Local User)</button>
+                </div>
+            </div>
+
+            <div id="invitesPanel" class="panel">
+                <div class="panel-header">
+                    <div style="display: flex; flex-direction: column; gap: 5px;">
+                        <h3>Generate new Invite</h3>
+                        <p class="subtle" style="margin: 0; padding: 0;">Create a single-use code that allows a user to
+                            sign up.</p>
+                    </div>
+                </div>
+
+                <div class="invite-generation-row">
+                    <div class="invite-input-group">
+                        <label for="inviteExpireDays">Expires (days):</label>
+                        <input type="number" id="inviteExpireDays" value="3" min="1" max="365" />
+                    </div>
+                    <div class="invite-input-group">
+                        <label for="inviteLabel">Identifier / Note (Optional):</label>
+                        <input type="text" id="inviteLabel" placeholder="e.g. Clinic A" maxlength="64" />
+                    </div>
+                    <button id="generateInviteBtn">Generate Invite</button>
+                </div>
+
+                <div class="panel-header" style="margin-top: 30px;">
+                    <h3>Active Invites</h3>
+                    <input type="text" id="inviteSearch" class="search-input" placeholder="Search code or label..." />
+                </div>
+                <div class="table-wrapper">
+                    <table id="invitesTable">
+                        <thead>
+                            <tr>
+                                <th class="col-checkbox"><input type="checkbox" id="inviteSelectAll" /></th>
+                                <th>Code</th>
+                                <th>Label</th>
+                                <th>Created By</th>
+                                <th>Status</th>
+                                <th>Expires</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="bulk-actions">
+                    <button id="bulkRevokeBtn" class="danger" disabled>Revoke Selected</button>
+                </div>
+            </div>
+            <div id="summary" class="summary">
+                <p id="appMessage" class="message"></p>
+            </div>
+
+            <!-- Reset Credentials Modal -->
+            <div id="resetCredsModal" class="modal-overlay hidden">
+                <div class="modal-content" style="width: min(500px, 90%);">
+                    <div class="modal-header">
+                        <h3 style="color: var(--danger); display: flex; align-items: center; gap: 8px;">⚠️ Save
+                            Credentials</h3>
+                    </div>
+                    <div class="modal-body" style="padding: 1.5rem; background: #fff5f5;">
+                        <p
+                            style="margin-top: 0; margin-bottom: 1.2rem; font-size: 0.95rem; line-height: 1.5; color: #822727;">
+                            Password successfully reset for <strong id="resetCredsName"></strong>.<br>
+                            They will be logged out and need the new credentials. This is a purely anonymous account. If
+                            these details are lost, they will <strong>never</strong> be able to log back in!
+                        </p>
+
+                        <label style="color: #4a5568;">Password</label>
+                        <div class="copy-box" id="copyResetPassword">
+                            <span class="text-content" id="resetPasswordText"></span>
+                            <div class="copy-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                            </div>
+                        </div>
+
+                        <label style="color: #4a5568;">Recovery Phrase</label>
+                        <div class="copy-box large" id="copyResetRecovery">
+                            <span class="text-content" id="resetRecoveryText"></span>
+                            <div class="copy-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end;">
+                            <button id="closeResetCredsBtn" disabled
+                                style="width: auto; padding: 0.72rem 1.5rem; background: var(--success); opacity: 0.55; cursor: not-allowed; transition: opacity 0.2s; margin-top: 0;">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+    <footer class="page-footer">
+        <nav class="footer-links" aria-label="Footer links">
+            <a href="/how-to-uploader" class="policy-link">How to Use the Uploader</a>
+            <span class="footer-sep">•</span>
+            <a href="/privacy-security-policy" class="policy-link">Privacy and Security Policy</a>
+            <span class="footer-sep">•</span>
+            <a href="/faq" class="policy-link">FAQ</a>
+            <span class="footer-sep">•</span>
+            <a href="/licensing" class="policy-link">Licensing</a>
+            <span class="footer-sep">•</span>
+            <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank"
+                rel="noopener noreferrer">View Source on GitHub</a>
+        </nav>
+    </footer>
+
+    <script type="module" src="./src/admin.js"></script>
+</body>
+
+</html>

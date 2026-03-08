@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Software Licensing Information</title>
+    <link rel="stylesheet" href="./src/index.css" />
+    <script type="module" src="./src/licensing.js"></script>
+</head>
+
+<body>
+    <main class="container policy-container">
+        <section class="card policy-card">
+            <div class="header-row">
+                <h1>Software Licensing Information</h1>
+                <div class="header-actions">
+                    <a href="/" class="header-link-btn back-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="19" y1="12" x2="5" y2="12"></line>
+                            <polyline points="12 19 5 12 12 5"></polyline>
+                        </svg>
+                        Back to Uploader
+                    </a>
+                </div>
+            </div>
+
+            <p class="subtle">Important information regarding the licensing and attribution of this software.</p>
+            <br>
+
+            <div class="policy-info-box policy-info-box-green">
+                <div class="info-box-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                    </svg>
+                </div>
+                <div class="info-box-content">
+                    <h3>Project License</h3>
+                    <p>This entire project is distributed as free software under the <b>GNU GPL v3 License</b>.</p>
+                    <p>You can find the official license text and more information at <a
+                            href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank"
+                            rel="noopener noreferrer">https://www.gnu.org/licenses/gpl-3.0.html</a>.</p>
+                </div>
+            </div>
+
+            <div class="faq-container" id="licensingAccordion">
+                <div class="faq-item policy-info-box-orange">
+                    <button class="faq-question licensing-accordion-btn">
+                        <div style="display: flex; align-items: center; gap: 1.25rem;">
+                            <div class="info-box-icon" style="padding: 0; color: #dd6b20 !important;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <path
+                                        d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z">
+                                    </path>
+                                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                </svg>
+                            </div>
+                            <span style="font-size: 1.1rem; font-weight: 700;">OSCAR and Redistribution Notes</span>
+                        </div>
+                        <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                            stroke-linecap="round" stroke-linejoin="round" style="color: #dd6b20;">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </button>
+                    <div class="faq-answer">
+                        <div class="faq-answer-inner">
+                            <div class="faq-answer-content" style="padding-top: 0;">
+                                <p>OSCAR is released under the <b>GNU GPL v3 License</b>. It is built using Qt SDK
+                                    (Open Source
+                                    Edition), available from <a href="https://qt.io" target="_blank"
+                                        rel="noopener noreferrer">https://qt.io</a>.</p>
+
+                                <p><b>Redistribution of derivatives (a note added by Mark Watkins):</b></p>
+                                <p>Mark Watkins created this software to help lessen the exploitation of others. Seeing
+                                    his work
+                                    being used to exploit others is incredibly un-motivational, and incredibly
+                                    disrespectful of all
+                                    the work he put into this project.</p>
+                                <p>If you plan on reselling any derivatives of SleepyHead, I specifically request that
+                                    you give due
+                                    credit and link back, mentioning clearly in your advertising material, software
+                                    installer and
+                                    about screens that your derivative "is based on the free and open-source software
+                                    SleepyHead,
+                                    developed and copyright by Mark Watkins (C) 2011-2018."</p>
+                                <p>It is not enough to reference that your derivative "is based on GPL software".</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <style>
+                .licensing-accordion-btn {
+                    background: transparent !important;
+                    border: none !important;
+                    box-shadow: none !important;
+                    color: #dd6b20 !important;
+                    padding: 1.5rem !important;
+                }
+
+                .faq-item.policy-info-box-orange.is-active {
+                    box-shadow: 0 10px 25px rgba(221, 107, 32, 0.1) !important;
+                    border-color: #fbd38d !important;
+                }
+
+                .faq-item.policy-info-box-orange.is-active .licensing-accordion-btn {
+                    background: transparent !important;
+                    color: #dd6b20 !important;
+                }
+            </style>
+
+        </section>
+    </main>
+
+    <footer class="page-footer">
+        <nav class="footer-links" aria-label="Footer links">
+            <a href="/how-to-uploader" class="policy-link">How to Use the Uploader</a>
+            <span class="footer-sep">•</span>
+            <a href="/privacy-security-policy" class="policy-link">Privacy and Security Policy</a>
+            <span class="footer-sep">•</span>
+            <a href="/faq" class="policy-link">FAQ</a>
+            <span class="footer-sep">•</span>
+            <a href="/licensing" class="policy-link">Licensing</a>
+            <span class="footer-sep">•</span>
+            <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank"
+                rel="noopener noreferrer">View Source on GitHub</a>
+        </nav>
+    </footer>
+</body>
+
+</html>

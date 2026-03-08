@@ -1,0 +1,12 @@
+.env
+cloudflared/config.yml
+nginx/nginx.conf
+.agents/
+data/
+secrets/
+certs/
+session.json
+template.json
+Cargo.lock
+target/
+.vscode/

@@ -5,7 +5,7 @@ OSCAR_GID="${PGID:-911}"
 
 # Ensure writable data directories exist and are always owned by the runtime UID/GID.
 mkdir -p /config/Documents/OSCAR_Data
-mkdir -p /config/SDCARD
+mkdir -p /config/Documents/SDCARD
 
 chown -R "${OSCAR_UID}:${OSCAR_GID}" /config/Documents/OSCAR_Data
-chown -R "${OSCAR_UID}:${OSCAR_GID}" /config/SDCARD
+chown -R "${OSCAR_UID}:${OSCAR_GID}" /config/Documents/SDCARD

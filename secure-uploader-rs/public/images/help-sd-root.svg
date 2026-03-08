@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="460" viewBox="0 0 1100 460">
+  <rect width="1100" height="460" fill="#f5f8ff"/>
+  <rect x="30" y="30" width="1040" height="400" rx="14" fill="#ffffff" stroke="#ccd8f6"/>
+  <text x="60" y="80" font-family="Segoe UI, Arial" font-size="30" fill="#172033" font-weight="700">Step 1: Username first, then Browse for SD card root</text>
+  <text x="60" y="115" font-family="Segoe UI, Arial" font-size="22" fill="#31456f">Select the root folder that contains required files</text>
+
+  <rect x="60" y="145" width="450" height="250" rx="10" fill="#f9fbff" stroke="#d9e0ee"/>
+  <text x="80" y="180" font-family="Consolas, monospace" font-size="24" fill="#2457f5">SDCARD/</text>
+  <text x="110" y="220" font-family="Consolas, monospace" font-size="20" fill="#172033">├── Identification.crc  ✅ required</text>
+  <text x="110" y="255" font-family="Consolas, monospace" font-size="20" fill="#172033">├── STR.edf             ✅ required</text>
+  <text x="110" y="290" font-family="Consolas, monospace" font-size="20" fill="#172033">├── DATALOG/</text>
+  <text x="110" y="325" font-family="Consolas, monospace" font-size="20" fill="#172033">└── SETTINGS/</text>
+
+  <rect x="560" y="155" width="500" height="220" rx="10" fill="#eef4ff" stroke="#9fb6f5"/>
+  <text x="585" y="195" font-family="Segoe UI, Arial" font-size="24" fill="#172033">1) Enter username / folder name</text>
+  <text x="585" y="235" font-family="Segoe UI, Arial" font-size="24" fill="#172033">2) Click “Browse” for SD Card Folder</text>
+  <text x="585" y="275" font-family="Segoe UI, Arial" font-size="24" fill="#172033">3) Choose SDCARD root folder</text>
+  <text x="585" y="315" font-family="Segoe UI, Arial" font-size="24" fill="#172033">4) Upload Selected Files</text>
+
+  <line x1="510" y1="250" x2="560" y2="250" stroke="#2457f5" stroke-width="6"/>
+  <polygon points="560,250 545,240 545,260" fill="#2457f5"/>
+</svg>

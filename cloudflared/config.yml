@@ -1,9 +1,0 @@
-tunnel:
-credentials-file:
-
-ingress:
-  - hostname:
-    service: http://nginx-internal:80
-    originRequest:
-      httpHostHeader:
-  - service: http_status:404

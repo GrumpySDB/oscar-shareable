@@ -1,0 +1,491 @@
+use axum::{
+    extract::{State, Request},
+    http::{header, StatusCode},
+    response::{IntoResponse, Json},
+    Extension,
+};
+use multer::{Constraints, Multipart as MulterMultipart, SizeLimit};
+use std::{path::PathBuf, sync::Arc};
+use tokio::{fs, io::AsyncWriteExt};
+use serde::Deserialize;
+use rsa::RsaPrivateKey;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use rsa::Oaep;
+use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
+use bollard::container::{StopContainerOptions, RemoveContainerOptions};
+use regex::{Regex, Captures};
+
+use crate::{
+    auth::Claims,
+    config::AppState,
+    utils::sanitize_upload_relative_path,
+};
+
+const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
+const OXIMETRY_MAX_FILE_SIZE: usize = 200 * 1024; // 200KB
+use crate::config::{UPLOAD_ROOT, PROFILE_ROOT};
+
+pub async fn list_files(
+    Extension(claims): Extension<Claims>,
+) -> impl IntoResponse {
+    let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+
+    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    if !folder_path.exists() {
+        return Json(serde_json::json!({ "filenames": [] }));
+    }
+
+    let filenames = collect_filenames_recursive(&folder_path, &folder_path).await.unwrap_or_default();
+    Json(serde_json::json!({ "filenames": filenames }))
+}
+
+#[async_recursion::async_recursion]
+async fn collect_filenames_recursive(root: &PathBuf, current: &PathBuf) -> anyhow::Result<Vec<String>> {
+    let mut names = Vec::new();
+    let mut read_dir = fs::read_dir(current).await?;
+    while let Some(entry) = read_dir.next_entry().await? {
+        if entry.file_type().await?.is_dir() {
+            names.extend(collect_filenames_recursive(root, &entry.path()).await?);
+        } else if entry.file_type().await?.is_file() {
+            if let Ok(rel) = entry.path().strip_prefix(root) {
+                if let Some(s) = rel.to_str() {
+                    names.push(s.replace('\\', "/"));
+                }
+            }
+        }
+    }
+    Ok(names)
+}
+
+pub async fn delete_folder(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> impl IntoResponse {
+    let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+
+    // 1. Evict active OSCAR containers (primary and guest) if they exist
+    {
+        let mut containers = state.active_containers.write().await;
+        let mut to_cleanup = Vec::new();
+        let uuid_param = claims.uuid.clone();
+        
+        containers.retain(|_, info| {
+            if info.owner_uuid == uuid_param {
+                to_cleanup.push(info.container_id.clone());
+                false
+            } else {
+                true
+            }
+        });
+
+        for cid in to_cleanup {
+            let state_clone = state.clone();
+            let upid = uuid_param.clone();
+            tokio::spawn(async move {
+                crate::proxy::cleanup_oscar_session(state_clone, upid, cid).await;
+            });
+        }
+    }
+
+    // 2. Erase files
+    let upload_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    let profile_path = PathBuf::from(PROFILE_ROOT).join(&folder);
+    let app_config_path = PathBuf::from(&state.config.app_config_root).join(&folder);
+    
+    let _ = fs::remove_dir_all(&upload_path).await;
+    let _ = fs::remove_dir_all(&profile_path).await;
+    let _ = fs::remove_dir_all(app_config_path).await;
+
+    // 3. Recreate template profile (Fresh Start)
+    let u_name = claims.username.clone();
+    let uuid_clone = claims.uuid.clone();
+    let config_clone = state.config.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Err(e) = crate::auth::create_user_profile(&u_name, &uuid_clone, &config_clone) {
+            tracing::error!("Failed to recreate template files for user {} after deletion: {}", u_name, e);
+        }
+    }).await;
+    
+    Json(serde_json::json!({ "deleted": folder }))
+}
+
+#[derive(Deserialize)]
+struct Envelope {
+    #[serde(rename = "wrappedKey")]
+    wrapped_key: String,
+    iv: String,
+    tag: String,
+}
+
+pub async fn handle_upload(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    req: Request,
+) -> impl IntoResponse {
+    let boundary = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|ct| ct.to_str().ok())
+        .and_then(|ct| multer::parse_boundary(ct).ok())
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Invalid or missing multipart boundary" })),
+        ));
+
+    let boundary = match boundary {
+        Ok(b) => b,
+        Err(e) => return e.into_response(),
+    };
+
+    // Explicitly set constraints to bypass Axum's hidden 2MB per-field limit.
+    // We allow up to 10MB per field (MAX_FILE_SIZE) and a total limit for the whole batch.
+    let constraints = Constraints::new()
+        .size_limit(
+            SizeLimit::new()
+                .per_field(MAX_FILE_SIZE as u64)
+                .whole_stream(state.config.max_upload_batch_bytes as u64)
+        );
+
+    let stream = req.into_body().into_data_stream();
+    let mut multipart = MulterMultipart::with_constraints(stream, boundary, constraints);
+
+    let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+    let mut tinfoil_hat_mode = false;
+    let mut total_batches = 1usize;
+    let mut batch_index = 0usize;
+    let mut upload_type = String::new();
+    let mut raw_encryption_envelope_map = String::new();
+
+    // --- Evict active OSCAR container if it exists ---
+    // This ensures that when the user clicks 'Proceed to OSCAR' after the upload,
+    // a fresh container is launched that picks up the newly uploaded data.
+    let uuid = claims.uuid.clone();
+    let docker = state.docker.clone();
+    let state_arc = state.clone();
+
+    tokio::spawn(async move {
+        let mut containers = state_arc.active_containers.write().await;
+        if let Some(info) = containers.remove(&uuid) {
+            tracing::info!("Evicting OSCAR container {} due to new upload start.", info.container_id);
+            let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
+            let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
+        }
+    });
+    
+    // Files are held in RAM during processing, matching the JS multer.memoryStorage()
+    // approach for performance. Size limits are enforced during streaming to prevent
+    // unbounded memory consumption.
+    let mut temp_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut batch_bytes_total: usize = 0;
+    let max_batch_bytes = state.config.max_upload_batch_bytes;
+
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::error!("Multipart error: {}", e);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": format!("Multipart parsing error: {}", e) })),
+                ).into_response();
+            }
+        };
+
+        let name = field.name().unwrap_or("").to_string();
+        
+        if name == "folder" { let _ = field.text().await; } // Ignored, using claims.username
+        else if name == "selectedDateMs" { let _ = field.text().await; }
+        else if name == "tinfoilHatMode" { tinfoil_hat_mode = field.text().await.unwrap_or("false".to_string()).to_lowercase() == "true"; }
+        else if name == "uploadSessionId" { let _ = field.text().await; }
+        else if name == "totalBatches" { total_batches = field.text().await.unwrap_or_default().parse().unwrap_or(1); }
+        else if name == "batchIndex" { batch_index = field.text().await.unwrap_or_default().parse().unwrap_or(0); }
+        else if name == "uploadType" { upload_type = field.text().await.unwrap_or_default(); }
+        else if name == "wellueDbParents" { let _ = field.text().await; }
+        else if name == "encryptionEnvelope" { raw_encryption_envelope_map = field.text().await.unwrap_or_default(); }
+        else if name == "files" {
+            let file_name = field.file_name().unwrap_or("").to_string();
+            if file_name.is_empty() {
+                continue;
+            }
+
+            // Read the file chunk-by-chunk, enforcing per-file and per-batch limits
+            // during streaming rather than after the full read. This prevents a single
+            // oversized file from consuming unbounded memory before we can reject it.
+            let mut file_buf: Vec<u8> = Vec::new();
+            let mut field = field;
+
+            loop {
+                match field.chunk().await {
+                    Ok(Some(chunk)) => {
+                        let new_file_size = file_buf.len() + chunk.len();
+
+                        if new_file_size > MAX_FILE_SIZE {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                Json(serde_json::json!({
+                                    "error": format!(
+                                        "The file \"{}\" exceeds the 10 MB size limit. \
+                                         Files larger than 10 MB are not expected in CPAP data \
+                                         and have been rejected for your protection.",
+                                        file_name
+                                    )
+                                })),
+                            ).into_response();
+                        }
+
+                        let new_batch_total = batch_bytes_total + file_buf.len() + chunk.len();
+                        if new_batch_total > max_batch_bytes {
+                            let limit_mb = max_batch_bytes / (1024 * 1024);
+                            return (
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                Json(serde_json::json!({
+                                    "error": format!(
+                                        "This upload batch exceeds the {} MB total size limit. \
+                                         Please try selecting a more recent start date to reduce \
+                                         the number of files per upload.",
+                                        limit_mb
+                                    )
+                                })),
+                            ).into_response();
+                        }
+
+                        file_buf.extend_from_slice(&chunk);
+                    }
+                    Ok(None) => {
+                        break; // EOF
+                    }
+                    Err(e) => {
+                        tracing::error!("Error reading multipart chunk for file {}: {}", file_name, e);
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": format!(
+                                    "Failed to read file \"{}\" during upload. Connection may have been interrupted or a limit was hit: {}",
+                                    file_name,
+                                    e
+                                )
+                            })),
+                        ).into_response();
+                    }
+                }
+            }
+
+            if !file_buf.is_empty() {
+                batch_bytes_total += file_buf.len();
+                temp_files.push((file_name, file_buf));
+            }
+        }
+    }
+
+    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    fs::create_dir_all(&folder_path).await.unwrap();
+
+    let envelopes: std::collections::HashMap<String, Envelope> = if tinfoil_hat_mode && !raw_encryption_envelope_map.is_empty() {
+        serde_json::from_str(&raw_encryption_envelope_map).unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    // --- Validate paths and decrypt payloads synchronously first ---
+    // This ensures all security checks are done before any file touches disk,
+    // and lets us return clean error responses if anything is wrong.
+    let first_file_name = temp_files.first().map(|(n, _)| n.clone());
+    let mut write_tasks: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(temp_files.len());
+
+    for (filename, payload) in temp_files {
+        let sanitized_path = match sanitize_upload_relative_path(&filename) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        let dest_path = folder_path.join(&sanitized_path);
+
+        let mut final_payload = payload;
+
+        if tinfoil_hat_mode {
+            if let Some(env) = envelopes.get(&sanitized_path).or_else(|| envelopes.get(&filename)) {
+                match decrypt_payload(&final_payload, env, &state.config.app_encryption_private_key) {
+                    Ok(decrypted) => {
+                        final_payload = decrypted;
+                    }
+                    Err(_) => {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Unable to decrypt {}", sanitized_path) }))).into_response();
+                    }
+                }
+            } else {
+                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Missing envelope for {}", sanitized_path) }))).into_response();
+            }
+        }
+
+        write_tasks.push((dest_path, final_payload));
+    }
+
+    // --- Create parent directories for all destination paths ---
+    // Done in a single pass before spawning write tasks to avoid concurrent mkdir races.
+    for (dest_path, _) in &write_tasks {
+        if let Some(parent) = dest_path.parent() {
+            let _ = fs::create_dir_all(parent).await;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::chown;
+                let _ = chown(parent, Some(911), Some(911));
+            }
+        }
+    }
+    
+    // Also chown the root folder itself
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::chown;
+        let _ = chown(&folder_path, Some(911), Some(911));
+    }
+
+    // --- Write all files to disk in parallel, bounded to 32 concurrent writes ---
+    // Using JoinSet with a concurrency cap avoids overwhelming the filesystem while
+    // providing large throughput gains for CPAP batches of hundreds of small files.
+    use tokio::task::JoinSet;
+
+    const MAX_CONCURRENT_WRITES: usize = 32;
+    let mut join_set: JoinSet<bool> = JoinSet::new();
+    let mut uploaded_count = 0usize;
+
+    for (dest_path, payload) in write_tasks {
+        // Drain completed tasks when we hit the concurrency cap
+        while join_set.len() >= MAX_CONCURRENT_WRITES {
+            if let Some(Ok(true)) = join_set.join_next().await {
+                uploaded_count += 1;
+            }
+        }
+
+        join_set.spawn(async move {
+            // Set mode 0o640 at file creation
+            let file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o660)
+                .open(&dest_path)
+                .await;
+
+            match file {
+                Ok(mut f) => {
+                    let success = f.write_all(&payload).await.is_ok();
+                    let _ = f.flush().await; // Ensure write finishes before chown
+                    
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::chown;
+                        // Chown file to UID 911, GID 911 for OSCAR consumption
+                        let _ = chown(&dest_path, Some(911), Some(911));
+                    }
+                    success
+                },
+                Err(e) => {
+                    tracing::error!("Failed to create file {:?}: {}", dest_path, e);
+                    false
+                },
+            }
+        });
+    }
+
+    // --- Final Drain of JoinSet ---
+    // Critical: Without this final loop, the remaining tasks in the JoinSet (up to MAX_CONCURRENT_WRITES)
+    // would be aborted when the JoinSet is dropped at the end of this function.
+    while let Some(res) = join_set.join_next().await {
+        if let Ok(true) = res {
+            uploaded_count += 1;
+        }
+    }
+
+    // --- Update Profile.xml if this is an SD card upload ---
+    if upload_type == "sdcard" && batch_index + 1 == total_batches {
+        if let Some(first_file) = first_file_name {
+            let root_folder = first_file.split('/').next().unwrap_or("");
+            if !root_folder.is_empty() {
+                let username_dir = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+                let profile_xml_path = PathBuf::from(PROFILE_ROOT)
+                    .join(&username_dir)
+                    .join("Profiles")
+                    .join(&username_dir)
+                    .join("Profile.xml");
+
+                if profile_xml_path.exists() {
+                    let new_path = format!("/config/Documents/SDCARD/{}", root_folder);
+                    let _ = update_last_cpap_path(&profile_xml_path, &new_path).await;
+                }
+            }
+        }
+    }
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "uploaded": uploaded_count,
+        "batchIndex": batch_index,
+        "totalBatches": total_batches
+    }))).into_response()
+}
+
+async fn update_last_cpap_path(path: &std::path::Path, new_value: &str) -> std::io::Result<()> {
+    let content = fs::read_to_string(path).await?;
+    // Simple regex-based replacement to avoid heavy XML parsing
+    // Target: <LastCPAPPath type="QString">/config/Documents/SDCARD</LastCPAPPath>
+    let re = Regex::new(r#"(<LastCPAPPath type="QString">)(.*?)(</LastCPAPPath>)"#).unwrap();
+    let updated = re.replace(&content, |caps: &Captures| {
+        format!("{}{}{}", &caps[1], new_value, &caps[3])
+    });
+
+    fs::write(path, updated.as_ref()).await?;
+    Ok(())
+}
+
+pub async fn list_banner_images() -> impl IntoResponse {
+    let mut images = Vec::new();
+    let images_root = "./public/images";
+    if let Ok(mut entries) = fs::read_dir(images_root).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".webp") {
+                    images.push(name.to_string());
+                }
+            }
+        }
+    }
+    
+    // Sort for deterministic results (optional but nice)
+    images.sort();
+    
+    Json(serde_json::json!({ "images": images }))
+}
+
+fn decrypt_payload(
+    file_payload: &[u8],
+    envelope: &Envelope,
+    priv_key: &RsaPrivateKey,
+) -> anyhow::Result<Vec<u8>> {
+    let wrapped_key = STANDARD.decode(&envelope.wrapped_key)?;
+    let iv = STANDARD.decode(&envelope.iv)?;
+    let tag = STANDARD.decode(&envelope.tag)?;
+
+    let padding = Oaep::new::<sha2::Sha256>();
+    let aes_key = priv_key.decrypt(padding, &wrapped_key)?;
+    
+    if aes_key.len() != 32 {
+        anyhow::bail!("Invalid AES key");
+    }
+
+    let cipher = Aes256Gcm::new_from_slice(&aes_key)?;
+    let nonce = Nonce::from_slice(&iv);
+    
+    // Reconstruct the ciphertext with the auth tag for Aes256Gcm
+    let mut ciphertext = file_payload.to_vec();
+    ciphertext.extend_from_slice(&tag);
+
+    // No associated data used in JS implementation 
+    let payload = Payload {
+        msg: &ciphertext,
+        aad: b"",
+    };
+
+    let decrypted = cipher.decrypt(nonce, payload).map_err(|_| anyhow::anyhow!("AES decryption failed"))?;
+    Ok(decrypted)
+}

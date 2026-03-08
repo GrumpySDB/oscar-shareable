@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="500" viewBox="0 0 1100 500">
+  <rect width="1100" height="500" fill="#f4f7ff"/>
+  <rect x="25" y="25" width="1050" height="450" rx="14" fill="#fff" stroke="#d9e0ee"/>
+  <text x="55" y="70" font-family="Segoe UI, Arial" font-size="31" fill="#172033" font-weight="700">Import SD Card → Choose a Folder</text>
+
+  <rect x="55" y="95" width="990" height="60" rx="8" fill="#eef2ff" stroke="#ccd8f6"/>
+  <text x="75" y="133" font-family="Consolas, monospace" font-size="28" fill="#2457f5">/config/SDCARD/your-username/your-uploaded-folder</text>
+
+  <text x="75" y="210" font-family="Consolas, monospace" font-size="26" fill="#172033">config</text>
+  <text x="120" y="245" font-family="Consolas, monospace" font-size="26" fill="#172033">└── SDCARD</text>
+  <text x="180" y="280" font-family="Consolas, monospace" font-size="26" fill="#172033">└── your-username</text>
+  <text x="250" y="315" font-family="Consolas, monospace" font-size="26" fill="#0e7a43">└── your-uploaded-folder  ← choose this</text>
+
+  <rect x="790" y="355" width="220" height="70" rx="10" fill="#2457f5"/>
+  <text x="852" y="399" font-family="Segoe UI, Arial" font-size="36" fill="#fff" font-weight="700">Choose</text>
+
+  <text x="75" y="375" font-family="Segoe UI, Arial" font-size="26" fill="#172033">After import, open Daily View to review your data.</text>
+</svg>
