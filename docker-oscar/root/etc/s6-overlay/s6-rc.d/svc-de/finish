@@ -1,0 +1,51 @@
+#!/command/with-contenv bash
+
+# This script runs when the desktop environment (svc-de) stops.
+# We use this as the definitive place to trigger OSCAR's graceful shutdown
+# because svc-de is a supervised service that receives SIGTERM correctly.
+
+SHUTDOWN_LOG="/config/Documents/OSCAR_Data/shutdown.log"
+# Ensure directory exists just in case
+mkdir -p "$(dirname "$SHUTDOWN_LOG")"
+exec >> "$SHUTDOWN_LOG" 2>&1
+
+echo "--- svc-de finish script started at $(date) ---"
+echo "Triggering OSCAR graceful shutdown via wmctrl..."
+
+export DISPLAY=:1
+
+# Find OSCAR windows and close them gracefully via wmctrl
+# This is proven to trigger OSCAR's internal save routine correctly.
+if /usr/bin/wmctrl -l | grep -q "OSCAR"; then
+  echo "Closing OSCAR window(s) via wmctrl..."
+  /usr/bin/wmctrl -c "OSCAR"
+fi
+
+# Wait for the process to exit
+MAX_WAIT=20
+WAIT_COUNT=0
+while pgrep -u abc OSCAR > /dev/null && [ $WAIT_COUNT -lt $MAX_WAIT ]; do
+  sleep 1
+  ((WAIT_COUNT++))
+  echo "Waiting for OSCAR to exit... ($WAIT_COUNT/$MAX_WAIT)"
+  # Fallback: if it's still there after 5s, try the keyboard sequence as a backup
+  if [ $((WAIT_COUNT % 5)) -eq 0 ]; then
+     echo "OSCAR still active, trying keyboard exit sequence as backup..."
+     /usr/bin/xdotool key --clearmodifiers alt+f sleep 0.5 key x sleep 0.5 key Return
+  fi
+done
+
+if pgrep -u abc OSCAR > /dev/null; then
+  echo "OSCAR still running after $MAX_WAIT seconds. Sending SIGINT..."
+  pkill -SIGINT -u abc OSCAR
+  sleep 5
+fi
+
+if pgrep -u abc OSCAR > /dev/null; then
+    echo "OSCAR failed to exit gracefully. Forcing kill..."
+    pkill -9 -u abc OSCAR
+else
+    echo "OSCAR has exited gracefully at $(date)."
+fi
+
+echo "--- svc-de finish script complete ---"

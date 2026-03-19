@@ -967,7 +967,8 @@ pub async fn cleanup_oscar_session(state: Arc<AppState>, uuid: String, container
     tracing::info!("Evicting OSCAR container {} and cleaning up resources for user {}.", container_id, uuid);
 
     // Stop and remove the container, ensuring anonymous volumes are removed (v: true)
-    let _ = docker.stop_container(&container_id, None::<StopContainerOptions>).await;
+    // We give it 30 seconds to finish saving profile data.
+    let _ = docker.stop_container(&container_id, Some(StopContainerOptions { t: 30 })).await;
     let _ = docker.remove_container(
         &container_id,
         Some(RemoveContainerOptions {
