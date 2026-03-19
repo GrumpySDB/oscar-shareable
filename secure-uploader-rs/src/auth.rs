@@ -534,10 +534,28 @@ pub async fn logout(
             state.active_auth_sessions.write().await.remove(&token_data.claims.sid);
 
             let uuid = token_data.claims.uuid.clone();
-            if let Some(info) = state.active_containers.write().await.remove(&uuid) {
+            
+            // Find and remove all containers belonging to this user
+            let mut to_cleanup = Vec::new();
+            {
+                let mut containers = state.active_containers.write().await;
+                let keys: Vec<String> = containers.iter()
+                    .filter(|(_, info)| info.owner_uuid == uuid)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                
+                for k in keys {
+                    if let Some(info) = containers.remove(&k) {
+                        to_cleanup.push(info.container_id);
+                    }
+                }
+            }
+
+            for container_id in to_cleanup {
                 let state_clone = state.clone();
+                let uuid_clone = uuid.to_string();
                 tokio::spawn(async move {
-                    crate::proxy::cleanup_oscar_session(state_clone, uuid, info.container_id).await;
+                    crate::proxy::cleanup_oscar_session(state_clone, uuid_clone, container_id).await;
                 });
             }
         }
