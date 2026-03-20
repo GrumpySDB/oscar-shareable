@@ -144,7 +144,7 @@ services:
       PUID: "911"
       PGID: "911"
       TZ: "America/Chicago"
-      MAX_RES: "3840x2160"
+      MAX_RES: "2560x1440"
       TITLE: "OSCAR ${OSCAR_VERSION:-1.7.1}"
       START_DOCKER: "false"
       DISABLE_IPV6: "true"

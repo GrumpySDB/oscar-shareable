@@ -233,7 +233,7 @@ pub async fn ensure_oscar_container(
                         "PUID=911".to_string(),
                         "PGID=911".to_string(),
                         "TZ=America/Chicago".to_string(),
-                        "MAX_RES=3840x2160".to_string(),
+                        "MAX_RES=2560x1440".to_string(),
                         "TITLE=OSCAR (Web)".to_string(),
                         "START_DOCKER=false".to_string(),
                         "DISABLE_IPV6=true".to_string(),
