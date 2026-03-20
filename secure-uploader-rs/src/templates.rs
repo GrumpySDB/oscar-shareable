@@ -128,7 +128,7 @@ pub const PROFILE_XML_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   <ResyncFromUserFlagging type="bool">false</ResyncFromUserFlagging>
   <RebuildCache type="bool">false</RebuildCache>
   <PrefCalcPercentile type="double">95</PrefCalcPercentile>
-  <ClinicalMode type="bool">true</ClinicalMode>
+  <ClinicalMode type="bool">false</ClinicalMode>
   <DaySplitTime type="QTime">12:00:00</DaySplitTime>
   <EventFlagSessionBar type="bool">false</EventFlagSessionBar>
   <Password type="QString"></Password>

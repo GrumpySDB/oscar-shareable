@@ -256,11 +256,13 @@ function getSelectedRootFolderName(files) {
 }
 
 function isRequired(name) {
-  return REQUIRED_ALWAYS.includes(name);
+  const nameLower = name.toLowerCase();
+  return REQUIRED_ALWAYS.some(r => r.toLowerCase() === nameLower);
 }
 
 function isAlwaysIncluded(name) {
-  return isRequired(name) || OPTIONAL_ALWAYS.includes(name);
+  const nameLower = name.toLowerCase();
+  return isRequired(name) || OPTIONAL_ALWAYS.some(o => o.toLowerCase() === nameLower);
 }
 
 function getRelativePath(file) {
@@ -628,9 +630,9 @@ async function scanAndPrepare(manualFiles = null) {
       return;
     }
 
-    const requiredBasenames = new Set(files.map((file) => getBasename(file)));
+    const requiredBasenamesLower = new Set(files.map((file) => getBasename(file).toLowerCase()));
     for (const required of REQUIRED_ALWAYS) {
-      if (!requiredBasenames.has(required)) {
+      if (!requiredBasenamesLower.has(required.toLowerCase())) {
         setMessage(`Invalid data: missing required file ${required}.`, true);
         return;
       }
