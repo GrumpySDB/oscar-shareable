@@ -5,7 +5,12 @@ OSCAR_GID="${PGID:-911}"
 
 # Ensure writable data directories exist and are always owned by the runtime UID/GID.
 mkdir -p /config/Documents/OSCAR_Data
-mkdir -p /config/Documents/SDCARD
-
 chown -R "${OSCAR_UID}:${OSCAR_GID}" /config/Documents/OSCAR_Data
-chown -R "${OSCAR_UID}:${OSCAR_GID}" /config/Documents/SDCARD
+
+# Handle SDCARD which might be a read-only bind mount in session containers
+if [ -w "/config/Documents/SDCARD" ]; then
+    mkdir -p /config/Documents/SDCARD
+    chown -R "${OSCAR_UID}:${OSCAR_GID}" /config/Documents/SDCARD
+else
+    echo "Notice: /config/Documents/SDCARD is read-only or not writable. Skipping ownership change."
+fi
