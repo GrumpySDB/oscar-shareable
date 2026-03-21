@@ -22,7 +22,6 @@ use crate::{
 };
 
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
-const OXIMETRY_MAX_FILE_SIZE: usize = 200 * 1024; // 200KB
 use crate::config::{UPLOAD_ROOT, PROFILE_ROOT};
 
 pub async fn list_files(
@@ -65,11 +64,10 @@ pub async fn delete_folder(
 
     // 1. Evict active OSCAR containers (primary and guest) if they exist
     {
-        let mut containers = state.active_containers.write().await;
         let mut to_cleanup = Vec::new();
         let uuid_param = claims.uuid.clone();
         
-        containers.retain(|_, info| {
+        state.active_containers.retain(|_, info| {
             if info.owner_uuid == uuid_param {
                 to_cleanup.push(info.container_id.clone());
                 false
@@ -164,8 +162,7 @@ pub async fn handle_upload(
     let state_arc = state.clone();
 
     tokio::spawn(async move {
-        let mut containers = state_arc.active_containers.write().await;
-        if let Some(info) = containers.remove(&uuid) {
+        if let Some((_, info)) = state_arc.active_containers.remove(&uuid) {
             tracing::info!("Evicting OSCAR container {} due to new upload start.", info.container_id);
             let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
             let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
@@ -194,15 +191,19 @@ pub async fn handle_upload(
 
         let name = field.name().unwrap_or("").to_string();
         
-        if name == "folder" { let _ = field.text().await; } // Ignored, using claims.username
-        else if name == "selectedDateMs" { let _ = field.text().await; }
-        else if name == "tinfoilHatMode" { tinfoil_hat_mode = field.text().await.unwrap_or("false".to_string()).to_lowercase() == "true"; }
-        else if name == "uploadSessionId" { let _ = field.text().await; }
-        else if name == "totalBatches" { total_batches = field.text().await.unwrap_or_default().parse().unwrap_or(1); }
-        else if name == "batchIndex" { batch_index = field.text().await.unwrap_or_default().parse().unwrap_or(0); }
-        else if name == "uploadType" { upload_type = field.text().await.unwrap_or_default(); }
-        else if name == "wellueDbParents" { let _ = field.text().await; }
-        else if name == "encryptionEnvelope" { raw_encryption_envelope_map = field.text().await.unwrap_or_default(); }
+        if matches!(name.as_str(), "folder" | "selectedDateMs" | "uploadSessionId" | "wellueDbParents") {
+            let _ = field.text().await;
+        } else if name == "tinfoilHatMode" {
+            tinfoil_hat_mode = field.text().await.unwrap_or_else(|_| "false".to_string()).to_lowercase() == "true";
+        } else if name == "totalBatches" {
+            total_batches = field.text().await.unwrap_or_default().parse().unwrap_or(1);
+        } else if name == "batchIndex" {
+            batch_index = field.text().await.unwrap_or_default().parse().unwrap_or(0);
+        } else if name == "uploadType" {
+            upload_type = field.text().await.unwrap_or_default();
+        } else if name == "encryptionEnvelope" {
+            raw_encryption_envelope_map = field.text().await.unwrap_or_default();
+        }
         else if name == "files" {
             let file_name = field.file_name().unwrap_or("").to_string();
             if file_name.is_empty() {
