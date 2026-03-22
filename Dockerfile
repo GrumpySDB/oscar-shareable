@@ -9,7 +9,7 @@ RUN npm run build
 # --- Stage 2: Backend Build ---
 FROM rust:1-slim-bookworm AS backend-builder
 WORKDIR /usr/src/app
-RUN apt-get update && apt-get install -y pkg-config libssl-dev build-essential
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev build-essential
 
 # Cache dependencies
 COPY secure-uploader-rs/Cargo.toml ./
@@ -28,7 +28,10 @@ RUN find src -type f -exec touch {} + && cargo build --release
 
 # --- Stage 3: Runtime ---
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends ca-certificates zlib1g && \
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # Non-root user (match UID/GID from compose or default)

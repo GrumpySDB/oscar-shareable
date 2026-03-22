@@ -65,6 +65,10 @@ impl Database {
             [],
         )?;
 
+        // Performance Indexes
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_invites_used_by ON invites(used_by_uuid)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_share_links_owner ON share_links(owner_uuid)", []);
+
         let db = Database {
             conn: Mutex::new(conn),
         };
@@ -81,7 +85,7 @@ impl Database {
         let salt = SaltString::generate(&mut OsRng);
         let password_hash = Argon2::default()
             .hash_password(app_password.as_bytes(), &salt)
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e.to_string()))))?
             .to_string();
 
         let admin = self.get_user_by_identifier("local", app_username)?;

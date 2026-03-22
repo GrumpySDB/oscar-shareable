@@ -3,19 +3,21 @@
 export XCURSOR_THEME=breeze_cursors
 
 # Default sink setup
-if [ ! -f '/dev/shm/audio.lock' ]; then
-  until [ -f /defaults/pid ]; do
-    sleep .5
-  done
-  s6-setuidgid abc with-contenv pactl \
-    load-module module-null-sink \
-    sink_name="output" \
-    sink_properties=device.description="output"
-  s6-setuidgid abc with-contenv pactl \
-    load-module module-null-sink \
-    sink_name="input" \
-    sink_properties=device.description="input"
-  touch /dev/shm/audio.lock
+if [[ "${SELKIES_AUDIO_ENABLED,,}" != "false" ]]; then
+  if [ ! -f '/dev/shm/audio.lock' ]; then
+    until [ -f /defaults/pid ]; do
+      sleep .5
+    done
+    s6-setuidgid abc with-contenv pactl \
+      load-module module-null-sink \
+      sink_name="output" \
+      sink_properties=device.description="output"
+    s6-setuidgid abc with-contenv pactl \
+      load-module module-null-sink \
+      sink_name="input" \
+      sink_properties=device.description="input"
+    touch /dev/shm/audio.lock
+  fi
 fi
 
 # Setup dev mode if defined
@@ -61,5 +63,13 @@ fi
 
 # Start Selkies
 # For OSCAR Shareable: Redirect output to /tmp/selkies.log so autostart script can watch for client connection
+SELKIES_ARGS="--addr='localhost' --mode='websockets'"
+if [[ "${SELKIES_AUDIO_ENABLED,,}" == "false" ]]; then
+  SELKIES_ARGS="${SELKIES_ARGS} --audio-enabled=false"
+fi
+if [[ "${SELKIES_GAMEPAD_ENABLED,,}" == "false" ]]; then
+  SELKIES_ARGS="${SELKIES_ARGS} --gamepad-enabled=false"
+fi
+
 exec s6-setuidgid abc \
-  bash -c "selkies --addr='localhost' --mode='websockets' 2>&1 | tee /tmp/selkies.log"
+  bash -c "selkies ${SELKIES_ARGS} 2>&1 | tee /tmp/selkies.log"

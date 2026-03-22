@@ -974,7 +974,7 @@ async function uploadPreparedFiles() {
           if (error.message.includes('exceeds') || error.message.includes('rejected')) {
             break;
           }
-          console.warn(`Batch ${batchIndex + 1} failed on attempt ${attempt + 1}:`, error.message);
+          console.warn("Batch failed on attempt:", batchIndex + 1, attempt + 1, error.message);
           attempt += 1;
         }
       }

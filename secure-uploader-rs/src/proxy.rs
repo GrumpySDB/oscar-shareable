@@ -4,7 +4,7 @@ use axum::{
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response, Redirect},
 };
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation, Algorithm};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -68,14 +68,14 @@ async fn create_ephemeral_profile(owner_username: &str, ephemeral_folder: &str) 
         .await?;
         
     if !status.success() {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to create ephemeral profile"));
+        return Err(std::io::Error::other("Failed to create ephemeral profile"));
     }
     
     #[cfg(unix)]
     {
         let p_dir = format!("data/profiles/{}", ephemeral_folder);
         let c_dir = format!("data/app_config/{}", ephemeral_folder);
-        let _ = tokio::process::Command::new("chown").args(&["-R", "911:911", &p_dir, &c_dir]).status().await;
+        let _ = tokio::process::Command::new("chown").args(["-R", "911:911", &p_dir, &c_dir]).status().await;
     }
     
     Ok(())
@@ -131,34 +131,31 @@ pub async fn ensure_oscar_container(
 
     let is_active = {
         let mut to_cleanup = Vec::new();
-        {
-            let containers = state.active_containers.read().await;
-            if !is_ephemeral {
-                // For primary sessions, find any existing active containers for the SAME user
-                // but with DIFFERENT keys (stale sessions from a previous launch).
-                for (k, info) in containers.iter() {
-                    if info.owner_uuid == owner_uuid && k != container_key {
-                        to_cleanup.push((k.clone(), info.container_id.clone()));
-                    }
+        if !is_ephemeral {
+            // For primary sessions, find any existing active containers for the SAME user
+            // but with DIFFERENT keys (stale sessions from a previous launch).
+            for entry in state.active_containers.iter() {
+                let (k, info) = entry.pair();
+                if info.owner_uuid == owner_uuid && k != container_key {
+                    to_cleanup.push((k.clone(), info.container_id.clone()));
                 }
             }
         }
 
         if !to_cleanup.is_empty() {
-            let mut containers = state.active_containers.write().await;
             for (k, cid) in to_cleanup {
-                tracing::info!("Evicting stale session {} for user {} as a new session is launching.", k, owner_uuid);
-                containers.remove(&k);
-                let state_clone = state.clone();
-                let uuid_clone = owner_uuid.to_string();
-                tokio::spawn(async move {
-                    cleanup_oscar_session(state_clone, uuid_clone, cid).await;
-                });
+                if state.active_containers.remove(&k).is_some() {
+                    tracing::info!("Evicting stale session {} for user {} as a new session is launching.", k, owner_uuid);
+                    let state_clone = state.clone();
+                    let uuid_clone = owner_uuid.to_string();
+                    tokio::spawn(async move {
+                        cleanup_oscar_session(state_clone, uuid_clone, cid).await;
+                    });
+                }
             }
         }
 
-        let containers = state.active_containers.read().await;
-        containers.contains_key(container_key)
+        state.active_containers.contains_key(container_key)
     };
 
     if !is_active {
@@ -230,29 +227,32 @@ pub async fn ensure_oscar_container(
                         ..Default::default()
                     }),
                     env: Some(vec![
-                        "PUID=911".to_string(),
-                        "PGID=911".to_string(),
-                        "TZ=America/Chicago".to_string(),
-                        "MAX_RES=2560x1440".to_string(),
-                        "TITLE=OSCAR (Web)".to_string(),
-                        "START_DOCKER=false".to_string(),
-                        "DISABLE_IPV6=true".to_string(),
-                        "NO_DECOR=true".to_string(),
-                        "NO_GAMEPAD=true".to_string(),
-                        "HARDEN_DESKTOP=true".to_string(),
-                        "HARDEN_OPENBOX=true".to_string(),
-                        "SELKIES_ENABLE_CURSORS=true".to_string(),
-                        "SELKIES_AUDIO_ENABLED=false".to_string(),
-                        "SELKIES_GAMEPAD_ENABLED=false".to_string(),
-                        "SELKIES_UI_SIDEBAR_SHOW_GAMEPADS=false".to_string(),
-                        "SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD=false".to_string(),
-                        "SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS=false".to_string(),
-                        "SELKIES_UI_SIDEBAR_SHOW_SHARING=false".to_string(),
-                        "SELKIES_MICROPHONE_ENABLED=false".to_string(),
-                        "SELKIES_CLIPBOARD_IN_ENABLED=false".to_string(),
-                        "SELKIES_CLIPBOARD_OUT_ENABLED=true".to_string(),
-                        "SELKIES_SECOND_SCREEN=false".to_string(),
-                        "SELKIES_ENABLE_SHARING=true".to_string(),
+                        format!("PUID={}", state.config.puid),
+                        format!("PGID={}", state.config.pgid),
+                        format!("TZ={}", state.config.tz),
+                        format!("MAX_RES={}", state.config.max_res),
+                        format!("TITLE={}", state.config.title),
+                        format!("START_DOCKER={}", state.config.start_docker),
+                        format!("DISABLE_IPV6={}", state.config.disable_ipv6),
+                        format!("NO_DECOR={}", state.config.no_decor),
+                        format!("NO_GAMEPAD={}", state.config.no_gamepad),
+                        format!("HARDEN_DESKTOP={}", state.config.harden_desktop),
+                        format!("HARDEN_OPENBOX={}", state.config.harden_openbox),
+                        format!("SELKIES_ENABLE_CURSORS={}", state.config.selkies_enable_cursors),
+                        format!("SELKIES_AUDIO_ENABLED={}", state.config.selkies_audio_enabled),
+                        format!("SELKIES_GAMEPAD_ENABLED={}", state.config.selkies_gamepad_enabled),
+                        format!("SELKIES_UI_SIDEBAR_SHOW_GAMEPADS={}", state.config.selkies_ui_sidebar_show_gamepads),
+                        format!("SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD={}", state.config.selkies_ui_sidebar_show_clipboard),
+                        format!("SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS={}", state.config.selkies_ui_sidebar_show_audio_settings),
+                        format!("SELKIES_UI_SIDEBAR_SHOW_SHARING={}", state.config.selkies_ui_sidebar_show_sharing),
+                        format!("SELKIES_MICROPHONE_ENABLED={}", state.config.selkies_microphone_enabled),
+                        format!("SELKIES_CLIPBOARD_IN_ENABLED={}", state.config.selkies_clipboard_in_enabled),
+                        format!("SELKIES_CLIPBOARD_OUT_ENABLED={}", state.config.selkies_clipboard_out_enabled),
+                        format!("SELKIES_SECOND_SCREEN={}", state.config.selkies_second_screen),
+                        format!("SELKIES_ENABLE_SHARING={}", state.config.selkies_enable_sharing),
+                        format!("SELKIES_UI_SHOW_CORE_BUTTONS={}", state.config.selkies_ui_show_core_buttons),
+                        format!("SELKIES_USE_BROWSER_CURSORS={}", state.config.selkies_use_browser_cursors),
+                        format!("MAX_RESOLUTION={}", state.config.max_resolution),
                     ]),
                     ..Default::default()
                 };
@@ -289,15 +289,12 @@ pub async fn ensure_oscar_container(
         return Err((StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Networking failure. OSCAR did not attach to bridge correctly." }))));
     }
 
-    {
-        let mut containers = state.active_containers.write().await;
-        containers.insert(container_key.to_string(), ContainerInfo {
-            container_id: container_name.clone(),
-            ip_address,
-            last_active: chrono::Utc::now().timestamp(),
-            owner_uuid: owner_uuid.to_string(),
-        });
-    }
+    state.active_containers.insert(container_key.to_string(), ContainerInfo {
+        container_id: container_name.clone(),
+        ip_address,
+        last_active: chrono::Utc::now().timestamp(),
+        owner_uuid: owner_uuid.to_string(),
+    });
 
     Ok(())
 }
@@ -393,14 +390,11 @@ pub async fn oscar_share_launch(
     let jti = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
 
-    {
-        let mut sessions = state.active_auth_sessions.write().await;
-        sessions.insert(guest_sid.clone(), crate::config::SessionInfo {
-            uuid: owner_uuid.clone(),
-            expires_at: now + 60 * 60,
-            is_guest: true,
-        });
-    }
+    state.active_auth_sessions.insert(guest_sid.clone(), crate::config::SessionInfo {
+        uuid: owner_uuid.clone(),
+        expires_at: now + 60 * 60,
+        is_guest: true,
+    });
 
     let launch_claims = LaunchTokenClaims {
         sub: owner_uuid,
@@ -445,15 +439,12 @@ pub async fn oscar_login_handler(
     };
 
     let now = chrono::Utc::now().timestamp();
-    {
-        let mut consumed = state.consumed_launch_tokens.write().await;
-        consumed.retain(|_, &mut exp| exp > now);
-    }
+    state.consumed_launch_tokens.retain(|_, &mut exp| exp > now);
 
     let token_data = match decode::<LaunchTokenClaims>(
         &token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-        &Validation::default(),
+        &Validation::new(Algorithm::HS256),
     ) {
         Ok(d) => d,
         Err(e) => {
@@ -468,19 +459,15 @@ pub async fn oscar_login_handler(
         return Redirect::to("/").into_response();
     }
 
-    {
-        let mut consumed = state.consumed_launch_tokens.write().await;
-        if consumed.contains_key(&claims.jti) {
-            tracing::debug!("oscar_login_handler: token already consumed: {}", claims.jti);
-            return Redirect::to("/").into_response();
-        }
-        consumed.insert(claims.jti, now + 120);
+    if state.consumed_launch_tokens.contains_key(&claims.jti) {
+        tracing::debug!("oscar_login_handler: token already consumed: {}", claims.jti);
+        return Redirect::to("/").into_response();
     }
+    state.consumed_launch_tokens.insert(claims.jti, now + 120);
 
     let is_guest = {
-        let mut sessions = state.active_auth_sessions.write().await;
-        sessions.retain(|_, s| s.expires_at > now);
-        if let Some(s) = sessions.get(&claims.sid) {
+        state.active_auth_sessions.retain(|_, s| s.expires_at > now);
+        if let Some(s) = state.active_auth_sessions.get(&claims.sid) {
             s.is_guest
         } else {
             tracing::debug!("oscar_login_handler: auth session {} not found", claims.sid);
@@ -529,14 +516,11 @@ pub async fn oscar_keepalive_handler(
 
     let container_key = query_params.get("key").cloned().unwrap_or_else(|| claims.container_key.clone());
 
-    {
-        let mut containers = state.active_containers.write().await;
-        if let Some(info) = containers.get_mut(&container_key) {
-            // Simple security check: owner must match claims
-            if info.owner_uuid == claims.uuid {
-                info.last_active = chrono::Utc::now().timestamp();
-                tracing::debug!("oscar_keepalive: refreshed last_active for container {}", container_key);
-            }
+    if let Some(mut info) = state.active_containers.get_mut(&container_key) {
+        // Simple security check: owner must match claims
+        if info.owner_uuid == claims.uuid {
+            info.last_active = chrono::Utc::now().timestamp();
+            tracing::debug!("oscar_keepalive: refreshed last_active for container {}", container_key);
         }
     }
     StatusCode::NO_CONTENT.into_response()
@@ -583,8 +567,7 @@ pub async fn proxy_handler(
             None => return Response::builder().status(StatusCode::UNAUTHORIZED).body(Body::from("Missing OSCAR session claims")).unwrap(),
         };
 
-        let containers = state.active_containers.read().await;
-        if let Some(info) = containers.get(&claims.container_key) {
+        if let Some(info) = state.active_containers.get(&claims.container_key) {
             tracing::debug!("proxy_handler: Routing request for user {} to container {}", claims.uuid, info.container_id);
             (info.ip_address.clone(), claims.container_key.clone(), claims.is_guest)
         } else {
@@ -600,16 +583,13 @@ pub async fn proxy_handler(
         }
     };
 
-    {
         // Don't register activity for background polling or non-user requests
         let is_polling = path.ends_with("/audio") || path.ends_with("/websockify");
         if !is_polling {
-            let mut containers = state.active_containers.write().await;
-            if let Some(info) = containers.get_mut(&container_key) {
+            if let Some(mut info) = state.active_containers.get_mut(&container_key) {
                 info.last_active = chrono::Utc::now().timestamp();
             }
         }
-    }
 
     let target_url = format!("http://{}:3000{}{}", target_ip, path, qs);
 
@@ -631,7 +611,7 @@ pub async fn proxy_handler(
         return handle_websocket_upgrade(state, req, &target_url, container_key).await;
     }
 
-    let client = &state.reqwest_client;
+    let client = &state.internal_client;
     let mut builder = client.request(req.method().clone(), &target_url);
 
     for (name, value) in req.headers() {
@@ -769,6 +749,8 @@ async fn handle_websocket_upgrade(
     let ws_url = if target_url.starts_with("https://") {
         target_url.replacen("https://", "wss://", 1)
     } else {
+        // [SAST-REMEDIATION]: Mapping http to ws is safe here as this proxies to 
+        // internal Docker containers where TLS is not available/required.
         target_url.replacen("http://", "ws://", 1)
     };
 
@@ -934,18 +916,16 @@ pub async fn oscar_disconnect_handler(
     // Remove from active map immediately so the next oscar_launch triggers a clean
     // container provision via ensure_oscar_container (which force-removes first).
     let maybe_container = {
-        let mut containers = state.active_containers.write().await;
-        
         // Security check: If we're using a key from the query string, 
         // verify it belongs to the authenticated user.
-        if let Some(info) = containers.get(&container_key) {
+        if let Some(info) = state.active_containers.get(&container_key) {
             if info.owner_uuid != user_uuid {
                 tracing::warn!("oscar_disconnect: user {} tried to disconnect unauthorized key {}", user_uuid, container_key);
                 return StatusCode::FORBIDDEN.into_response();
             }
         }
         
-        containers.remove(&container_key)
+        state.active_containers.remove(&container_key).map(|(_, info)| info)
     };
 
     if let Some(info) = maybe_container {

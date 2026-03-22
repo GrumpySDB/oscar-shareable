@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
 use std::env;
-use tokio::sync::RwLock;
-use std::collections::HashMap;
 use reqwest::Client;
 use rsa::RsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
@@ -33,6 +31,32 @@ pub struct AppConfig {
     pub oscar_version: String,
     pub oscar_docker_image: String,
     pub app_config_root: String,
+    pub selkies_audio_enabled: bool,
+    pub selkies_gamepad_enabled: bool,
+    pub selkies_ui_sidebar_show_gamepads: bool,
+    pub selkies_ui_sidebar_show_audio_settings: bool,
+    pub selkies_ui_sidebar_show_clipboard: bool,
+    pub selkies_ui_sidebar_show_sharing: bool,
+    pub puid: String,
+    pub pgid: String,
+    pub tz: String,
+    pub max_res: String,
+    pub title: String,
+    pub start_docker: bool,
+    pub disable_ipv6: bool,
+    pub no_decor: bool,
+    pub no_gamepad: bool,
+    pub harden_desktop: bool,
+    pub harden_openbox: bool,
+    pub selkies_enable_cursors: bool,
+    pub selkies_microphone_enabled: bool,
+    pub selkies_clipboard_in_enabled: bool,
+    pub selkies_clipboard_out_enabled: bool,
+    pub selkies_second_screen: bool,
+    pub selkies_enable_sharing: bool,
+    pub selkies_ui_show_core_buttons: bool,
+    pub selkies_use_browser_cursors: bool,
+    pub max_resolution: String,
 }
 
 impl AppConfig {
@@ -91,6 +115,32 @@ impl AppConfig {
             oscar_version: env::var("OSCAR_PROFILE_VERSION").unwrap_or_else(|_| "1.7.1+-plus".to_string()),
             oscar_docker_image: env::var("OSCAR_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/grumpysdb/oscar-shareable-oscar:latest".to_string()),
             app_config_root: env::var("APP_CONFIG_ROOT").unwrap_or_else(|_| "./data/app_config".to_string()),
+            selkies_audio_enabled: env::var("SELKIES_AUDIO_ENABLED").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            selkies_gamepad_enabled: env::var("SELKIES_GAMEPAD_ENABLED").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            selkies_ui_sidebar_show_gamepads: env::var("SELKIES_UI_SIDEBAR_SHOW_GAMEPADS").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            selkies_ui_sidebar_show_audio_settings: env::var("SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            selkies_ui_sidebar_show_clipboard: env::var("SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            selkies_ui_sidebar_show_sharing: env::var("SELKIES_UI_SIDEBAR_SHOW_SHARING").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            puid: env::var("PUID").unwrap_or_else(|_| "911".to_string()),
+            pgid: env::var("PGID").unwrap_or_else(|_| "911".to_string()),
+            tz: env::var("TZ").unwrap_or_else(|_| "America/Chicago".to_string()),
+            max_res: env::var("MAX_RES").unwrap_or_else(|_| "2560x1440".to_string()),
+            title: env::var("TITLE").unwrap_or_else(|_| "OSCAR (Web)".to_string()),
+            start_docker: env::var("START_DOCKER").map(|v| v.to_lowercase() == "true").unwrap_or(false),
+            disable_ipv6: env::var("DISABLE_IPV6").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            no_decor: env::var("NO_DECOR").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            no_gamepad: env::var("NO_GAMEPAD").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            harden_desktop: env::var("HARDEN_DESKTOP").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            harden_openbox: env::var("HARDEN_OPENBOX").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            selkies_enable_cursors: env::var("SELKIES_ENABLE_CURSORS").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            selkies_microphone_enabled: env::var("SELKIES_MICROPHONE_ENABLED").map(|v| v.to_lowercase() == "true").unwrap_or(false),
+            selkies_clipboard_in_enabled: env::var("SELKIES_CLIPBOARD_IN_ENABLED").map(|v| v.to_lowercase() == "true").unwrap_or(false),
+            selkies_clipboard_out_enabled: env::var("SELKIES_CLIPBOARD_OUT_ENABLED").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            selkies_second_screen: env::var("SELKIES_SECOND_SCREEN").map(|v| v.to_lowercase() == "true").unwrap_or(false),
+            selkies_enable_sharing: env::var("SELKIES_ENABLE_SHARING").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            selkies_ui_show_core_buttons: env::var("SELKIES_UI_SHOW_CORE_BUTTONS").map(|v| v.to_lowercase() == "true").unwrap_or(false),
+            selkies_use_browser_cursors: env::var("SELKIES_USE_BROWSER_CURSORS").map(|v| v.to_lowercase() == "true").unwrap_or(true),
+            max_resolution: env::var("MAX_RESOLUTION").unwrap_or_else(|_| "2560x1440".to_string()),
         })
     }
 }
@@ -98,12 +148,12 @@ impl AppConfig {
 pub struct AppState {
     pub config: AppConfig,
     pub db: Database,
-    pub active_auth_sessions: RwLock<HashMap<String, SessionInfo>>,
-    pub consumed_launch_tokens: RwLock<HashMap<String, i64>>,
-    pub pending_upload_sessions: RwLock<HashMap<String, UploadSession>>,
-    pub reqwest_client: Client,
+    pub active_auth_sessions: DashMap<String, SessionInfo>,
+    pub consumed_launch_tokens: DashMap<String, i64>,
+    pub internal_client: Client,
+    pub external_client: Client,
     pub docker: Docker,
-    pub active_containers: RwLock<HashMap<String, ContainerInfo>>,
+    pub active_containers: DashMap<String, ContainerInfo>,
     pub auth_attempts: DashMap<String, (u32, i64)>, // IP -> (count, first_attempt_timestamp)
 }
 
@@ -122,23 +172,16 @@ pub struct SessionInfo {
     pub is_guest: bool,
 }
 
-#[derive(Clone)]
-pub struct UploadSession {
-    pub folder: String,
-    pub selected_date: i64,
-    pub total_batches: usize,
-    pub upload_type: String,
-    pub next_batch_index: usize,
-    pub seen_required: std::collections::HashSet<String>,
-    pub seen_paths: std::collections::HashSet<String>,
-    pub seen_wellue_db_parents: std::collections::HashSet<String>,
-    pub expires_at: i64,
-}
+// UploadSession removed as dead code.
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self> {
-        let reqwest_client = Client::builder()
+        let internal_client = Client::builder()
             .danger_accept_invalid_certs(true)
+            .build()?;
+
+        let external_client = Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
         let db_path = env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/db.sqlite".to_string());
@@ -151,16 +194,16 @@ impl AppState {
         Ok(Self {
             config,
             db,
-            active_auth_sessions: RwLock::new(HashMap::new()),
-            consumed_launch_tokens: RwLock::new(HashMap::new()),
-            pending_upload_sessions: RwLock::new(HashMap::new()),
-            reqwest_client,
+            active_auth_sessions: DashMap::new(),
+            consumed_launch_tokens: DashMap::new(),
+            internal_client,
+            external_client,
             docker: if let Ok(host) = env::var("DOCKER_HOST") {
                 Docker::connect_with_http(&host, 10, bollard::API_DEFAULT_VERSION).unwrap_or_else(|_| Docker::connect_with_local_defaults().unwrap())
             } else {
                 Docker::connect_with_local_defaults().unwrap_or_else(|_| Docker::connect_with_unix_defaults().unwrap())
             },
-            active_containers: RwLock::new(HashMap::new()),
+            active_containers: DashMap::new(),
             auth_attempts: DashMap::new(),
         })
     }

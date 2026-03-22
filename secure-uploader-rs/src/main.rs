@@ -105,24 +105,21 @@ async fn main() -> anyhow::Result<()> {
             let now = chrono::Utc::now().timestamp();
             let mut to_remove = Vec::new();
 
-            {
-                let containers = cleaner_state.active_containers.read().await;
-                for (container_key, info) in containers.iter() {
-                    let timeout = cleaner_state.config.oscar_idle_timeout_seconds;
-                    if now - info.last_active > timeout {
-                        to_remove.push((container_key.clone(), info.owner_uuid.clone(), info.container_id.clone()));
-                    }
+            for entry in cleaner_state.active_containers.iter() {
+                let (container_key, info) = entry.pair();
+                let timeout = cleaner_state.config.oscar_idle_timeout_seconds;
+                if now - info.last_active > timeout {
+                    to_remove.push((container_key.clone(), info.owner_uuid.clone(), info.container_id.clone()));
                 }
             }
 
             for (container_key, owner_uuid, container_id) in to_remove {
-                let state_clone = cleaner_state.clone();
-                tokio::spawn(async move {
-                    crate::proxy::cleanup_oscar_session(state_clone, owner_uuid, container_id).await;
-                });
-
-                let mut containers = cleaner_state.active_containers.write().await;
-                containers.remove(&container_key);
+                if cleaner_state.active_containers.remove(&container_key).is_some() {
+                    let state_clone = cleaner_state.clone();
+                    tokio::spawn(async move {
+                        crate::proxy::cleanup_oscar_session(state_clone, owner_uuid, container_id).await;
+                    });
+                }
             }
         }
     });
