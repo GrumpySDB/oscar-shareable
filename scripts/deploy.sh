@@ -113,6 +113,7 @@ chmod 400 .env
 echo "--------------------------------------------------------"
 echo "Provisioning complete with Asymmetric Ownership."
 echo "ACTION REQUIRED: Populate .env and secrets/ as root, then run as user '$DOCKER_APP_USER':"
+echo "  export XDG_RUNTIME_DIR=/run/user/$(id -u $DOCKER_APP_USER)"
 echo "  cd $BASE_DEPLOY_DIR"
 echo "  docker compose up -d"
 echo "--------------------------------------------------------"
