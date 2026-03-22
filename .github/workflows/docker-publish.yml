@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - multi-user-redesign
+      - 'sec/*'
+      - 'feat/*'
     tags:
       - 'v*.*.*'
 
