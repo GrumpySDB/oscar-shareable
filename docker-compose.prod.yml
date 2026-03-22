@@ -10,6 +10,13 @@ services:
       - .env
     command: >
       sh -c "envsubst < /template/config.yml.example > /etc/cloudflared/config.yml"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -34,9 +41,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    read_only: true
 
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: ghcr.io/grumpysdb/oscar-shareable-proxy:${DOCKER_IMAGE_TAG:-latest}
     container_name: docker-socket-proxy
     restart: unless-stopped
     volumes:
@@ -52,9 +60,20 @@ services:
       - internal
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
 
   nginx:
-    image: nginx:stable-alpine
+    image: ghcr.io/grumpysdb/oscar-shareable-nginx:${DOCKER_IMAGE_TAG:-latest}
     container_name: nginx-internal
     volumes:
       - ./nginx/nginx.conf.template:/etc/nginx/templates/oscar.conf.template:ro
@@ -70,6 +89,19 @@ services:
       - internal
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+      - /etc/nginx/conf.d
 
   uploader:
     container_name: uploader
@@ -142,33 +174,42 @@ services:
         limits:
           memory: 768m
     environment:
-      PUID: "911"
-      PGID: "911"
-      TZ: "America/Chicago"
-      MAX_RES: "3840x2160"
-      TITLE: "OSCAR ${OSCAR_VERSION:-1.7.1}"
-      START_DOCKER: "false"
-      DISABLE_IPV6: "true"
-      NO_DECOR: "true"
-      NO_GAMEPAD: "true"
-      HARDEN_DESKTOP: "true"
-      HARDEN_OPENBOX: "true"
-      SELKIES_ENABLE_CURSORS: "true"
-      SELKIES_AUDIO_ENABLED: "false"
-      SELKIES_GAMEPAD_ENABLED: "false"
-      SELKIES_UI_SIDEBAR_SHOW_GAMEPADS: "false"
-      SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD: "false"
-      SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS: "false"
-      SELKIES_UI_SIDEBAR_SHOW_SHARING: "false"
-      SELKIES_MICROPHONE_ENABLED: "false"
-      SELKIES_CLIPBOARD_IN_ENABLED: "false"
-      SELKIES_CLIPBOARD_OUT_ENABLED: "true"
-      SELKIES_SECOND_SCREEN: "false"
-      SELKIES_ENABLE_SHARING: "false"
+      PUID: "${PUID:-911}"
+      PGID: "${PGID:-911}"
+      TZ: "${TZ:-America/Chicago}"
+      MAX_RES: "${MAX_RES:-2560x1440}"
+      TITLE: "${TITLE:-OSCAR ${OSCAR_VERSION:-1.7.1}}"
+      START_DOCKER: "${START_DOCKER:-false}"
+      DISABLE_IPV6: "${DISABLE_IPV6:-true}"
+      NO_DECOR: "${NO_DECOR:-true}"
+      NO_GAMEPAD: "${NO_GAMEPAD:-true}"
+      HARDEN_DESKTOP: "${HARDEN_DESKTOP:-true}"
+      HARDEN_OPENBOX: "${HARDEN_OPENBOX:-true}"
+      SELKIES_ENABLE_CURSORS: "${SELKIES_ENABLE_CURSORS:-true}"
+      SELKIES_AUDIO_ENABLED: "${SELKIES_AUDIO_ENABLED:-false}"
+      SELKIES_GAMEPAD_ENABLED: "${SELKIES_GAMEPAD_ENABLED:-false}"
+      SELKIES_UI_SIDEBAR_SHOW_GAMEPADS: "${SELKIES_UI_SIDEBAR_SHOW_GAMEPADS:-false}"
+      SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD: "${SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD:-false}"
+      SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS: "${SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS:-false}"
+      SELKIES_UI_SIDEBAR_SHOW_SHARING: "${SELKIES_UI_SIDEBAR_SHOW_SHARING:-false}"
+      SELKIES_MICROPHONE_ENABLED: "${SELKIES_MICROPHONE_ENABLED:-false}"
+      SELKIES_CLIPBOARD_IN_ENABLED: "${SELKIES_CLIPBOARD_IN_ENABLED:-false}"
+      SELKIES_CLIPBOARD_OUT_ENABLED: "${SELKIES_CLIPBOARD_OUT_ENABLED:-true}"
+      SELKIES_SECOND_SCREEN: "${SELKIES_SECOND_SCREEN:-false}"
+      SELKIES_ENABLE_SHARING: "${SELKIES_ENABLE_SHARING:-false}"
+      SELKIES_UI_SHOW_CORE_BUTTONS: "${SELKIES_UI_SHOW_CORE_BUTTONS:-false}"
+      SELKIES_USE_BROWSER_CURSORS: "${SELKIES_USE_BROWSER_CURSORS:-true}"
+      MAX_RESOLUTION: "${MAX_RESOLUTION:-2560x1440}"
     networks:
       - internal
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
 
 volumes:
   cloudflared-config:

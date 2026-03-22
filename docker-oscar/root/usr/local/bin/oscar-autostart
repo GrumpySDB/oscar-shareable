@@ -2,12 +2,10 @@
 
 # Persistent log file in the user data volume
 SHUTDOWN_LOG="/config/Documents/OSCAR_Data/shutdown.log"
-# Ensure the directory exists (init-oscar usually handles this, but safety first)
-mkdir -p "$(dirname "$SHUTDOWN_LOG")"
 touch "$SHUTDOWN_LOG"
 exec >> "$SHUTDOWN_LOG" 2>&1
 
-echo "--- OSCAR Autostart (Openbox) started at $(date) ---"
+echo "--- OSCAR Autostart Service started at $(date) ---"
 
 # Set display
 export DISPLAY="${DISPLAY:-:1}"
@@ -41,37 +39,32 @@ echo "OSCAR started with PID: $OSCAR_PID at $(date)"
 graceful_stop() {
   echo "Caught termination signal at $(date). Starting graceful shutdown..."
   
-  # Method 1: wmctrl (Most reliable way to trigger saves in OSCAR)
-  echo "Attempting to close OSCAR via wmctrl..."
-  if /usr/bin/wmctrl -l | grep -q "OSCAR"; then
-    /usr/bin/wmctrl -c "OSCAR"
-  fi
+  # Method 1: Signal OSCAR's window to close (mimics File > Exit)
+  echo "Attempting to close OSCAR window via xdotool..."
+  # We search for windows owned by 'abc' and containing 'OSCAR' in the name
+  /usr/bin/xdotool search --all --name "OSCAR" windowclose
   
-  # Wait and monitor for the process to exit
-  MAX_WAIT=15
+  # Wait and monitor
+  MAX_WAIT=10
   WAIT_COUNT=0
   while pgrep -u abc OSCAR > /dev/null && [ $WAIT_COUNT -lt $MAX_WAIT ]; do
     sleep 1
     ((WAIT_COUNT++))
-    echo "Waiting for OSCAR to exit... ($WAIT_COUNT/$MAX_WAIT)"
-    # Backup: try keyboard automation if wmctrl didn't do it after 5s
-    if [ $((WAIT_COUNT % 5)) -eq 0 ]; then
-       echo "Trying backup keyboard sequence..."
-       /usr/bin/xdotool key --clearmodifiers alt+f sleep 0.5 key x sleep 0.5 key Return
-    fi
+    echo "Waiting for OSCAR (PID $OSCAR_PID) to exit... ($WAIT_COUNT/$MAX_WAIT)"
   done
 
-  # Method 2: SIGINT (Fallback)
+  # Method 2: Fallback to SIGINT if still running
   if pgrep -u abc OSCAR > /dev/null; then
     echo "OSCAR still running after $MAX_WAIT seconds. Sending SIGINT..."
-    pkill -SIGINT -u abc OSCAR
+    kill -SIGINT $OSCAR_PID
+    
+    # Final brief wait
     sleep 3
   fi
 
-  # Method 3: SIGKILL (Last resort)
   if pgrep -u abc OSCAR > /dev/null; then
       echo "OSCAR failed to exit gracefully. Forcing kill..."
-      pkill -9 -u abc OSCAR
+      kill -9 $OSCAR_PID
   else
       echo "OSCAR has exited at $(date)."
   fi
@@ -80,7 +73,7 @@ graceful_stop() {
   exit 0
 }
 
-# Trap signals (SIGTERM is sent to the process group when Openbox exits)
+# Trap signals from s6-overlay
 trap graceful_stop TERM INT
 
 # Wait for the background process

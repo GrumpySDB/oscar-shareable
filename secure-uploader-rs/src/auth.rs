@@ -7,7 +7,7 @@ use axum::{
     Extension,
 };
 use std::net::SocketAddr;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation, Algorithm};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use rsa::pkcs8::EncodePublicKey;
@@ -20,6 +20,7 @@ use tokio::fs;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub uuid: String,
+    #[serde(rename = "sub")]
     pub username: String,
     pub role: String,
     pub sid: String,
@@ -142,7 +143,7 @@ pub async fn discord_callback(
 
     let code_str = query.code.ok_or((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Missing code from Discord" }))))?;
 
-    let client = &state.reqwest_client;
+    let client = &state.external_client;
 
     // Exchange code for token
     let host = req_headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or_default();
@@ -277,7 +278,7 @@ pub async fn local_signup(
     }
 
     // Backend validation for username
-    if payload.username.len() < 1 || payload.username.len() > 128 || !payload.username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if payload.username.is_empty() || payload.username.len() > 128 || !payload.username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid username format" }))));
     }
 
@@ -424,6 +425,8 @@ pub async fn local_recovery_handler(
     match user {
         Some(u) => {
             // Generate new password
+            // [SAST-REMEDIATION]: Uuid::new_v4() provides 122 bits of high-quality 
+            // entropy, sufficient for a temporary password.
             let new_pw = uuid::Uuid::new_v4().simple().to_string();
             let new_pw_clone = new_pw.clone();
             
@@ -444,8 +447,7 @@ pub async fn local_recovery_handler(
             })?;
 
             // Clear active sessions for this user
-            let mut sessions = state.active_auth_sessions.write().await;
-            sessions.retain(|_, s| s.uuid != u.uuid);
+            state.active_auth_sessions.retain(|_, s| s.uuid != u.uuid);
 
             Ok(Json(serde_json::json!({
                 "message": "Password successfully reset",
@@ -464,7 +466,7 @@ async fn issue_session(
     let now = chrono::Utc::now().timestamp();
     let exp = now + state.config.auth_session_ttl_seconds as i64;
 
-    state.active_auth_sessions.write().await.insert(
+    state.active_auth_sessions.insert(
         sid.clone(),
         SessionInfo {
             uuid: user.uuid.clone(),
@@ -532,15 +534,32 @@ pub async fn logout(
         if let Ok(token_data) = decode::<Claims>(
             &token,
             &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-            &Validation::default(),
+            &Validation::new(Algorithm::HS256),
         ) {
-            state.active_auth_sessions.write().await.remove(&token_data.claims.sid);
+            state.active_auth_sessions.remove(&token_data.claims.sid);
 
             let uuid = token_data.claims.uuid.clone();
-            if let Some(info) = state.active_containers.write().await.remove(&uuid) {
+            
+            // Find and remove all containers belonging to this user
+            let mut to_cleanup = Vec::new();
+            {
+                let keys: Vec<String> = state.active_containers.iter()
+                    .filter(|entry| entry.value().owner_uuid == uuid)
+                    .map(|entry| entry.key().clone())
+                    .collect();
+                
+                for k in keys {
+                    if let Some((_, info)) = state.active_containers.remove(&k) {
+                        to_cleanup.push(info.container_id);
+                    }
+                }
+            }
+
+            for container_id in to_cleanup {
                 let state_clone = state.clone();
+                let uuid_clone = uuid.to_string();
                 tokio::spawn(async move {
-                    crate::proxy::cleanup_oscar_session(state_clone, uuid, info.container_id).await;
+                    crate::proxy::cleanup_oscar_session(state_clone, uuid_clone, container_id).await;
                 });
             }
         }
@@ -632,7 +651,7 @@ pub async fn auth_middleware(
     let token_data_res = decode::<Claims>(
         &token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-        &Validation::default(),
+        &Validation::new(Algorithm::HS256),
     );
 
     let token_data = match token_data_res {
@@ -658,10 +677,9 @@ pub async fn auth_middleware(
     let now = chrono::Utc::now().timestamp();
     
     let is_valid = {
-        let mut sessions = state.active_auth_sessions.write().await;
-        sessions.retain(|_, s| s.expires_at > now);
+        state.active_auth_sessions.retain(|_, s| s.expires_at > now);
 
-        if let Some(session) = sessions.get(&claims.sid) {
+        if let Some(session) = state.active_auth_sessions.get(&claims.sid) {
             session.uuid == claims.uuid
         } else {
             false
@@ -821,17 +839,13 @@ async fn delete_user_handler_impl(
     let folder_name = crate::utils::sanitize_folder_name(user.username.as_deref().unwrap_or("")).unwrap_or(user.uuid.clone());
 
     // 2. Erase their active sessions
-    {
-        let mut sessions = state.active_auth_sessions.write().await;
-        sessions.retain(|_, s| s.uuid != uuid_param);
-    }
+    state.active_auth_sessions.retain(|_, s| s.uuid != uuid_param);
     
     // 3. Evict active OSCAR containers (primary and guest) if they exist
     {
-        let mut containers = state.active_containers.write().await;
         let mut to_cleanup = Vec::new();
         
-        containers.retain(|_, info| {
+        state.active_containers.retain(|_, info| {
             if info.owner_uuid == uuid_param {
                 to_cleanup.push(info.container_id.clone());
                 false
@@ -911,8 +925,7 @@ pub async fn reset_password_handler(
     })?;
 
     // Clear active sessions for this user so they have to login again
-    let mut sessions = state.active_auth_sessions.write().await;
-    sessions.retain(|_, s| s.uuid != uuid_param);
+    state.active_auth_sessions.retain(|_, s| s.uuid != uuid_param);
 
     Ok(Json(serde_json::json!({ "new_password": new_pw, "recovery_phrase": recovery_phrase })))
 }
@@ -951,7 +964,7 @@ pub async fn require_oscar_session_middleware(
     let token_data = decode::<OscarClaims>(
         &token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-        &Validation::default(),
+        &Validation::new(Algorithm::HS256),
     ).map_err(|e| {
         tracing::debug!("require_oscar_session_middleware: token decode failed: {}", e);
         axum::response::Redirect::to("/")
@@ -965,9 +978,8 @@ pub async fn require_oscar_session_middleware(
 
     let now = chrono::Utc::now().timestamp();
     let is_valid = {
-        let mut sessions = state.active_auth_sessions.write().await;
-        sessions.retain(|_, s| s.expires_at > now);
-        sessions.contains_key(&claims.sid)
+        state.active_auth_sessions.retain(|_, s| s.expires_at > now);
+        state.active_auth_sessions.contains_key(&claims.sid)
     };
 
     if !is_valid {
@@ -1021,8 +1033,8 @@ pub async fn create_share_link(
         if links.len() >= 5 {
             // links are ordered created_at DESC. index 0 is newest.
             // keep index 0..3 (4 links), delete index 4+
-            for num in 4..links.len() {
-                if let Some(token_to_delete) = links[num].get("token").and_then(|t| t.as_str()) {
+            for link in links.iter().skip(4) {
+                if let Some(token_to_delete) = link.get("token").and_then(|t| t.as_str()) {
                     let _ = state.db.delete_share_link(token_to_delete, &claims.uuid);
                 }
             }

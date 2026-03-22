@@ -186,11 +186,22 @@
   document.head.appendChild(style);
 
   // ─── SVG icon helper ─────────────────────────────────────────────────────────
-  function icon(paths, strokeColor) {
+  function setIcon(el, paths, strokeColor) {
     var s = strokeColor || 'currentColor';
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" '
+    var iconHtml = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" '
       + 'stroke="' + s + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
       + paths + '</svg>';
+    try {
+      var parser = new DOMParser();
+      var doc = parser.parseFromString(iconHtml, 'image/svg+xml');
+      var svg = doc.documentElement;
+      if (svg && svg.nodeName.toLowerCase() === 'svg') {
+        el.appendChild(svg);
+      }
+    } catch (e) {
+      // Fallback (safe as paths are hardcoded)
+      el.insertAdjacentHTML('afterbegin', iconHtml);
+    }
   }
 
   // ─── Build toolbar ────────────────────────────────────────────────────────────
@@ -206,13 +217,13 @@
   var uploaderBtn = document.createElement('button');
   uploaderBtn.className = 'oscar-tb-btn';
   uploaderBtn.title = 'Return to the file uploader';
-  uploaderBtn.innerHTML = icon(
+  setIcon(uploaderBtn,
     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
     + '<polyline points="17 8 12 3 7 8"/>'
     + '<line x1="12" y1="3" x2="12" y2="15"/>'
-  ) + ' Uploader';
+  );
+  uploaderBtn.appendChild(document.createTextNode(' Uploader'));
   uploaderBtn.addEventListener('click', function () {
-    // Signal the backend to cleanly stop the container before we navigate away.
     var key = document.body.dataset.containerKey || '';
     navigator.sendBeacon('/api/oscar-disconnect?key=' + encodeURIComponent(key));
     window.location.href = '/';
@@ -224,22 +235,24 @@
     var badge = document.createElement('span');
     badge.className = 'oscar-shared-badge';
     badge.title = 'You are viewing a shared profile';
-    badge.innerHTML = icon(
+    setIcon(badge,
       '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>'
       + '<circle cx="12" cy="7" r="4"/>'
-    ) + ' Shared View';
+    );
+    badge.appendChild(document.createTextNode(' Shared View'));
     toolbar.appendChild(badge);
   } else {
     var shareBtn = document.createElement('button');
     shareBtn.className = 'oscar-tb-btn';
     shareBtn.title = 'Create a sharing link for your OSCAR profile';
-    shareBtn.innerHTML = icon(
+    setIcon(shareBtn,
       '<circle cx="18" cy="5" r="3"/>'
       + '<circle cx="6" cy="12" r="3"/>'
       + '<circle cx="18" cy="19" r="3"/>'
       + '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>'
       + '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>'
-    ) + ' Share Link';
+    );
+    shareBtn.appendChild(document.createTextNode(' Share Link'));
     shareBtn.addEventListener('click', handleShareLink);
     toolbar.appendChild(shareBtn);
   }
@@ -248,12 +261,13 @@
   var logoutBtn = document.createElement('button');
   logoutBtn.className = 'oscar-tb-btn oscar-tb-logout';
   logoutBtn.title = 'Sign out';
-  logoutBtn.innerHTML = icon(
+  setIcon(logoutBtn,
     '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
     + '<polyline points="16 17 21 12 16 7"/>'
     + '<line x1="21" y1="12" x2="9" y2="12"/>',
     '#9b2c2c'
-  ) + ' Logout';
+  );
+  logoutBtn.appendChild(document.createTextNode(' Logout'));
   logoutBtn.addEventListener('click', handleLogout);
   toolbar.appendChild(logoutBtn);
 
@@ -262,18 +276,41 @@
   shareModal.id = 'oscar-share-modal';
   shareModal.setAttribute('aria-modal', 'true');
   shareModal.setAttribute('role', 'dialog');
-  shareModal.innerHTML = [
-    '<div id="oscar-share-modal-hdr">',
-    '  <strong>Profile Sharing Link</strong>',
-    '  <button id="oscar-share-close" aria-label="Close">\u00d7</button>',
-    '</div>',
-    '<p id="oscar-share-subtitle">Grants read-only access to your OSCAR data for 24\u00a0hours.</p>',
-    '<div id="oscar-share-url-row">',
-    '  <span id="oscar-share-url-text">Generating\u2026</span>',
-    '  <button id="oscar-share-copy-btn">Copy</button>',
-    '</div>',
-    '<p id="oscar-share-copied">\u2713 Copied to clipboard!</p>',
-  ].join('');
+
+  var modalHdr = document.createElement('div');
+  modalHdr.id = 'oscar-share-modal-hdr';
+  var modalStr = document.createElement('strong');
+  modalStr.textContent = 'Profile Sharing Link';
+  var modalX = document.createElement('button');
+  modalX.id = 'oscar-share-close';
+  modalX.setAttribute('aria-label', 'Close');
+  modalX.textContent = '\u00d7';
+  modalHdr.appendChild(modalStr);
+  modalHdr.appendChild(modalX);
+
+  var modalSub = document.createElement('p');
+  modalSub.id = 'oscar-share-subtitle';
+  modalSub.textContent = 'Grants read-only access to your OSCAR data for 24\u00a0hours.';
+
+  var modalRow = document.createElement('div');
+  modalRow.id = 'oscar-share-url-row';
+  var modalUrl = document.createElement('span');
+  modalUrl.id = 'oscar-share-url-text';
+  modalUrl.textContent = 'Generating\u2026';
+  var modalCp = document.createElement('button');
+  modalCp.id = 'oscar-share-copy-btn';
+  modalCp.textContent = 'Copy';
+  modalRow.appendChild(modalUrl);
+  modalRow.appendChild(modalCp);
+
+  var modalOk = document.createElement('p');
+  modalOk.id = 'oscar-share-copied';
+  modalOk.textContent = '\u2713 Copied to clipboard!';
+
+  shareModal.appendChild(modalHdr);
+  shareModal.appendChild(modalSub);
+  shareModal.appendChild(modalRow);
+  shareModal.appendChild(modalOk);
 
   // ─── Append to DOM ────────────────────────────────────────────────────────────
   document.body.appendChild(toolbar);

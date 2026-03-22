@@ -1,0 +1,6 @@
+FROM nginx:stable-alpine
+RUN apk add --no-cache --upgrade \
+    libssl3>=3.3.6-r0 \
+    libcrypto3>=3.3.6-r0 \
+    pcre2>=10.46-r0 \
+    libexpat>=2.7.5-r0

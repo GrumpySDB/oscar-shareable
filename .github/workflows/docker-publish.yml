@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - multi-user-redesign
+      - 'sec/*'
+      - 'feat/*'
     tags:
       - 'v*.*.*'
 
@@ -13,6 +15,9 @@ env:
   # github.repository as <account>/<repo>
   IMAGE_NAME_UPLOADER: ${{ github.repository }}-uploader
   IMAGE_NAME_OSCAR: ${{ github.repository }}-oscar
+  IMAGE_NAME_NGINX: ${{ github.repository }}-nginx
+  IMAGE_NAME_PROXY: ${{ github.repository }}-proxy
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-and-push-image:
@@ -49,7 +54,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Uploader image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -73,7 +78,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push OSCAR image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./docker-oscar
           file: ./docker-oscar/Dockerfile
@@ -82,3 +87,45 @@ jobs:
           labels: ${{ steps.meta-oscar.outputs.labels }}
           cache-from: type=gha,scope=oscar
           cache-to: type=gha,mode=max,scope=oscar
+
+      # --- NGINX IMAGE (Patched) ---
+      - name: Extract metadata (tags, labels) for Nginx
+        id: meta-nginx
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_NGINX }}
+          tags: |
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Nginx image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./nginx
+          file: ./nginx/Dockerfile.patched
+          push: true
+          tags: ${{ steps.meta-nginx.outputs.tags }}
+          labels: ${{ steps.meta-nginx.outputs.labels }}
+          cache-from: type=gha,scope=nginx
+          cache-to: type=gha,mode=max,scope=nginx
+
+      # --- DOCKER SOCKET PROXY IMAGE (Patched) ---
+      - name: Extract metadata (tags, labels) for Proxy
+        id: meta-proxy
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_PROXY }}
+          tags: |
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Proxy image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker-socket-proxy
+          file: ./docker-socket-proxy/Dockerfile.patched
+          push: true
+          tags: ${{ steps.meta-proxy.outputs.tags }}
+          labels: ${{ steps.meta-proxy.outputs.labels }}
+          cache-from: type=gha,scope=proxy
+          cache-to: type=gha,mode=max,scope=proxy
