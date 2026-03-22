@@ -66,8 +66,10 @@ for DIR in "${DIRS[@]}"; do
     chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$DIR"
     if [[ "$DIR" == data/* ]]; then
         # SQLite requirement: Must be writable by container's subuid.
-        # 777 is safe because the parent /opt/secure-uploader is restricted.
-        chmod 777 "$DIR"
+        # Since we know the TARGET_UID, we can chown it and use restrictive 770.
+        # This allows the container (via owner) and the host web user (via group) to access data.
+        chown "$TARGET_UID:$DOCKER_APP_USER" "$DIR"
+        chmod 770 "$DIR"
     else
         # secrets/ certs/ should be entry-restricted
         chmod 750 "$DIR"
