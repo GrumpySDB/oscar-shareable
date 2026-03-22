@@ -1,11 +1,8 @@
 use sha2::Sha256;
 
 pub fn safe_equal(a: &str, b: &str) -> bool {
-    // Basic timing safe equality for strings
-    // In Rust, comparing strings is not inherently timing-safe.
-    // We can use a simple constant time compare from `subtle` crate or just hash them, 
-    // but the `constant_time_eq` crate is usually used. 
-    // Since we don't have it in dependencies, we'll hash both with same secret and compare.
+    // Timing-safe comparison for strings of equal length.
+    // Use hash-based comparison to handle variable lengths safely.
     use sha2::Digest;
     let mut hasher1 = Sha256::new();
     hasher1.update(a.as_bytes());
@@ -15,6 +12,7 @@ pub fn safe_equal(a: &str, b: &str) -> bool {
     hasher2.update(b.as_bytes());
     let h2 = hasher2.finalize();
 
+    // Comparing fixed-length hashes is timing-safe
     h1 == h2
 }
 
@@ -32,24 +30,45 @@ pub fn sanitize_folder_name(value: &str) -> Option<String> {
 }
 
 pub fn sanitize_upload_relative_path(value: &str) -> Option<String> {
-    if value.is_empty() || value.len() > 512 {
+    if value.is_empty() || value.len() > 1024 {
         return None;
     }
-    if value.contains('\0') {
+
+    // Replace all backslashes with forward slashes immediately
+    let path_str = value.replace('\\', "/");
+
+    // Deny fundamental traversal indicators and null bytes
+    if path_str.contains('\0') || path_str.contains("..") || path_str.starts_with('/') || path_str.starts_with("./") {
         return None;
     }
-    let normalized = value.replace('\\', "/");
-    // VERY simple normalization
-    if normalized == "." || normalized.starts_with('/') || normalized.starts_with("../") || normalized.contains("/../") {
-        return None;
-    }
-    
-    let segments: Vec<&str> = normalized.split('/').collect();
-    for seg in &segments {
-        if seg.is_empty() || *seg == "." || *seg == ".." || seg.len() > 255 {
+
+    let segments: Vec<&str> = path_str.split('/').collect();
+    let mut cleaned_segments = Vec::new();
+
+    for seg in segments {
+        let trimmed = seg.trim();
+        // Reject empty segments, dots, hidden files, or overly long segment names
+        if trimmed.is_empty() || trimmed == "." || trimmed == ".." || trimmed.starts_with('.') || trimmed.len() > 255 {
             return None;
         }
+
+        // Enforce strict character whitelist for each segment:
+        // Alphanumeric, underscores, hyphens, spaces, and a single period (for extensions)
+        if !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ' ') {
+            return None;
+        }
+
+        // Prevent multiple consecutive dots within a filename (e.g. "file..txt")
+        if trimmed.contains("..") {
+            return None;
+        }
+
+        cleaned_segments.push(trimmed);
     }
-    
-    Some(segments.join("/"))
+
+    if cleaned_segments.is_empty() {
+        return None;
+    }
+
+    Some(cleaned_segments.join("/"))
 }

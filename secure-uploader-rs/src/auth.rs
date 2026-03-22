@@ -222,13 +222,10 @@ pub async fn discord_callback(
             last_accessed_at: Some(now),
         };
         
-        state.db.create_user(new_user.clone(), None, None).map_err(|e| {
-            tracing::error!("Failed to create user: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create user" })))
+        state.db.create_user_with_invite(new_user.clone(), None, None, invite_code).map_err(|e| {
+            tracing::error!("Failed to create Discord user with invite: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to link Discord account with invite" })))
         })?;
-        
-        // Mark invite as used
-        let _ = state.db.use_invite(invite_code, &new_user.uuid);
         
         // Create user profile templates
         let u_name = discord_user.username.clone();
@@ -244,8 +241,22 @@ pub async fn discord_callback(
     }
 
     let user = user.unwrap();
-    let (headers, token_res) = issue_session(&state, user).await?;
+    let (headers, token_res) = issue_session(&state, user.clone()).await?;
     
+    let username = user.username.as_deref().unwrap_or("unknown");
+    tracing::info!(
+        "Successful Discord login for user '{}' (uuid: {})",
+        username,
+        user.uuid
+    );
+    let _ = state.db.log_audit_event(
+        "discord_login",
+        Some(&user.uuid),
+        Some(username),
+        None,
+        None // ip not easily available in this callback without more rework
+    );
+
     let url = format!("/?login_token={}", token_res.0.token);
     let mut response = axum::response::Redirect::to(&url).into_response();
     response.headers_mut().extend(headers);
@@ -326,27 +337,32 @@ pub async fn local_signup(
         last_accessed_at: Some(now),
     };
 
-    state.db.create_user(user.clone(), Some(password_hash), Some(recovery_hash)).map_err(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create user" })))
-    })?;
-
-    state.db.use_invite(&payload.invite_code, &uuid).map_err(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Invite update error" })))
-    })?;
-
-    // Create user profile templates
-    let u_name = payload.username.clone();
-    let uuid_clone = uuid.clone();
-    let config_clone = state.config.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        if let Err(e) = create_user_profile(&u_name, &uuid_clone, &config_clone) {
-            tracing::error!("Failed to create template files for new local user {}: {}", u_name, e);
+    state.db.create_user_with_invite(user.clone(), Some(password_hash), Some(recovery_hash), &payload.invite_code).map_err(|e| {
+        tracing::error!("Failed to create user with invite: {}", e);
+        if e.to_string().contains("Query returned no rows") {
+            (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Invite already used or expired" })))
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to create account" })))
         }
-    }).await;
+    })?;
 
-    let (headers, token_res) = issue_session(&state, user).await?;
+    let (_headers, token_res) = issue_session(&state, user.clone()).await?;
     
-    Ok((headers, Json(SignupResponse {
+    tracing::info!(
+        "New local user signup: '{}' (uuid: {}) using invite: {}",
+        payload.username,
+        uuid,
+        payload.invite_code
+    );
+    let _ = state.db.log_audit_event(
+        "local_signup",
+        Some(&uuid),
+        Some(&payload.username),
+        Some(&format!("invite: {}", payload.invite_code)),
+        None
+    );
+
+    Ok((header::HeaderMap::new(), Json(SignupResponse {
         username: payload.username,
         password,
         recovery_phrase,
@@ -356,6 +372,7 @@ pub async fn local_signup(
 
 pub async fn local_login(
     State(state): State<Arc<AppState>>,
+    headers_map: header::HeaderMap,
     ExtractJson(payload): ExtractJson<LocalLoginPayload>,
 ) -> Result<(header::HeaderMap, Json<LoginResponse>), (StatusCode, Json<serde_json::Value>)> {
     let state_clone = state.clone();
@@ -372,13 +389,45 @@ pub async fn local_login(
         tracing::error!("Auth verification error: {}", e);
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Authentication error" })))
     })?;
-
     match user {
         Some(u) => {
-            let (headers, token_res) = issue_session(&state, u).await?;
+            let (headers, token_res) = issue_session(&state, u.clone()).await?;
+            let uname = u.username.as_deref().unwrap_or("unknown");
+            tracing::info!(
+                "Successful local login for user '{}' (uuid: {})",
+                uname,
+                u.uuid
+            );
+            
+            // Try to extract IP from headers (behind proxy)
+            let ip = headers_map.get("x-forwarded-for")
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.split(',').next().unwrap_or(s).trim().to_string());
+
+            let _ = state.db.log_audit_event(
+                "local_login",
+                Some(&u.uuid),
+                Some(uname),
+                None,
+                ip.as_deref()
+            );
             Ok((headers, token_res))
         }
-        None => Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid credentials" })))),
+        None => {
+            // Log failed login attempt
+            let ip = headers_map.get("x-forwarded-for")
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.split(',').next().unwrap_or(s).trim().to_string());
+            
+            let _ = state.db.log_audit_event(
+                "failed_login",
+                None,
+                Some(&payload.username),
+                Some("Invalid credentials"),
+                ip.as_deref()
+            );
+            Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid credentials" }))))
+        }
     }
 }
 
@@ -390,6 +439,7 @@ pub struct LocalRecoveryPayload {
 
 pub async fn local_recovery_handler(
     State(state): State<Arc<AppState>>,
+    headers_map: header::HeaderMap,
     ExtractJson(payload): ExtractJson<LocalRecoveryPayload>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Basic input sanitization
@@ -413,6 +463,10 @@ pub async fn local_recovery_handler(
     })
     .await
     .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Internal task error" }))))?;
+
+    let ip = headers_map.get("x-forwarded-for")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string());
 
     let user = user_res.map_err(|e| {
         tracing::error!("Recovery verification error: {}", e);
@@ -446,12 +500,35 @@ pub async fn local_recovery_handler(
             // Clear active sessions for this user
             state.active_auth_sessions.retain(|_, s| s.uuid != u.uuid);
 
+            let uname = u.username.as_deref().unwrap_or("unknown");
+            tracing::info!(
+                "Password reset successful via recovery phrase for user '{}' (uuid: {})",
+                uname,
+                u.uuid
+            );
+            let _ = state.db.log_audit_event(
+                "password_recovery",
+                Some(&u.uuid),
+                Some(uname),
+                None,
+                ip.as_deref()
+            );
+
             Ok(Json(serde_json::json!({
                 "message": "Password successfully reset",
                 "new_password": new_pw
             })))
         }
-        None => Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid username or recovery phrase" })))),
+        None => {
+            let _ = state.db.log_audit_event(
+                "failed_recovery",
+                None,
+                Some(username),
+                Some("Invalid recovery phrase"),
+                ip.as_deref()
+            );
+            Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid username or recovery phrase" }))))
+        }
     }
 }
 
@@ -528,12 +605,21 @@ pub async fn logout(
     let token_str = bearer_token.or(cookie_token);
 
     if let Some(token) = token_str {
+        // Use a more lenient validation for logout so we can invalidate the session even if technically expired
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.validate_exp = false; 
+
         if let Ok(token_data) = decode::<Claims>(
             &token,
             &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-            &Validation::new(Algorithm::HS256),
+            &validation,
         ) {
-            state.active_auth_sessions.remove(&token_data.claims.sid);
+            let sid = &token_data.claims.sid;
+            if state.active_auth_sessions.remove(sid).is_some() {
+                tracing::info!("Logged out session: {}", sid);
+            } else {
+                tracing::debug!("Logout requested for session that was no longer active: {}", sid);
+            }
 
             let uuid = token_data.claims.uuid.clone();
             
@@ -559,7 +645,12 @@ pub async fn logout(
                     crate::proxy::cleanup_oscar_session(state_clone, uuid_clone, container_id).await;
                 });
             }
+        } else {
+             // Even if decoding fails, we proceed to clear cookies below
+             tracing::warn!("Logout requested with undecodable token");
         }
+    } else {
+        tracing::debug!("Logout requested with no token present");
     }
 
     let mut response = Response::builder()
@@ -586,7 +677,7 @@ pub async fn session_check(
     axum::Extension(claims): axum::Extension<Claims>,
 ) -> impl IntoResponse {
     let _ = state.db.touch_user_access(&claims.uuid);
-    Json(serde_json::json!({ "ok": true, "username": claims.username, "role": claims.role }))
+    Json(serde_json::json!({ "authenticated": true, "username": claims.username, "role": claims.role }))
 }
 
 pub async fn get_public_key(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -644,6 +735,24 @@ pub async fn auth_middleware(
             ));
         }
     };
+
+    let method = req.method();
+    let is_mutation = method != axum::http::Method::GET 
+        && method != axum::http::Method::HEAD 
+        && method != axum::http::Method::OPTIONS;
+    let is_logout = req.uri().path() == "/api/logout";
+
+    if is_mutation && auth_header.is_none() && !is_logout {
+        tracing::warn!(
+            "Blocked mutation request ({}) to {} without Authorization header (CSRF prevention)",
+            method,
+            req.uri().path()
+        );
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "CSRF Prevention: Authorization header required for mutations" })),
+        ));
+    }
 
     let token_data_res = decode::<Claims>(
         &token,
@@ -738,9 +847,24 @@ pub async fn generate_invite_handler(
     let days = payload.expire_days.unwrap_or(3);
     let code = uuid::Uuid::new_v4().to_string().split('-').next().unwrap().to_uppercase();
     let expires_at = chrono::Utc::now().timestamp() + (days * 86400);
-    state.db.create_invite(&code, &claims.uuid, expires_at, payload.label).map_err(|_| {
+    state.db.create_invite(&code, &claims.uuid, expires_at, payload.label.clone()).map_err(|_| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
     })?;
+
+    tracing::info!(
+        "Admin user {} generated a new invite: {} (expires_at: {})",
+        claims.uuid,
+        code,
+        expires_at
+    );
+    let _ = state.db.log_audit_event(
+        "generate_invite",
+        Some(&claims.uuid),
+        Some(&claims.username),
+        Some(&format!("code: {}, label: {:?}", code, payload.label)),
+        None
+    );
+
     Ok(Json(serde_json::json!({ "code": code, "expires_at": expires_at })))
 }
 
@@ -751,6 +875,16 @@ pub async fn revoke_invite_handler(
     state.db.revoke_invite(&code).map_err(|_| {
         (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Invite not found or already deleted" })))
     })?;
+
+    tracing::info!("Invite code {} was revoked.", code);
+    let _ = state.db.log_audit_event(
+        "revoke_invite",
+        None,
+        None,
+        Some(&format!("code: {}", code)),
+        None
+    );
+
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -802,6 +936,27 @@ pub async fn list_users_handler(
     }).collect();
 
     Ok(Json(serde_json::json!({ "users": sanitized_users })))
+}
+
+pub async fn list_audit_logs_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<AuditLogQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let limit = query.limit.unwrap_or(50);
+    let offset = query.offset.unwrap_or(0);
+
+    let (logs, total) = state.db.get_audit_logs(limit, offset).map_err(|e| {
+        tracing::error!("Database error fetching audit logs: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+
+    Ok(Json(serde_json::json!({ "logs": logs, "total": total })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct AuditLogQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 pub async fn delete_self_handler(
@@ -875,6 +1030,16 @@ async fn delete_user_handler_impl(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Failed to delete from database" })))
     })?;
     
+    let uname = user.username.as_deref().unwrap_or("unknown");
+    tracing::info!("User account deleted: {} (uuid: {})", uname, uuid_param);
+    let _ = state.db.log_audit_event(
+        "delete_user",
+        Some(&uuid_param),
+        Some(uname),
+        None,
+        None
+    );
+
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -923,6 +1088,15 @@ pub async fn reset_password_handler(
 
     // Clear active sessions for this user so they have to login again
     state.active_auth_sessions.retain(|_, s| s.uuid != uuid_param);
+
+    tracing::info!("Admin reset credentials for user (uuid: {})", uuid_param);
+    let _ = state.db.log_audit_event(
+        "admin_reset_password",
+        Some(&uuid_param),
+        None,
+        None,
+        None
+    );
 
     Ok(Json(serde_json::json!({ "new_password": new_pw, "recovery_phrase": recovery_phrase })))
 }
@@ -1039,7 +1213,17 @@ pub async fn create_share_link(
     }
 
     match state.db.create_share_link(&token, &claims.uuid, expires_at) {
-        Ok(_) => (StatusCode::OK, axum::Json(serde_json::json!({ "token": token, "expires_at": expires_at }))).into_response(),
+        Ok(_) => {
+            tracing::info!("User {} created a new share link: {}", claims.uuid, token);
+            let _ = state.db.log_audit_event(
+                "create_share_link",
+                Some(&claims.uuid),
+                Some(&claims.username),
+                Some(&format!("token: {}", token)),
+                None
+            );
+            (StatusCode::OK, axum::Json(serde_json::json!({ "token": token, "expires_at": expires_at }))).into_response()
+        },
         Err(e) => {
             tracing::error!("Failed to create share link: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "Failed to create share link" }))).into_response()

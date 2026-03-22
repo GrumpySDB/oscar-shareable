@@ -324,7 +324,15 @@ pub async fn oscar_launch(
     // and prevent race conditions with disconnect beacons from old windows.
     let container_key = format!("{}-{}", claims.uuid, &uuid::Uuid::new_v4().to_string()[..8]);
     
-    tracing::info!("oscar_launch: Launching personal session for user {} with key {}", claims.uuid, container_key);
+    tracing::info!("User {} (uuid: {}) is launching a personal OSCAR session (key: {})", claims.username, claims.uuid, container_key);
+    let _ = state.db.log_audit_event(
+        "oscar_launch",
+        Some(&claims.uuid),
+        Some(&claims.username),
+        Some(&format!("key: {}", container_key)),
+        None
+    );
+    
     if let Err(e) = ensure_oscar_container(&state, &claims.uuid, &claims.username, &container_key, false).await {
         return e.into_response();
     }
@@ -371,7 +379,14 @@ pub async fn oscar_share_launch(
     let guest_sid = uuid::Uuid::new_v4().to_string();
     let container_key = guest_sid.clone();
 
-    tracing::info!("oscar_share_launch: Launching ephemeral guest session for owner {}. LinkToken={}, Sid={}", owner_uuid, share_token, guest_sid);
+    tracing::info!("Guest session launch initiated via share token '{}' for owner uuid: {}. (Guest Sid: {})", share_token, owner_uuid, guest_sid);
+    let _ = state.db.log_audit_event(
+        "oscar_share_launch",
+        Some(&owner_uuid),
+        None,
+        Some(&format!("token: {}, sid: {}", share_token, guest_sid)),
+        None
+    );
 
     // Guests ALWAYS use ephemeral containers to ensure they never "squat" on the owner's primary container slot.
     if let Err(e) = ensure_oscar_container(&state, &owner_uuid, &owner_username, &container_key, true).await {
@@ -925,7 +940,19 @@ pub async fn oscar_disconnect_handler(
             }
         }
         
-        state.active_containers.remove(&container_key).map(|(_, info)| info)
+        
+        let removed = state.active_containers.remove(&container_key).map(|(_, info)| info);
+        if removed.is_some() {
+            tracing::info!("OSCAR session disconnect for user {}: Container key {} evicted.", user_uuid, container_key);
+            let _ = state.db.log_audit_event(
+                "oscar_disconnect",
+                Some(&user_uuid),
+                None,
+                Some(&format!("key: {}", container_key)),
+                None
+            );
+        }
+        removed
     };
 
     if let Some(info) = maybe_container {

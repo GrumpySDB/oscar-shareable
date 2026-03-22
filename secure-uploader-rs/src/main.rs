@@ -121,6 +121,9 @@ async fn main() -> anyhow::Result<()> {
                     });
                 }
             }
+
+            // Daily audit log purge (entries > 90 days)
+            let _ = cleaner_state.db.purge_old_audit_logs(90);
         }
     });
 
@@ -139,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/invites", get(auth::list_invites_handler))
         .route("/invites", post(auth::generate_invite_handler))
         .route("/invites/:code", delete(auth::revoke_invite_handler))
+        .route("/audit-logs", get(auth::list_audit_logs_handler))
         .layer(middleware::from_fn(auth::admin_middleware))
         .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
 
@@ -258,8 +262,12 @@ async fn add_security_headers(req: Request, next: Next) -> Response {
         headers.insert(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(
-                "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
             ),
+        );
+        headers.insert(
+            axum::http::header::HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), microphone=(), geolocation=(), interest-cohort=()"),
         );
         headers.insert(header::VARY, HeaderValue::from_static("Authorization"));
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store, no-cache, must-revalidate, proxy-revalidate"));

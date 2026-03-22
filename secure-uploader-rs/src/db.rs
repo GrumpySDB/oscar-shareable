@@ -69,6 +69,20 @@ impl Database {
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_invites_used_by ON invites(used_by_uuid)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_share_links_owner ON share_links(owner_uuid)", []);
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                user_uuid TEXT,
+                username TEXT,
+                details TEXT,
+                ip_address TEXT
+            )",
+            [],
+        )?;
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp)", []);
+
         let db = Database {
             conn: Mutex::new(conn),
         };
@@ -169,6 +183,40 @@ impl Database {
                 now,
             ],
         )?;
+        Ok(())
+    }
+
+    pub fn create_user_with_invite(&self, user: User, password_hash: Option<String>, recovery_phrase_hash: Option<String>, invite_code: &str) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        
+        let now = chrono::Utc::now().timestamp();
+        tx.execute(
+            "INSERT INTO users (uuid, username, provider, identifier, argon2_password_hash, argon2_recovery_phrase_hash, role, created_at, last_accessed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                user.uuid,
+                user.username,
+                user.provider,
+                user.identifier,
+                password_hash,
+                recovery_phrase_hash,
+                user.role,
+                now,
+                now,
+            ],
+        )?;
+
+        let affected = tx.execute(
+            "UPDATE invites SET used_by_uuid = ?1 WHERE code = ?2 AND used_by_uuid IS NULL",
+            params![user.uuid, invite_code],
+        )?;
+
+        if affected == 0 {
+             return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        
+        tx.commit()?;
         Ok(())
     }
 
@@ -447,5 +495,53 @@ impl Database {
             return Err(rusqlite::Error::QueryReturnedNoRows);
         }
         Ok(())
+    }
+
+    // --- Audit Logging ---
+
+    pub fn log_audit_event(&self, action: &str, user_uuid: Option<&str>, username: Option<&str>, details: Option<&str>, ip: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO audit_logs (timestamp, action, user_uuid, username, details, ip_address) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![now, action, user_uuid, username, details, ip],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_audit_logs(&self, limit: i64, offset: i64) -> Result<(Vec<serde_json::Value>, i64)> {
+        let conn = self.conn.lock().unwrap();
+        
+        let total: i64 = conn.query_row("SELECT COUNT(*) FROM audit_logs", [], |r| r.get(0))?;
+        
+        let mut stmt = conn.prepare("SELECT id, timestamp, action, user_uuid, username, details, ip_address FROM audit_logs ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2")?;
+        let log_iter = stmt.query_map(params![limit, offset], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "timestamp": row.get::<_, i64>(1)?,
+                "action": row.get::<_, String>(2)?,
+                "user_uuid": row.get::<_, Option<String>>(3)?,
+                "username": row.get::<_, Option<String>>(4)?,
+                "details": row.get::<_, Option<String>>(5)?,
+                "ip_address": row.get::<_, Option<String>>(6)?,
+            }))
+        })?;
+
+        let mut logs = Vec::new();
+        for log in log_iter {
+            logs.push(log?);
+        }
+        
+        Ok((logs, total))
+    }
+
+    pub fn purge_old_audit_logs(&self, days: i64) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let cutoff = chrono::Utc::now().timestamp() - (days * 24 * 60 * 60);
+        let affected = conn.execute("DELETE FROM audit_logs WHERE timestamp < ?1", params![cutoff])?;
+        if affected > 0 {
+            tracing::info!("Purged {} audit log entries older than {} days", affected, days);
+        }
+        Ok(affected)
     }
 }
