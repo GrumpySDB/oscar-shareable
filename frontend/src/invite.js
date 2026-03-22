@@ -64,7 +64,31 @@ const credRecovery = document.getElementById('credRecovery');
 const savedCheckbox = document.getElementById('savedCheckbox');
 const proceedBtn = document.getElementById('proceedBtn');
 
+/**
+ * Attempts to trigger the browser's password manager to save/update credentials.
+ * Requires a secure context (HTTPS) and browser support.
+ */
+async function triggerPasswordSave(username, password) {
+    if (!window.PasswordCredential || !navigator.credentials) {
+        console.debug('Credential Management API not supported');
+        return;
+    }
+
+    try {
+        const credential = new PasswordCredential({
+            id: username,
+            password: password
+        });
+        await navigator.credentials.store(credential);
+        console.log('Credential storage request sent to browser');
+    } catch (err) {
+        console.error('Failed to store credential:', err);
+    }
+}
+
 let generatedToken = null;
+let savedUsername = null;
+let savedPassword = null;
 
 if (signupForm) {
     signupForm.addEventListener('submit', async (e) => {
@@ -94,6 +118,9 @@ if (signupForm) {
 
             // Success - Hide auth options, show credentials inline
             generatedToken = data.token;
+            savedUsername = data.username;
+            savedPassword = data.password;
+
             authOptions.classList.add('hidden');
 
             credUsername.textContent = data.username;
@@ -139,8 +166,12 @@ savedCheckbox.addEventListener('change', () => {
     }
 });
 
-proceedBtn.addEventListener('click', () => {
+proceedBtn.addEventListener('click', async () => {
     if (generatedToken) {
+        // Trigger password manager save before navigating
+        if (savedUsername && savedPassword) {
+            await triggerPasswordSave(savedUsername, savedPassword);
+        }
         sessionStorage.setItem('authToken', generatedToken);
         window.location.href = '/';
     }

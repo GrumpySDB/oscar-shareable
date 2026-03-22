@@ -1,3 +1,25 @@
+/**
+ * Attempts to trigger the browser's password manager to save/update credentials.
+ * Requires a secure context (HTTPS) and browser support.
+ */
+async function triggerPasswordSave(username, password) {
+    if (!window.PasswordCredential || !navigator.credentials) {
+        console.debug('Credential Management API not supported');
+        return;
+    }
+
+    try {
+        const credential = new PasswordCredential({
+            id: username,
+            password: password
+        });
+        await navigator.credentials.store(credential);
+        console.log('Credential storage request sent to browser');
+    } catch (err) {
+        console.error('Failed to store credential:', err);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const recoveryForm = document.getElementById('recoveryForm');
     const recoveryError = document.getElementById('recoveryError');
@@ -6,6 +28,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const displayNewPassword = document.getElementById('displayNewPassword');
     const copyNewPassword = document.getElementById('copyNewPassword');
     const recoverBtn = document.getElementById('recoverBtn');
+    const returnToLoginBtn = document.getElementById('returnToLoginBtn');
+
+    let savedUsername = null;
+    let savedPassword = null;
 
     if (recoveryForm) {
         recoveryForm.addEventListener('submit', async (e) => {
@@ -33,6 +59,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
 
                 if (response.ok) {
+                    savedUsername = username;
+                    savedPassword = data.new_password;
+
                     recoveryFlow.classList.add('hidden');
                     newPasswordDisplay.classList.remove('hidden');
                     displayNewPassword.textContent = data.new_password;
@@ -45,6 +74,16 @@ document.addEventListener('DOMContentLoaded', () => {
             } finally {
                 recoverBtn.disabled = false;
                 recoverBtn.textContent = 'Reset Password';
+            }
+        });
+    }
+
+    if (returnToLoginBtn) {
+        returnToLoginBtn.addEventListener('click', async (e) => {
+            if (savedUsername && savedPassword) {
+                e.preventDefault();
+                await triggerPasswordSave(savedUsername, savedPassword);
+                window.location.href = '/';
             }
         });
     }
