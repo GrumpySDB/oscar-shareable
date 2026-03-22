@@ -8,8 +8,10 @@ services:
       - cloudflared-config:/etc/cloudflared
     env_file:
       - .env
+    secrets:
+      - tunnel_token
     command: >
-      sh -c "envsubst < /template/config.yml.example > /etc/cloudflared/config.yml"
+      sh -c "export CF_TUNNEL_TOKEN=$$(cat /run/secrets/tunnel_token) && envsubst < /template/config.yml.example > /etc/cloudflared/config.yml"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -25,7 +27,6 @@ services:
     env_file:
       - .env
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
       CF_TUNNEL_ID: ${CF_TUNNEL_ID}
       CF_HOSTNAME: ${CF_HOSTNAME}
     restart: unless-stopped
@@ -223,6 +224,8 @@ secrets:
     file: ${DOCKER_HOST_PATH:-.}/secrets/app_password.txt
   discord_client_secret:
     file: ${DOCKER_HOST_PATH:-.}/secrets/discord_client_secret.txt
+  tunnel_token:
+    file: ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt
 
 networks:
   internal:

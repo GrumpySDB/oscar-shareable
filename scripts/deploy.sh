@@ -5,6 +5,10 @@ set -e
 DOCKER_APP_USER="web"                   # The non-sudo user who runs rootless docker
 BASE_DEPLOY_DIR="/opt/secure-uploader"  # The root of the production deployment
 
+# Calculate the rootless subuid mapped to container UID 911 for the 'web' user
+# This is needed early for provisioning directories.
+TARGET_UID=$(awk -F: '/^'$DOCKER_APP_USER':/ {print $2 + 910}' /etc/subuid)
+
 # --- Root Check ---
 if [ "$(id -u)" -ne 0 ]; then
     echo "This script must be run as root (or via sudo)."
@@ -39,7 +43,7 @@ for SRC in "${ITEMS_TO_MIGRATE[@]}"; do
             DEST="$BASE_DEPLOY_DIR/docker-compose.yml"
         fi
         
-        cp -r "$SRC" "$DEST"
+        cp -r "$SRC/." "$DEST"
         chown -R root:root "$DEST"
         
         # Ensure directories are traversable and files are readable by web
@@ -84,17 +88,16 @@ SECRETS=(
     "secrets/tunnel_token.txt"
     "secrets/discord_client_secret.txt"
 )
-# Calculate the rootless subuid mapped to container UID 911 for the 'web' user
-TARGET_UID=$(awk -F: '/^'$DOCKER_APP_USER':/ {print $2 + 910}' /etc/subuid)
+# Rootless subuid already calculated in Configuration section
 
 for SECRET in "${SECRETS[@]}"; do
     if [ ! -f "$SECRET" ]; then
         touch "$SECRET"
         echo "Created empty secret: $SECRET"
     fi
-    # Assign strict ownership to the container mapping, blocking the host web user
-    chown "$TARGET_UID:$TARGET_UID" "$SECRET"
-    chmod 400 "$SECRET"
+    # Assign ownership to the container mapping, but allow the host web group to read
+    chown "$TARGET_UID:$DOCKER_APP_USER" "$SECRET"
+    chmod 440 "$SECRET"
 done
 
 # 6. Provision .env (Web Owned, READ ONLY)
