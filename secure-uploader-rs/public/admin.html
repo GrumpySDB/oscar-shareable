@@ -23,6 +23,7 @@
             <div class="tabs">
                 <button id="tabUsers" class="tab active">Users</button>
                 <button id="tabInvites" class="tab">Invites</button>
+                <button id="tabLogs" class="tab">Audit Logs</button>
             </div>
 
             <div id="usersPanel" class="panel active">
@@ -93,6 +94,38 @@
                 </div>
                 <div class="bulk-actions">
                     <button id="bulkRevokeBtn" class="danger" disabled>Revoke Selected</button>
+                </div>
+            </div>
+            
+            <div id="logsPanel" class="panel">
+                <div class="panel-header">
+                    <h3>Audit Logs</h3>
+                    <div class="header-tools">
+                        <select id="logsPerPage" class="search-input" style="width: auto;">
+                            <option value="25">25 per page</option>
+                            <option value="50" selected>50 per page</option>
+                            <option value="100">100 per page</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="table-wrapper">
+                    <table id="logsTable">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Action</th>
+                                <th>User</th>
+                                <th>IP Address</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="pagination-controls">
+                    <button id="logsPrevBtn" class="ghost">Previous</button>
+                    <span id="logsPageInfo">Page 1</span>
+                    <button id="logsNextBtn" class="ghost">Next</button>
                 </div>
             </div>
             <div id="summary" class="summary">
