@@ -226,6 +226,12 @@
   uploaderBtn.addEventListener('click', function () {
     var key = document.body.dataset.containerKey || '';
     navigator.sendBeacon('/api/oscar-disconnect?key=' + encodeURIComponent(key));
+    
+    try {
+      sessionStorage.removeItem('pendingShareLaunchToken');
+      sessionStorage.removeItem('lastShareLaunchToken');
+    } catch (_e) { }
+
     window.location.href = '/';
   });
   toolbar.appendChild(uploaderBtn);
@@ -339,7 +345,18 @@
     if (urlText) urlText.textContent = 'Generating\u2026';
     document.getElementById('oscar-share-copied').style.display = 'none';
 
-    fetch('/api/share-links', { method: 'POST' })
+    var token = '';
+    try {
+      token = sessionStorage.getItem('authToken') || '';
+    } catch (_e) { }
+
+    var headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    fetch('/api/share-links', { 
+      method: 'POST',
+      headers: headers
+    })
       .then(function (res) {
         if (!res.ok) throw new Error('failed');
         return res.json();
@@ -356,7 +373,24 @@
   function handleLogout() {
     var key = document.body.dataset.containerKey || '';
     navigator.sendBeacon('/api/oscar-disconnect?key=' + encodeURIComponent(key));
-    fetch('/api/logout', { method: 'POST' }).catch(function () { }).then(function () {
+    
+    try {
+      sessionStorage.removeItem('pendingShareLaunchToken');
+      sessionStorage.removeItem('lastShareLaunchToken');
+    } catch (_e) { }
+
+    var token = '';
+    try {
+      token = sessionStorage.getItem('authToken') || '';
+    } catch (_e) { }
+
+    var headers = {};
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    fetch('/api/logout', { 
+      method: 'POST',
+      headers: headers
+    }).catch(function () { }).then(function () {
       window.location.href = '/';
     });
   }

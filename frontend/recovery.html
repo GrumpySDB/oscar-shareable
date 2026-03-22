@@ -5,15 +5,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Reset Password - OSCAR Secure Upload</title>
+    <script>
+        (function() {
+            const saved = localStorage.getItem('oscar-uploader-theme');
+            const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
     <link rel="stylesheet" href="./src/index.css" />
+  <script type="module" src="./src/theme.js"></script>
 </head>
 
 <body>
     <main class="container">
         <section id="recoveryCard" class="card">
             <div class="header-row">
-                <h1 style="margin: 0;">Password Recovery</h1>
+                <h2>Recover Your Account</h2>
                 <div class="header-actions">
+                    <button class="theme-toggle header-link-btn" title="Toggle color theme" aria-label="Toggle color theme">
+                        <svg class="sun-icon hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                        <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                    </button>
                     <a href="/" class="header-link-btn back-btn">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -24,7 +36,7 @@
                     </a>
                 </div>
             </div>
-            <p class="subtle" style="margin-top: 0.5rem; margin-bottom: 1.5rem;">Enter your recovery phrase to reset
+            <p class="subtle recovery-desc">Enter your recovery phrase to reset
                 your password.</p>
 
             <div id="recoveryFlow">
@@ -35,11 +47,11 @@
 
                     <label for="recoveryPhrase">Recovery Phrase</label>
                     <textarea id="recoveryPhrase" placeholder="Enter your 12-word recovery phrase..." rows="3" required
-                        style="width: 100%; box-sizing: border-box; resize: vertical; margin-bottom: 1rem;"></textarea>
+                        class="recovery-textarea"></textarea>
 
                     <button id="recoverBtn" type="submit">Reset Password</button>
 
-                    <div class="info-box" style="margin-top: 1.5rem;">
+                    <div class="info-box">
                         If you have forgotten both your password and your recovery phrase, please contact the
                         <strong>Administrator</strong> to reset your password or receive a new invite to create a new
                         account.
@@ -49,15 +61,14 @@
             </div>
 
             <div id="newPasswordDisplay" class="hidden">
-                <div style="background: #f0fff4; border: 1px solid #c6f6d5; border-radius: 10px; padding: 1.2rem;">
-                    <h2
-                        style="color: var(--success); margin-top: 0; font-size: 1.2rem; display: flex; align-items: center; gap: 8px;">
+                <div class="success-box">
+                    <h2 class="success-title">
                         ✅ Password Reset Successful
                     </h2>
-                    <p style="margin-bottom: 1.2rem; font-size: 0.95rem; line-height: 1.5; color: #22543d;">Your
+                    <p class="success-text">Your
                         password has been re-generated. Please save it immediately.</p>
 
-                    <label style="color: #4a5568;">New Password</label>
+                    <label class="label-muted">New Password</label>
                     <div class="copy-box" id="copyNewPassword">
                         <span class="text-content" id="displayNewPassword"></span>
                         <div class="copy-icon">
@@ -70,8 +81,7 @@
                         </div>
                     </div>
 
-                    <a href="/" id="returnToLoginBtn" class="oscar-cta"
-                        style="display: block; text-align: center; margin-top: 1.5rem; text-decoration: none;">Return to
+                    <a href="/" id="returnToLoginBtn" class="oscar-cta center-link">Return to
                         Login</a>
                 </div>
             </div>
