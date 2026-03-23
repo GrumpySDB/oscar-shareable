@@ -113,6 +113,7 @@ pub async fn discord_login(
         format!("{}://{}/api/auth/discord/callback", proto, host)
     };
     
+    tracing::info!("Discord Login: Generated redirect_uri_base: {}", redirect_uri_base);
     let redirect_uri = urlencoding::encode(&redirect_uri_base);
     let state_param = query.invite.unwrap_or_default();
     let prompt = query.prompt.as_deref().unwrap_or("none");
@@ -153,6 +154,8 @@ pub async fn discord_callback(
     } else {
         format!("{}://{}/api/auth/discord/callback", proto, host)
     };
+    
+    tracing::info!("Discord Callback: Generated redirect_uri: {}", redirect_uri);
 
     let token_res = client
         .post("https://discord.com/api/oauth2/token")
