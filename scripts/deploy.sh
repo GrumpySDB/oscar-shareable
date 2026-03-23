@@ -5,6 +5,10 @@ set -e
 DOCKER_APP_USER="web"                   # The non-sudo user who runs rootless docker
 BASE_DEPLOY_DIR="/opt/secure-uploader"  # The root of the production deployment
 
+# Calculate the rootless subuid mapped to container UID 911 for the 'web' user
+# This is needed early for provisioning directories.
+TARGET_UID=$(awk -F: '/^'$DOCKER_APP_USER':/ {print $2 + 910}' /etc/subuid)
+
 # --- Root Check ---
 if [ "$(id -u)" -ne 0 ]; then
     echo "This script must be run as root (or via sudo)."
@@ -66,8 +70,10 @@ for DIR in "${DIRS[@]}"; do
     chown "$DOCKER_APP_USER:$DOCKER_APP_USER" "$DIR"
     if [[ "$DIR" == data/* ]]; then
         # SQLite requirement: Must be writable by container's subuid.
-        # 777 is safe because the parent /opt/secure-uploader is restricted.
-        chmod 777 "$DIR"
+        # Since we know the TARGET_UID, we can chown it and use restrictive 770.
+        # This allows the container (via owner) and the host web user (via group) to access data.
+        chown "$TARGET_UID:$DOCKER_APP_USER" "$DIR"
+        chmod 770 "$DIR"
     else
         # secrets/ certs/ should be entry-restricted
         chmod 750 "$DIR"
@@ -84,8 +90,7 @@ SECRETS=(
     "secrets/tunnel_token.txt"
     "secrets/discord_client_secret.txt"
 )
-# Calculate the rootless subuid mapped to container UID 911 for the 'web' user
-TARGET_UID=$(awk -F: '/^'$DOCKER_APP_USER':/ {print $2 + 910}' /etc/subuid)
+# Rootless subuid already calculated in Configuration section
 
 for SECRET in "${SECRETS[@]}"; do
     if [ ! -f "$SECRET" ]; then
