@@ -5,10 +5,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OSCAR Secure Upload</title>
+  <script>
+    (function() {
+      const saved = localStorage.getItem('oscar-uploader-theme');
+      const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
   <link rel="stylesheet" href="./src/index.css" />
   <link rel="stylesheet" href="./src/flatpickr.css">
   <link rel="stylesheet" href="./src/light.css">
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"
+  <script type="module" src="./src/theme.js"></script>
+  <script src="/vendor/flatpickr.min.js"
     integrity="sha384-5JqMv4L/Xa0hfvtF06qboNdhvuYXUku9ZrhZh3bSk8VXF0A/RuSLHpLsSV9Zqhl6"
     crossorigin="anonymous"></script>
 </head>
@@ -31,21 +39,25 @@
     </div>
     <section id="loginCard" class="card">
       <img id="loginBanner" class="screen-banner hidden" alt="Random welcome image" />
-      <h1>OSCAR Secure Uploader</h1>
+      <div class="login-card-header">
+        <h1>OSCAR Secure Uploader</h1>
+        <button class="theme-toggle header-link-btn login-card-toggle" title="Toggle color theme" aria-label="Toggle color theme">
+          <svg class="sun-icon hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
       <p class="subtle">Sign in to upload SD card data.</p>
 
-      <div id="shareLinkWarning" class="hidden"
-        style="background: linear-gradient(135deg, #fffbea 0%, #fff3cd 100%); border-left: 4px solid #ffc107; padding: 1rem; border-radius: 6px; margin-bottom: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; align-items: flex-start; gap: 0.75rem;">
+      <div id="shareLinkWarning" class="share-link-warning hidden">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d39e00"
-          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;">
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="share-warning-icon">
           <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
           <line x1="12" y1="9" x2="12" y2="13"></line>
           <line x1="12" y1="17" x2="12.01" y2="17"></line>
         </svg>
         <div>
-          <strong style="color: #856404; display: block; margin-bottom: 0.25rem;">Authentication Required</strong>
-          <span style="color: #664d03; font-size: 0.95rem; line-height: 1.4; display: block;">You need to log in or
-            create an account to view this shared profile.</span>
+          <strong class="share-warning-title">Authentication Required</strong>
+          <span class="share-warning-text">You need to log in or create an account to view this shared profile.</span>
         </div>
       </div>
 
@@ -54,7 +66,10 @@
         <input id="username" type="text" autocomplete="username" maxlength="128" />
         <label for="password">Password</label>
         <input id="password" type="password" autocomplete="current-password" maxlength="256" />
-        <button id="loginBtn" type="submit">Login</button>
+        <button id="loginBtn" type="submit">
+          <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          Login
+        </button>
       </form>
 
       <div class="signup-divider">Or</div>
@@ -69,7 +84,7 @@
         </a>
       </div>
 
-      <div style="text-align: center; margin-top: 1rem;">
+      <div class="recovery-link-row">
         <a href="/recovery" class="policy-link">Forgot Password?</a>
       </div>
 
@@ -83,6 +98,10 @@
       <div class="header-row">
         <h2>Securely Upload OSCAR Data</h2>
         <div class="header-actions">
+          <button id="themeToggle" class="theme-toggle header-link-btn" title="Toggle color theme" aria-label="Toggle color theme">
+            <svg class="sun-icon hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+          </button>
           <a href="/how-to-uploader" class="header-link-btn">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -140,9 +159,7 @@
         <input id="directoryInput" type="file" webkitdirectory directory multiple class="hidden-input" />
       </div>
 
-      <div style="position: relative; margin-top: 1rem; margin-bottom: 1rem;">
-
-      </div>
+      <div class="spacer-v"></div>
 
 
       <div id="summary" class="summary">
@@ -170,9 +187,15 @@
         </p>
       </div>
 
-      <button id="uploadBtn" disabled>Upload Selected Files</button>
+      <button id="uploadBtn" disabled>
+        <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"></polyline><line x1="12" y1="12" x2="12" y2="21"></line><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path></svg>
+        Upload Selected Files
+      </button>
 
-      <button id="oscarBtn" class="oscar-cta" type="button">Proceed to OSCAR</button>
+      <button id="oscarBtn" class="oscar-cta" type="button">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 8 16 12 12 16"></polyline><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+        Proceed to OSCAR
+      </button>
 
     </section>
 
@@ -205,9 +228,8 @@
           </button>
         </div>
       </div>
-      <div
-        style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 250px; padding: 1rem 2rem 2rem;">
-        <div style="color: var(--danger); margin-bottom: 0.5rem;">
+      <div class="banner-box-warning">
+        <div class="timeout-icon-wrap">
           <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
@@ -215,13 +237,12 @@
             <line x1="12" y1="17" x2="12.01" y2="17"></line>
           </svg>
         </div>
-        <p style="color: var(--text); text-align: center; max-width: 400px; line-height: 1.5; font-size: 1.05rem;">Your
-          OSCAR session has disconnected or timed out due to inactivity.</p>
-        <div
-          style="margin-top: 1.5rem; width: 100%; max-width: 250px; display: flex; flex-direction: column; gap: 0.8rem;">
-          <button id="recreateSessionBtn" class="oscar-cta" style="margin-top: 0;">Recreate Session</button>
-          <button id="backToUploaderBtn" class="ghost"
-            style="width: 100%; border: 1px solid var(--accent); color: var(--accent);">
+        <p class="timeout-text">Your OSCAR session has disconnected or timed out due to inactivity.</p>
+      </div>
+
+        <div class="timeout-actions">
+          <button id="recreateSessionBtn" class="oscar-cta no-margin">Recreate Session</button>
+          <button id="backToUploaderBtn" class="ghost alt-ghost">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="19" y1="12" x2="5" y2="12"></line>

@@ -5,7 +5,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin Dashboard</title>
+    <script>
+        (function() {
+            const saved = localStorage.getItem('oscar-uploader-theme');
+            const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
     <link rel="stylesheet" href="./src/index.css" />
+    <script type="module" src="./src/theme.js"></script>
 </head>
 
 <body>
@@ -14,6 +22,10 @@
             <div class="header-row">
                 <h2>Admin Dashboard</h2>
                 <div class="header-actions">
+                    <button class="theme-toggle header-link-btn" title="Toggle color theme" aria-label="Toggle color theme">
+                        <svg class="sun-icon hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                        <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                    </button>
                     <a href="/" class="header-link-btn back-btn">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -37,6 +49,7 @@
             <div class="tabs">
                 <button id="tabUsers" class="tab active">Users</button>
                 <button id="tabInvites" class="tab">Invites</button>
+                <button id="tabLogs" class="tab">Audit Logs</button>
             </div>
 
             <div id="usersPanel" class="panel active">
@@ -67,9 +80,9 @@
 
             <div id="invitesPanel" class="panel">
                 <div class="panel-header">
-                    <div style="display: flex; flex-direction: column; gap: 5px;">
+                    <div class="panel-header-desc">
                         <h3>Generate new Invite</h3>
-                        <p class="subtle" style="margin: 0; padding: 0;">Create a single-use code that allows a user to
+                        <p class="subtle no-margin no-padding">Create a single-use code that allows a user to
                             sign up.</p>
                     </div>
                 </div>
@@ -86,7 +99,7 @@
                     <button id="generateInviteBtn">Generate Invite</button>
                 </div>
 
-                <div class="panel-header" style="margin-top: 30px;">
+                <div class="panel-header panel-header-mt">
                     <h3>Active Invites</h3>
                     <input type="text" id="inviteSearch" class="search-input" placeholder="Search code or label..." />
                 </div>
@@ -109,26 +122,69 @@
                     <button id="bulkRevokeBtn" class="danger" disabled>Revoke Selected</button>
                 </div>
             </div>
+
+            <div id="logsPanel" class="panel">
+                <div class="panel-header">
+                    <h3>Audit Logs</h3>
+                    <div class="header-tools">
+                        <select id="logsPerPage" class="search-input logs-select">
+                            <option value="25">25 per page</option>
+                            <option value="50" selected>50 per page</option>
+                            <option value="100">100 per page</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="table-wrapper">
+                    <table id="logsTable">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Action</th>
+                                <th>User</th>
+                                <th>Details</th>
+                                <th>IP Address</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="pagination-controls">
+                    <button id="logsPrevBtn" class="ghost">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                        Previous
+                    </button>
+                    <span id="logsPageInfo">Page 1</span>
+                    <button id="logsNextBtn" class="ghost">
+                        Next
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                    </button>
+                </div>
+            </div>
             <div id="summary" class="summary">
                 <p id="appMessage" class="message"></p>
             </div>
 
             <!-- Reset Credentials Modal -->
             <div id="resetCredsModal" class="modal-overlay hidden">
-                <div class="modal-content" style="width: min(500px, 90%);">
+                <div class="modal-content modal-narrow">
                     <div class="modal-header">
-                        <h3 style="color: var(--danger); display: flex; align-items: center; gap: 8px;">⚠️ Save
-                            Credentials</h3>
+                        <h3 class="modal-title-danger">⚠️ Save Credentials</h3>
                     </div>
-                    <div class="modal-body" style="padding: 1.5rem; background: #fff5f5;">
-                        <p
-                            style="margin-top: 0; margin-bottom: 1.2rem; font-size: 0.95rem; line-height: 1.5; color: #822727;">
+                    <div class="banner-box-danger">
+                        <p class="modal-text-danger">
                             Password successfully reset for <strong id="resetCredsName"></strong>.<br>
                             They will be logged out and need the new credentials. This is a purely anonymous account. If
                             these details are lost, they will <strong>never</strong> be able to log back in!
                         </p>
 
-                        <label style="color: #4a5568;">Password</label>
+
+                        <label class="label-muted">Password</label>
                         <div class="copy-box" id="copyResetPassword">
                             <span class="text-content" id="resetPasswordText"></span>
                             <div class="copy-icon">
@@ -141,7 +197,7 @@
                             </div>
                         </div>
 
-                        <label style="color: #4a5568;">Recovery Phrase</label>
+                        <label class="label-muted">Recovery Phrase</label>
                         <div class="copy-box large" id="copyResetRecovery">
                             <span class="text-content" id="resetRecoveryText"></span>
                             <div class="copy-icon">
@@ -154,9 +210,9 @@
                             </div>
                         </div>
 
-                        <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end;">
+                        <div class="modal-footer">
                             <button id="closeResetCredsBtn" disabled
-                                style="width: auto; padding: 0.72rem 1.5rem; background: var(--success); opacity: 0.55; cursor: not-allowed; transition: opacity 0.2s; margin-top: 0;">Close</button>
+                                class="modal-close-btn">Close</button>
                         </div>
                     </div>
                 </div>

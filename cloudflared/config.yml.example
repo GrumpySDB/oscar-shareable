@@ -1,5 +1,4 @@
-tunnel: ${CF_TUNNEL_ID}
-credentials-file: /etc/cloudflared/${CF_TUNNEL_ID}.json
+token: ${CF_TUNNEL_TOKEN}
 
 ingress:
   - hostname: ${CF_HOSTNAME}

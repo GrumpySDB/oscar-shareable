@@ -7,6 +7,10 @@ const statusMessage = document.getElementById('appMessage');
 // State trackers for bulk actions
 let usersStatus = [];
 let invitesStatus = [];
+let logsStatus = [];
+let logsPage = 0;
+let logsPerPage = 50;
+let totalLogs = 0;
 
 async function api(path, options = {}) {
     const headers = options.headers || {};
@@ -38,8 +42,10 @@ async function api(path, options = {}) {
 document.getElementById('tabUsers').addEventListener('click', () => {
     document.getElementById('tabUsers').classList.add('active');
     document.getElementById('tabInvites').classList.remove('active');
+    document.getElementById('tabLogs').classList.remove('active');
     document.getElementById('usersPanel').classList.add('active');
     document.getElementById('invitesPanel').classList.remove('active');
+    document.getElementById('logsPanel').classList.remove('active');
     statusMessage.textContent = '';
     loadUsers();
 });
@@ -47,10 +53,23 @@ document.getElementById('tabUsers').addEventListener('click', () => {
 document.getElementById('tabInvites').addEventListener('click', () => {
     document.getElementById('tabInvites').classList.add('active');
     document.getElementById('tabUsers').classList.remove('active');
+    document.getElementById('tabLogs').classList.remove('active');
     document.getElementById('invitesPanel').classList.add('active');
     document.getElementById('usersPanel').classList.remove('active');
+    document.getElementById('logsPanel').classList.remove('active');
     statusMessage.textContent = '';
     loadInvites();
+});
+
+document.getElementById('tabLogs').addEventListener('click', () => {
+    document.getElementById('tabLogs').classList.add('active');
+    document.getElementById('tabUsers').classList.remove('active');
+    document.getElementById('tabInvites').classList.remove('active');
+    document.getElementById('logsPanel').classList.add('active');
+    document.getElementById('usersPanel').classList.remove('active');
+    document.getElementById('invitesPanel').classList.remove('active');
+    statusMessage.textContent = '';
+    loadAuditLogs();
 });
 
 document.getElementById('logoutBtn').addEventListener('click', async () => {
@@ -366,6 +385,80 @@ document.getElementById('bulkRevokeBtn').addEventListener('click', async () => {
     } catch (err) {
         statusMessage.textContent = 'Error during bulk revocation: ' + err.message;
         loadInvites();
+    }
+});
+
+// --- AUDIT LOGS ---
+async function loadAuditLogs() {
+    try {
+        const offset = logsPage * logsPerPage;
+        const res = await api(`/api/admin/audit-logs?limit=${logsPerPage}&offset=${offset}`);
+        logsStatus = res.logs;
+        totalLogs = res.total;
+        renderAuditLogs();
+    } catch (err) {
+        statusMessage.textContent = 'Error loading audit logs: ' + err.message;
+    }
+}
+
+function renderAuditLogs() {
+    const tbody = document.querySelector('#logsTable tbody');
+    tbody.replaceChildren();
+
+    for (const log of logsStatus) {
+        const tr = document.createElement('tr');
+
+        const tdTime = document.createElement('td');
+        tdTime.textContent = formatDate(log.timestamp);
+        tdTime.className = 'subtle';
+
+        const tdAction = document.createElement('td');
+        tdAction.innerHTML = `<code>${log.action}</code>`;
+
+        const tdUser = document.createElement('td');
+        tdUser.textContent = log.username || log.user_uuid || '-';
+
+        const tdIp = document.createElement('td');
+        tdIp.textContent = log.ip_address || '-';
+        tdIp.className = 'subtle';
+
+        const tdDetails = document.createElement('td');
+        tdDetails.textContent = log.details || '-';
+        tdDetails.className = 'subtle';
+
+        tr.appendChild(tdTime);
+        tr.appendChild(tdAction);
+        tr.appendChild(tdUser);
+        tr.appendChild(tdIp);
+        tr.appendChild(tdDetails);
+        tbody.appendChild(tr);
+    }
+
+    // Update Pagination UI
+    const totalPages = Math.ceil(totalLogs / logsPerPage) || 1;
+    document.getElementById('logsPageInfo').textContent = `Page ${logsPage + 1} of ${totalPages} (${totalLogs} total)`;
+    document.getElementById('logsPrevBtn').disabled = logsPage === 0;
+    document.getElementById('logsNextBtn').disabled = (logsPage + 1) >= totalPages;
+}
+
+document.getElementById('logsPerPage').addEventListener('change', (e) => {
+    logsPerPage = parseInt(e.target.value, 10);
+    logsPage = 0;
+    loadAuditLogs();
+});
+
+document.getElementById('logsPrevBtn').addEventListener('click', () => {
+    if (logsPage > 0) {
+        logsPage--;
+        loadAuditLogs();
+    }
+});
+
+document.getElementById('logsNextBtn').addEventListener('click', () => {
+    const totalPages = Math.ceil(totalLogs / logsPerPage);
+    if ((logsPage + 1) < totalPages) {
+        logsPage++;
+        loadAuditLogs();
     }
 });
 

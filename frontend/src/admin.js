@@ -7,6 +7,10 @@ const statusMessage = document.getElementById('appMessage');
 // State trackers for bulk actions
 let usersStatus = [];
 let invitesStatus = [];
+let logsStatus = [];
+let logsPage = 0;
+let logsPerPage = 50;
+let totalLogs = 0;
 
 async function api(path, options = {}) {
     const headers = options.headers || {};
@@ -38,8 +42,10 @@ async function api(path, options = {}) {
 document.getElementById('tabUsers').addEventListener('click', () => {
     document.getElementById('tabUsers').classList.add('active');
     document.getElementById('tabInvites').classList.remove('active');
+    document.getElementById('tabLogs').classList.remove('active');
     document.getElementById('usersPanel').classList.add('active');
     document.getElementById('invitesPanel').classList.remove('active');
+    document.getElementById('logsPanel').classList.remove('active');
     statusMessage.textContent = '';
     loadUsers();
 });
@@ -47,10 +53,23 @@ document.getElementById('tabUsers').addEventListener('click', () => {
 document.getElementById('tabInvites').addEventListener('click', () => {
     document.getElementById('tabInvites').classList.add('active');
     document.getElementById('tabUsers').classList.remove('active');
+    document.getElementById('tabLogs').classList.remove('active');
     document.getElementById('invitesPanel').classList.add('active');
     document.getElementById('usersPanel').classList.remove('active');
+    document.getElementById('logsPanel').classList.remove('active');
     statusMessage.textContent = '';
     loadInvites();
+});
+
+document.getElementById('tabLogs').addEventListener('click', () => {
+    document.getElementById('tabLogs').classList.add('active');
+    document.getElementById('tabUsers').classList.remove('active');
+    document.getElementById('tabInvites').classList.remove('active');
+    document.getElementById('logsPanel').classList.add('active');
+    document.getElementById('usersPanel').classList.remove('active');
+    document.getElementById('invitesPanel').classList.remove('active');
+    statusMessage.textContent = '';
+    loadAuditLogs();
 });
 
 document.getElementById('logoutBtn').addEventListener('click', async () => {
@@ -139,10 +158,7 @@ document.getElementById('userSearch').addEventListener('input', renderUsers);
 document.getElementById('userSelectAll').addEventListener('change', (e) => {
     const isChecked = e.target.checked;
     document.querySelectorAll('.userRowCheck').forEach(cb => {
-        // Only select currently visible rows in the search
-        if (cb.closest('tr').style.display !== 'none') {
-            cb.checked = isChecked;
-        }
+        cb.checked = isChecked;
     });
     updateUserBulkActions();
 });
@@ -208,8 +224,7 @@ function setupCopy(elementId, textElementId, onCopyCallback) {
 function checkCanClose() {
     if (passwordCopied) {
         closeResetCredsBtn.disabled = false;
-        closeResetCredsBtn.style.opacity = '1';
-        closeResetCredsBtn.style.cursor = 'pointer';
+        closeResetCredsBtn.classList.add('can-close');
     }
 }
 
@@ -244,8 +259,7 @@ document.getElementById('bulkResetBtn').addEventListener('click', async () => {
 
         passwordCopied = false;
         closeResetCredsBtn.disabled = true;
-        closeResetCredsBtn.style.opacity = '0.55';
-        closeResetCredsBtn.style.cursor = 'not-allowed';
+        closeResetCredsBtn.classList.remove('can-close');
 
         resetCredsModal.classList.remove('hidden');
         statusMessage.textContent = `Password reset for ${name}.`;
@@ -315,14 +329,13 @@ function renderInvites() {
         const tdStatus = document.createElement('td');
         if (inv.used_by_uuid) {
             tdStatus.textContent = 'Used';
-            tdStatus.style.color = 'var(--muted)';
+            tdStatus.className = 'status-used';
         } else if (isExpired) {
             tdStatus.textContent = 'Expired';
-            tdStatus.style.color = 'var(--danger)';
+            tdStatus.className = 'status-expired';
         } else {
             tdStatus.textContent = 'Valid';
-            tdStatus.style.color = 'var(--success)';
-            tdStatus.style.fontWeight = '600';
+            tdStatus.className = 'status-valid';
         }
 
         const tdExpires = document.createElement('td');
@@ -357,9 +370,7 @@ document.getElementById('inviteSearch').addEventListener('input', renderInvites)
 document.getElementById('inviteSelectAll').addEventListener('change', (e) => {
     const isChecked = e.target.checked;
     document.querySelectorAll('.inviteRowCheck').forEach(cb => {
-        if (cb.closest('tr').style.display !== 'none') {
-            cb.checked = isChecked;
-        }
+        cb.checked = isChecked;
     });
     updateInviteBulkActions();
 });
@@ -404,7 +415,90 @@ document.getElementById('bulkRevokeBtn').addEventListener('click', async () => {
         loadInvites();
     } catch (err) {
         statusMessage.textContent = 'Error during bulk revocation: ' + err.message;
-        loadInvites();
+        loadInvites(); // reload to get actual state
+    }
+});
+
+// --- AUDIT LOGS ---
+async function loadAuditLogs() {
+    try {
+        const offset = logsPage * logsPerPage;
+        const res = await api(`/api/admin/audit-logs?limit=${logsPerPage}&offset=${offset}`);
+        logsStatus = res.logs;
+        totalLogs = res.total;
+        renderAuditLogs();
+    } catch (err) {
+        statusMessage.textContent = 'Error loading audit logs: ' + err.message;
+    }
+}
+
+function renderAuditLogs() {
+    const tbody = document.querySelector('#logsTable tbody');
+    tbody.replaceChildren();
+
+    for (const log of logsStatus) {
+        const tr = document.createElement('tr');
+        
+        // Highlight failed attempts in bold
+        const isFailed = log.action === 'failed_login' || log.action === 'failed_recovery';
+        if (isFailed) {
+            tr.style.fontWeight = 'bold';
+        }
+
+        const tdTime = document.createElement('td');
+        tdTime.textContent = formatDate(log.timestamp);
+        tdTime.className = 'subtle';
+
+        const tdAction = document.createElement('td');
+        const code = document.createElement('code');
+        code.textContent = log.action;
+        tdAction.appendChild(code);
+
+        const tdUser = document.createElement('td');
+        tdUser.textContent = log.username || log.user_uuid || '-';
+        tdUser.className = 'col-username';
+
+        const tdDetails = document.createElement('td');
+        tdDetails.textContent = log.details || '-';
+        tdDetails.className = 'subtle';
+
+        const tdIp = document.createElement('td');
+        tdIp.textContent = log.ip_address || '-';
+        tdIp.className = 'subtle';
+
+        tr.appendChild(tdTime);
+        tr.appendChild(tdAction);
+        tr.appendChild(tdUser);
+        tr.appendChild(tdDetails);
+        tr.appendChild(tdIp);
+        tbody.appendChild(tr);
+    }
+
+    // Update Pagination UI
+    const totalPages = Math.ceil(totalLogs / logsPerPage) || 1;
+    document.getElementById('logsPageInfo').textContent = `Page ${logsPage + 1} of ${totalPages} (${totalLogs} total)`;
+    document.getElementById('logsPrevBtn').disabled = logsPage === 0;
+    document.getElementById('logsNextBtn').disabled = (logsPage + 1) >= totalPages;
+}
+
+document.getElementById('logsPerPage').addEventListener('change', (e) => {
+    logsPerPage = parseInt(e.target.value, 10);
+    logsPage = 0;
+    loadAuditLogs();
+});
+
+document.getElementById('logsPrevBtn').addEventListener('click', () => {
+    if (logsPage > 0) {
+        logsPage--;
+        loadAuditLogs();
+    }
+});
+
+document.getElementById('logsNextBtn').addEventListener('click', () => {
+    const totalPages = Math.ceil(totalLogs / logsPerPage);
+    if ((logsPage + 1) < totalPages) {
+        logsPage++;
+        loadAuditLogs();
     }
 });
 

@@ -43,7 +43,7 @@ for SRC in "${ITEMS_TO_MIGRATE[@]}"; do
             DEST="$BASE_DEPLOY_DIR/docker-compose.yml"
         fi
         
-        cp -r "$SRC" "$DEST"
+        cp -r "$SRC/." "$DEST"
         chown -R root:root "$DEST"
         
         # Ensure directories are traversable and files are readable by web
@@ -97,9 +97,9 @@ for SECRET in "${SECRETS[@]}"; do
         touch "$SECRET"
         echo "Created empty secret: $SECRET"
     fi
-    # Assign strict ownership to the container mapping, blocking the host web user
-    chown "$TARGET_UID:$TARGET_UID" "$SECRET"
-    chmod 400 "$SECRET"
+    # Assign ownership to the container mapping, but allow the host web group to read
+    chown "$TARGET_UID:$DOCKER_APP_USER" "$SECRET"
+    chmod 440 "$SECRET"
 done
 
 # 6. Provision .env (Web Owned, READ ONLY)

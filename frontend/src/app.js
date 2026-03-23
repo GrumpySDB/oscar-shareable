@@ -448,7 +448,7 @@ async function checkSession() {
   try {
     const result = await api('/api/session');
 
-    if (result.authenticated === false) {
+    if (result.authenticated !== true) {
       throw new Error('Not authenticated');
     }
 
@@ -1014,7 +1014,10 @@ async function proceedToOscar() {
     // Only use a share token if one was explicitly pending for this specific flow.
     // We should NOT fall back to lastShareLaunchToken here, as that is only for UI badges/persistence
     // of an already-launched shared session.
-    const shareToken = sessionStorage.getItem('pendingShareLaunchToken');
+    const pendingShareToken = sessionStorage.getItem('pendingShareLaunchToken');
+    const lastShareToken = sessionStorage.getItem('lastShareLaunchToken');
+    const shareToken = pendingShareToken || lastShareToken;
+    
     if (!shareToken) {
       // Ensure we clear any legacy share tokens when performing a personal launch
       sessionStorage.removeItem('lastShareLaunchToken');
@@ -1164,9 +1167,9 @@ if (copyBtn) {
 
       const feedback = document.getElementById('genLinkCopyFeedback');
       if (feedback) {
-        feedback.style.opacity = '1';
+        feedback.classList.add('visible');
         setTimeout(() => {
-          feedback.style.opacity = '0';
+          feedback.classList.remove('visible');
         }, 2000);
       }
     }

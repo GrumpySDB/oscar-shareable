@@ -8,8 +8,10 @@ services:
       - cloudflared-config:/etc/cloudflared
     env_file:
       - .env
+    secrets:
+      - tunnel_token
     command: >
-      sh -c "envsubst < /template/config.yml.example > /etc/cloudflared/config.yml"
+      sh -c "export CF_TUNNEL_TOKEN=$$(cat /run/secrets/tunnel_token) && envsubst < /template/config.yml.example > /etc/cloudflared/config.yml"
     security_opt:
       - no-new-privileges:true
     cap_drop:

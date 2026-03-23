@@ -5,7 +5,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Software Licensing Information</title>
+    <script>
+        (function() {
+            const saved = localStorage.getItem('oscar-uploader-theme');
+            const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
     <link rel="stylesheet" href="./src/index.css" />
+    <script type="module" src="./src/theme.js"></script>
     <script type="module" src="./src/licensing.js"></script>
 </head>
 
@@ -13,8 +21,12 @@
     <main class="container policy-container">
         <section class="card policy-card">
             <div class="header-row">
-                <h1>Software Licensing Information</h1>
+                <h2>Licensing Information</h2>
                 <div class="header-actions">
+                    <button class="theme-toggle header-link-btn" title="Toggle color theme" aria-label="Toggle color theme">
+                        <svg class="sun-icon hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                        <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                    </button>
                     <a href="/" class="header-link-btn back-btn">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -48,8 +60,8 @@
             <div class="faq-container" id="licensingAccordion">
                 <div class="faq-item policy-info-box-orange">
                     <button class="faq-question licensing-accordion-btn">
-                        <div style="display: flex; align-items: center; gap: 1.25rem;">
-                            <div class="info-box-icon" style="padding: 0; color: #dd6b20 !important;">
+                        <div class="flex-center-gap">
+                            <div class="info-box-icon icon-orange-padding-reset">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
                                     fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                                     stroke-linejoin="round">
@@ -60,16 +72,16 @@
                                     <line x1="12" y1="17" x2="12.01" y2="17"></line>
                                 </svg>
                             </div>
-                            <span style="font-size: 1.1rem; font-weight: 700;">OSCAR and Redistribution Notes</span>
+                            <span class="bold-1-1">OSCAR and Redistribution Notes</span>
                         </div>
-                        <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
-                            stroke-linecap="round" stroke-linejoin="round" style="color: #dd6b20;">
+                        <svg class="faq-icon icon-orange" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                            stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="6 9 12 15 18 9"></polyline>
                         </svg>
                     </button>
                     <div class="faq-answer">
                         <div class="faq-answer-inner">
-                            <div class="faq-answer-content" style="padding-top: 0;">
+                            <div class="faq-answer-content padding-top-0">
                                 <p>OSCAR is released under the <b>GNU GPL v3 License</b>. It is built using Qt SDK
                                     (Open Source
                                     Edition), available from <a href="https://qt.io" target="_blank"
@@ -95,25 +107,6 @@
                 </div>
             </div>
 
-            <style>
-                .licensing-accordion-btn {
-                    background: transparent !important;
-                    border: none !important;
-                    box-shadow: none !important;
-                    color: #dd6b20 !important;
-                    padding: 1.5rem !important;
-                }
-
-                .faq-item.policy-info-box-orange.is-active {
-                    box-shadow: 0 10px 25px rgba(221, 107, 32, 0.1) !important;
-                    border-color: #fbd38d !important;
-                }
-
-                .faq-item.policy-info-box-orange.is-active .licensing-accordion-btn {
-                    background: transparent !important;
-                    color: #dd6b20 !important;
-                }
-            </style>
 
         </section>
     </main>
