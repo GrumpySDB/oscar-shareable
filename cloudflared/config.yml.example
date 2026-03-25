@@ -1,8 +1,1 @@
 token: ${CF_TUNNEL_TOKEN}
-
-ingress:
-  - hostname: ${CF_HOSTNAME}
-    service: http://nginx-internal:80
-    originRequest:
-      httpHostHeader: ${CF_HOSTNAME}
-  - service: http_status:404
