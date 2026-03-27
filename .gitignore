@@ -10,6 +10,7 @@ template.json
 Cargo.lock
 target/
 .vscode/
+samples/
 
 # Node/Vite build artifacts
 node_modules/

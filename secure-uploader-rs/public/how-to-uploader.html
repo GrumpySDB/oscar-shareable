@@ -5,7 +5,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>How to Use the OSCAR Uploader</title>
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <script>
+    (function() {
+      const saved = localStorage.getItem('oscar-uploader-theme');
+      const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
+  <script type="module" crossorigin src="/assets/howto-CIIR1SE0.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/theme-gW4rl7Nx.js">
+  <link rel="stylesheet" crossorigin href="/assets/theme-4WmDNODI.css">
 </head>
 
 <body>
@@ -14,7 +23,18 @@
       <div class="header-row">
         <h1>How to Use the OSCAR Uploader</h1>
         <div class="header-actions">
-          <a href="/" class="header-link-btn back-btn">Back to Uploader</a>
+          <button class="theme-toggle header-link-btn" title="Toggle color theme" aria-label="Toggle color theme">
+            <svg class="sun-icon hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+          </button>
+          <a href="/" class="header-link-btn back-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            Back to Uploader
+          </a>
         </div>
       </div>
       <p class="subtle">Choose a tab below for step-by-step upload instructions.</p>
@@ -32,22 +52,29 @@
 
       <section class="help-tab-panel is-active" id="panel-sd" role="tabpanel" aria-labelledby="tab-sd"
         data-tab-group="__default">
+
         <section class="help-section">
-          <h2>1) Upload from your SD card root folder</h2>
-          <ol>
-            <li>In the uploader, first enter your <strong>Username (folder name)</strong>.</li>
-            <li>Then click the <strong>Browse</strong> button for <strong>SD Card Folder</strong>.</li>
-            <li>Select your SD card's <strong>root folder</strong> (not a subfolder).</li>
-          </ol>
+          <h2>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              class="help-header-icon">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            1) Upload from your SD card root folder
+          </h2>
+          <ul class="help-list">
+            <li>Choose a date range of data to upload. Maximum 6 months back, up to and including today.</li>
+            <li>Select your SD card's root folder (not a subfolder).</li>
+          </ul>
           <p>
             The root folder must contain the always required files:
             <strong>Identification.crc</strong> and <strong>STR.edf</strong>.
           </p>
-          <img class="help-image" src="/images/help-sd-root.svg"
-            alt="Example of selecting an SD card root folder that includes Identification.crc and STR.edf" />
-          <div class="help-example">
+          <div class="help-example-box">
             <h3>Example SD card root structure</h3>
-            <pre>SDCARD/
+            <pre class="code-block">SDCARD/
 ├── Identification.crc   (required)
 ├── STR.edf              (required)
 ├── DATALOG/
@@ -56,50 +83,78 @@
         </section>
 
         <section class="help-section">
-          <h2>2) Proceed to OSCAR and open Profile</h2>
+          <h2>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              class="help-header-icon">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            2) Proceed to OSCAR and open Profile
+          </h2>
           <p>
-            Click <strong>Proceed to OSCAR</strong>. Once OSCAR opens, you may need to click the
-            <strong>Profile</strong>
-            tab at the top of the window.
+            Click <strong>Proceed to OSCAR</strong>. Once OSCAR opens, if all goes well, your profile should be created
+            and the SD Card data should be imported automatically. Afterwards you should be able to see your daily view
+            page right away.
           </p>
-          <img class="help-image" src="/images/help-profile-tab.svg" alt="OSCAR top tabs with Profile highlighted" />
+          <p>
+            If not, try to import your data by selecting the folder you uploaded, which should be found inside: <code
+              class="inline-code">/config/Documents/SDCARD/</code>
+          </p>
         </section>
 
         <section class="help-section">
-          <h2>3) Create a new profile</h2>
-          <ol>
-            <li>Click <strong>New Profile</strong>.</li>
-            <li>Set your <strong>username</strong>.</li>
-            <li>Set your <strong>time zone</strong>.</li>
-            <li>If you want, add an optional profile password.</li>
-            <li>Click <strong>Next</strong> until the profile is created.</li>
-          </ol>
-          <img class="help-image" src="/images/help-new-profile.svg"
-            alt="New profile form showing user name, timezone, and optional password" />
+          <h2>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              class="help-header-icon">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+            3) Review your data and change settings
+          </h2>
+          <p>
+            Once your profile is imported, you can review it and change any settings in OSCAR that you wish. Your
+            personal OSCAR settings will be saved along with your profile data so feel free to customize it however you
+            like.
+          </p>
         </section>
 
         <section class="help-section">
-          <h2>4) Import your uploaded SD card data</h2>
-          <ol>
-            <li>Click <strong>Import SD Card</strong>.</li>
-            <li>Click <strong>Choose a Folder</strong>.</li>
-            <li>Navigate to: <strong>config &gt; SDCARD &gt; your username &gt; your uploaded folder</strong>.</li>
-            <li>Select your uploaded folder, then click <strong>Choose</strong>.</li>
-          </ol>
-          <img class="help-image" src="/images/help-import-folder.svg"
-            alt="Folder chooser showing config/SDCARD/user-name/uploaded-folder" />
-        </section>
-
-        <section class="help-section">
-          <h2>5) Review your data</h2>
-          <p>After import, click <strong>Daily View</strong> and navigate through your data.</p>
+          <h2>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              class="help-header-icon">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+            </svg>
+            4) Generate a sharing link
+          </h2>
+          <p>
+            You can generate a sharing link either in OSCAR or on your uploader page. Sharing links are valid for 24
+            hours before they expire. At this time links can only be shared to users who have also registered with the
+            service already. You can generate up to 5 valid links before the oldest ones are destroyed. Users who view
+            your profile with the sharing link cannot permanently change any settings or alter your profile or data
+            since the OSCAR session is "ephemeral".
+          </p>
         </section>
       </section>
 
       <section class="help-tab-panel" id="panel-oximetry" role="tabpanel" aria-labelledby="tab-oximetry"
         data-tab-group="__default" hidden>
         <section class="help-section">
-          <h2>1) Upload your CPAP SD card data first</h2>
+          <h2>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              class="help-header-icon">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="7" y1="8" x2="17" y2="8"></line>
+              <line x1="7" y1="12" x2="17" y2="12"></line>
+              <line x1="7" y1="16" x2="13" y2="16"></line>
+            </svg>
+            1) Upload your CPAP SD card data first
+          </h2>
           <p>
             Before uploading oximetry files, complete the SD card upload steps in the
             <strong>How to Upload SD Card Data</strong> tab.
@@ -107,14 +162,15 @@
         </section>
 
         <section class="help-section">
-          <h2>2) Enter your username as the folder name</h2>
-          <p>
-            Use the same <strong>Username (folder name)</strong> that you used when uploading your CPAP SD card data.
-          </p>
-        </section>
-
-        <section class="help-section">
-          <h2>3) Select your oximetry device and upload data</h2>
+          <h2>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              class="help-header-icon">
+              <path d="M12 2v20"></path>
+              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+            </svg>
+            2) Select your oximetry device and upload data
+          </h2>
 
           <div class="help-tabs help-subtabs" role="tablist" aria-label="Oximetry devices">
             <button class="help-tab is-active" id="tab-oximetry-wellue" role="tab" type="button" aria-selected="true"
@@ -138,7 +194,7 @@
             </ol>
             <p>
               After upload, all detected files will be available in
-              <strong>config/SDCARD/{Username}/Oximetry</strong> and can be imported in OSCAR with the
+              <code class="inline-code">config/SDCARD/Oximetry</code> and can be imported in OSCAR with the
               <strong>Wellue/Viatom import</strong> feature.
             </p>
           </section>
@@ -151,7 +207,7 @@
             </ol>
             <p>
               After upload, those files will be available in
-              <strong>config/SDCARD/{Username}/Oximetry</strong> and can be imported using OSCAR's
+              <code class="inline-code">config/SDCARD/Oximetry</code> and can be imported using OSCAR's
               <strong>Oximetry import wizard</strong>.
             </p>
           </section>
@@ -161,12 +217,14 @@
       <section class="help-section warning-panel">
         <h2>Important service note</h2>
         <p>
-          The service is currently <strong>not optimized for multiple users accessing OSCAR at once</strong>.
-          If another user connects while you are in the OSCAR window, you may become disconnected.
-          If this happens, wait a few minutes and then access OSCAR again.
+          This service currently supports limited multi user access. Due to the resource burden imposed by having
+          multiple live OSCAR clients, the service is restricted to only allowing access to a handful of users in using
+          OSCAR at a time. If you cannot access OSCAR due to user limitations, you do not need to import your data
+          manually right away if you dont want to. You can simply upload and generate a sharing link, or come back later
+          import another time.
         </p>
         <p>
-          If you run into issues or have feedback, please reach out to your administrator.
+          If you run into issues or have feedback, please reach out to the administrator.
         </p>
       </section>
     </article>
@@ -180,12 +238,13 @@
       <span class="footer-sep">•</span>
       <a href="/faq" class="policy-link">FAQ</a>
       <span class="footer-sep">•</span>
+      <a href="/licensing" class="policy-link">Licensing</a>
+      <span class="footer-sep">•</span>
       <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank"
         rel="noopener noreferrer">View Source on GitHub</a>
     </nav>
   </footer>
 
-  <script src="/help-tabs.js" defer></script>
 </body>
 
 </html>

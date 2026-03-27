@@ -2290,7 +2290,7 @@ button.danger.large {
 }
 
 .timeout-actions {
-  margin-top: 1.5rem;
+  margin: 1.5rem auto 0;
   width: 100%;
   max-width: 250px;
   display: flex;

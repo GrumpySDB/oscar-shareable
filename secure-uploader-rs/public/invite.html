@@ -5,7 +5,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Accept Invite - OSCAR Secure Upload</title>
-    <link rel="stylesheet" href="/styles.css?v=23" />
+    <script>
+        (function() {
+            const saved = localStorage.getItem('oscar-uploader-theme');
+            const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
+  <script type="module" crossorigin src="/assets/invite-BSEORA4Q.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/theme-gW4rl7Nx.js">
+  <link rel="stylesheet" crossorigin href="/assets/theme-4WmDNODI.css">
 </head>
 
 <body>
@@ -14,7 +23,14 @@
             <div class="header-row">
                 <h1 style="margin: 0;">Accept Invite</h1>
                 <div class="header-actions">
-                    <a href="/" class="header-link-btn back-btn">Return to Login</a>
+                    <a href="/" class="header-link-btn back-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="19" y1="12" x2="5" y2="12"></line>
+                            <polyline points="12 19 5 12 12 5"></polyline>
+                        </svg>
+                        Back to Login
+                    </a>
                 </div>
             </div>
             <p class="subtle" style="margin-top: 0.5rem; margin-bottom: 1.5rem;">You've been invited to join OSCAR
@@ -56,15 +72,17 @@
             </div>
 
             <div id="credentialsDisplay" class="hidden">
-                <div style="background: #fff5f5; border: 1px solid #fed7d7; border-radius: 10px; padding: 1.2rem;">
+                <div class="banner-box-danger">
                     <h2
-                        style="color: var(--danger); margin-top: 0; font-size: 1.2rem; display: flex; align-items: center; gap: 8px;">
+                        style="margin-top: 0; font-size: 1.2rem; display: flex; align-items: center; gap: 8px;">
                         ⚠️ Save Your Credentials</h2>
-                    <p style="margin-bottom: 1.2rem; font-size: 0.95rem; line-height: 1.5; color: #822727;">This is a
+                    <p class="modal-text-danger">This is a
                         purely anonymous account. If you lose these details, you will <strong>never</strong> be able to
                         log back in!</p>
 
-                    <label style="color: #4a5568;">Username</label>
+
+                    <label class="label-muted">Username</label>
+
                     <div class="copy-box" id="copyUsername">
                         <span class="text-content" id="credUsername"></span>
                         <div class="copy-icon">
@@ -77,7 +95,8 @@
                         </div>
                     </div>
 
-                    <label style="color: #4a5568;">Password</label>
+                    <label class="label-muted">Password</label>
+
                     <div class="copy-box" id="copyPassword">
                         <span class="text-content" id="credPassword"></span>
                         <div class="copy-icon">
@@ -90,7 +109,8 @@
                         </div>
                     </div>
 
-                    <label style="color: #4a5568;">Recovery Phrase</label>
+                    <label class="label-muted">Recovery Phrase</label>
+
                     <div class="copy-box large" id="copyRecovery">
                         <span class="text-content" id="credRecovery"></span>
                         <div class="copy-icon">
@@ -124,18 +144,21 @@
             <div class="header-row">
                 <h1>Invite Expired</h1>
                 <div class="header-actions">
-                    <a href="/" class="header-link-btn back-btn" style="display: flex; align-items: center; gap: 8px;">
+                    <button class="theme-toggle header-link-btn" title="Toggle color theme" aria-label="Toggle color theme">
+                        <svg class="sun-icon hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                        <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                    </button>
+                    <a href="/" class="header-link-btn back-btn">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="19" y1="12" x2="5" y2="12"></line>
                             <polyline points="12 19 5 12 12 5"></polyline>
                         </svg>
-                        Return to Login
+                        Back to Login
                     </a>
                 </div>
             </div>
-            <div
-                style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 250px; padding: 1rem 2rem 2rem;">
+            <div class="banner-box-warning">
                 <div style="color: var(--danger); margin-bottom: 0.5rem;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none"
                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -146,10 +169,10 @@
                         <line x1="12" y1="17" x2="12.01" y2="17"></line>
                     </svg>
                 </div>
-                <p id="expiredMessage"
-                    style="color: var(--text); text-align: center; max-width: 400px; line-height: 1.5; font-size: 1.05rem;">
+                <p id="expiredMessage" class="timeout-text">
                     This invite link has already been used or has expired.</p>
             </div>
+
         </section>
     </main>
 
@@ -161,12 +184,13 @@
             <span class="footer-sep">•</span>
             <a href="/faq" class="policy-link">FAQ</a>
             <span class="footer-sep">•</span>
+            <a href="/licensing" class="policy-link">Licensing</a>
+            <span class="footer-sep">•</span>
             <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank"
                 rel="noopener noreferrer">View Source on GitHub</a>
         </nav>
     </footer>
 
-    <script src="/invite.js?v=23" defer></script>
 </body>
 
 </html>

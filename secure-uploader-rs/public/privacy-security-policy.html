@@ -5,7 +5,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Privacy and Security Policy</title>
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <script>
+    (function() {
+      const saved = localStorage.getItem('oscar-uploader-theme');
+      const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
+  <script type="module" crossorigin src="/assets/theme-gW4rl7Nx.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/theme-4WmDNODI.css">
 </head>
 
 <body>
@@ -14,31 +22,78 @@
       <div class="header-row">
         <h1>Privacy and Security Policy</h1>
         <div class="header-actions">
-          <a href="/" class="header-link-btn back-btn">Back to Uploader</a>
+          <button class="theme-toggle header-link-btn" title="Toggle color theme" aria-label="Toggle color theme">
+            <svg class="sun-icon hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+          </button>
+          <a href="/" class="header-link-btn back-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            Back to Uploader
+          </a>
         </div>
       </div>
 
-      <p>Your privacy is extremely important.</p>
+      <p class="subtle">This application was designed with user privacy and security as a top priority.</p>
+      <br>
 
-      <p>Aside from the data you choose to submit to the service, no personal data is collected, stored, retained or
-        sold. If you wish to remove previously uploaded data, please use the delete function provided within the
-        service, or reach out to the administrator who gave you access.</p>
+      <div class="policy-info-box policy-info-box-green">
+        <div class="info-box-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          </svg>
+        </div>
+        <div class="info-box-content">
+          <p><b>Aside from the data you choose to submit to the service, no data is collected, stored, or retained. No
+              data is ever distributed or sold to any third parties. No IP addresses are ever collected or
+              retained.</b> If you wish to remove previously uploaded data at any time, please use the delete function
+            provided within the service, or reach out to the administrator who gave you access.</p>
 
-      <p>Your SD card data does not contain personally identifiable information, except for your CPAP machine’s serial
-        number. When creating a profile in OSCAR, do not include any personal information you do not wish to share.</p>
+          <p><b>Your SD card data does not contain personally identifiable information.</b> The only unique identifier
+            in
+            your SD Card data is your CPAP machine’s serial number. Your OSCAR profile is created automatically for you
+            with bare minimum information (your username) and that is all. Do not input any extra information to your
+            profile that you do not wish to share.</p>
 
-      <p>This service is delivered through Cloudflare tunneling. Your IP address is not revealed to or collected by this
-        service. All data transmitted to and from the service is protected using SSL/TLS encryption while in transit. No
-        Google browser analytics or any other data collection is in place by us. Cloudflare may have its own policies
-        with respect to data travelling through their tunnel system.</p>
+          <p>This service is delivered through Cloudflare tunneling. <b>All data transmitted to and from the service is
+              protected using SSL/TLS encryption while in transit.</b> By design Cloudflare terminates TLS encryption
+            and then re-encrypts it again before forwarding it to the uploader service. As such, your data is encrypted
+            while in transit and briefly unencrypted by Cloudflare before being encrypted in transit again. If this
+            concerns you, to mitigate this you have the option to enable "Tinfoil Hat Mode" to ensure your data is never
+            fully unencrypted until it reaches its destination - this sharing service.</p>
 
-      <p>This service was built with a strong emphasis on security. Multiple safeguards and hardening measures have been
-        implemented to reduce risk and protect user data. However, no web application can be guaranteed to be completely
-        secure against all possible threats.</p>
+          <p><b>No Google browser analytics or any other data collection is in place by us.</b> Cloudflare may have its
+            own policies with respect to data traveling through their tunnel system. We have disabled any traffic
+            analytics offered by Cloudflare to protect user privacy.</p>
+        </div>
+      </div>
 
-      <p>By using this service, you agree to use it responsibly and not upload any content that is illegal, harmful, or
-        inappropriate. Be aware that portions of this service were created using generative AI and therefore can be
-        subject to unexpected behaviour.</p>
+      <div class="policy-info-box policy-info-box-orange">
+        <div class="info-box-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </div>
+        <div class="info-box-content">
+          <p>This service was built with a strong emphasis on application security. Multiple safeguards and hardening
+            measures have been implemented to reduce risk and protect user data. However, no web application can be
+            guaranteed to be completely secure against all possible threats.</p>
+
+          <p>Be aware that portions of this software were created using generative AI and therefore could be subject to
+            unexpected behaviour. Thorough efforts have been undertaken to ensure everything is working and behaving as
+            designed.</p>
+
+          <p><b>By using this service, you agree to use it responsibly and not upload any content that is illegal,
+              harmful, or inappropriate.</b></p>
+        </div>
+      </div>
 
     </section>
   </main>
@@ -50,6 +105,8 @@
       <a href="/privacy-security-policy" class="policy-link">Privacy and Security Policy</a>
       <span class="footer-sep">•</span>
       <a href="/faq" class="policy-link">FAQ</a>
+      <span class="footer-sep">•</span>
+      <a href="/licensing" class="policy-link">Licensing</a>
       <span class="footer-sep">•</span>
       <a href="https://github.com/GrumpySDB/oscar-shareable" class="policy-link" target="_blank"
         rel="noopener noreferrer">View Source on GitHub</a>

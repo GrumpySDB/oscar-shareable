@@ -38,6 +38,52 @@ pub async fn list_files(
     Json(serde_json::json!({ "filenames": filenames }))
 }
 
+#[derive(Deserialize)]
+pub struct UploadCheckPayload {
+    pub device_id: Option<String>,
+    pub files: Vec<UploadCheckFile>,
+}
+
+#[derive(Deserialize)]
+pub struct UploadCheckFile {
+    pub path: String,
+    pub size: u64,
+    pub md5: Option<String>,
+}
+
+pub async fn handle_upload_check(
+    State(_state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    axum::Json(payload): axum::Json<UploadCheckPayload>,
+) -> impl IntoResponse {
+    let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    
+    let mut status_list = Vec::new();
+    
+    for file in payload.files {
+        if let Some(sanitized_path) = sanitize_upload_relative_path(&file.path) {
+            let disk_path = folder_path.join(&sanitized_path);
+            let action = if disk_path.exists() {
+                "SKIP"
+            } else {
+                "UPLOAD"
+            };
+            status_list.push(serde_json::json!({
+                "path": file.path,
+                "action": action
+            }));
+        } else {
+            status_list.push(serde_json::json!({
+                "path": file.path,
+                "action": "INVALID"
+            }));
+        }
+    }
+    
+    (StatusCode::OK, Json(serde_json::json!({ "status": status_list }))).into_response()
+}
+
 #[async_recursion::async_recursion]
 async fn collect_filenames_recursive(root: &PathBuf, current: &PathBuf) -> anyhow::Result<Vec<String>> {
     let mut names = Vec::new();
@@ -291,6 +337,34 @@ pub async fn handle_upload(
     // --- Validate paths and decrypt payloads synchronously first ---
     // This ensures all security checks are done before any file touches disk,
     // and lets us return clean error responses if anything is wrong.
+    
+    // --- Pre-validate dataset requirements (Issue 2/3: Incremental Sync and Philips Support) ---
+    if upload_type == "sdcard" {
+        let mut has_str_edf = false;
+        let mut has_ident_crc = false;
+        
+        for (filename, _) in &temp_files {
+            let lower = filename.to_lowercase();
+            if lower.ends_with("str.edf") { has_str_edf = true; }
+            if lower.ends_with("identification.crc") { has_ident_crc = true; }
+        }
+        
+        if !has_ident_crc {
+            let str_on_disk = folder_path.join("SD_CARD/STR.edf").exists() || folder_path.join("STR.edf").exists();
+            if has_str_edf || str_on_disk {
+                let ident_on_disk = folder_path.join("SD_CARD/Identification.crc").exists() || folder_path.join("Identification.crc").exists();
+                if !ident_on_disk {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": "Missing Identification.crc for initial ResMed upload."
+                        }))
+                    ).into_response();
+                }
+            }
+        }
+    }
+
     let first_file_name = temp_files.first().map(|(n, _)| n.clone());
     let mut write_tasks: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(temp_files.len());
 
@@ -319,7 +393,17 @@ pub async fn handle_upload(
             }
         }
 
+        if !crate::validation::validate_upload_content(&dest_path, &final_payload) {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Validation failed for file {}", sanitized_path) }))).into_response();
+        }
+
+        let hash_dest = dest_path.clone();
+        let hash_state = state.clone();
+        let hash_uuid = claims.uuid.clone();
+        let hash_username = claims.username.clone();
+
         write_tasks.push((dest_path, final_payload));
+        crate::worker::spawn_hash_worker(hash_dest, hash_state, hash_uuid, hash_username);
     }
 
     // --- Create parent directories for all destination paths ---

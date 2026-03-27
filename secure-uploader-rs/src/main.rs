@@ -5,6 +5,8 @@ pub mod upload;
 pub mod utils;
 pub mod db;
 pub mod templates;
+pub mod validation;
+pub mod worker;
 
 use axum::{
     extract::{DefaultBodyLimit, Request},
@@ -165,6 +167,10 @@ async fn main() -> anyhow::Result<()> {
                 .route("/upload", post(upload::handle_upload))
                 .route("/files", delete(upload::delete_folder))
                 .route("/account", delete(auth::delete_self_handler))
+                .route("/account/api-keys", get(auth::list_api_keys_handler))
+                .route("/account/api-keys", post(auth::create_api_key_handler))
+                .route("/account/api-keys/:id", delete(auth::revoke_api_key_handler))
+                .route("/me", get(auth::get_me_handler))
                 .route("/share-links", get(auth::list_share_links))
                 .route("/share-links", post(auth::create_share_link))
                 .route("/share-links/:token", delete(auth::delete_share_link))
@@ -212,6 +218,10 @@ async fn main() -> anyhow::Result<()> {
         .layer(middleware::from_fn(auth::admin_middleware))
         .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
 
+    let integrations_page_route = Router::new()
+        .route_service("/integrations", ServeFile::new("./public/integrations.html"))
+        .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
+
     let invite_page_route = Router::new()
         .route_service("/invite", ServeFile::new("./public/invite.html"));
 
@@ -220,6 +230,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(oscar_login_route)
         .merge(proxy_routes)
         .merge(admin_page_route)
+        .merge(integrations_page_route)
         .merge(invite_page_route)
         .route_service("/", ServeFile::new("./public/index.html"))
         .route_service("/privacy-security-policy", ServeFile::new("./public/privacy-security-policy.html"))

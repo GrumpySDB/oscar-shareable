@@ -702,6 +702,39 @@ pub async fn auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let api_key_header = req.headers()
+        .get("x-api-key")
+        .and_then(|value| value.to_str().ok());
+
+    if let Some(api_key) = api_key_header {
+        // Parse "id.secret"
+        if let Some((id_str, secret)) = api_key.split_once('.') {
+            if let Ok(id) = id_str.parse::<i64>() {
+                if let Ok(Some((hash, uuid))) = state.db.get_api_key_hash(id) {
+                    use argon2::{password_hash::{PasswordHash, PasswordVerifier}, Argon2};
+                    if let Ok(parsed_hash) = PasswordHash::new(&hash) {
+                        if Argon2::default().verify_password(secret.as_bytes(), &parsed_hash).is_ok() {
+                            if let Ok(Some(user)) = state.db.get_user_by_uuid(&uuid) {
+                                let _ = state.db.touch_api_key(id);
+                                let claims = Claims {
+                                    uuid: user.uuid,
+                                    username: user.username.unwrap_or_default(),
+                                    role: user.role,
+                                    sid: "api_key_auth".to_string(), // Fake session ID so downstream uses think there's a session
+                                    exp: chrono::Utc::now().timestamp() + 3600,
+                                };
+                                req.extensions_mut().insert(claims);
+                                return Ok(next.run(req).await);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // If API key is present but invalid, reject immediately.
+        return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid API Key" }))));
+    }
+
     let auth_header = req.headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -1315,4 +1348,93 @@ pub fn create_user_profile(username: &str, uuid: &str, config: &crate::config::A
     }
 
     Ok(())
+}
+
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+#[derive(Deserialize)]
+pub struct CreateApiKeyPayload {
+    pub label: Option<String>,
+    pub scopes: Option<String>,
+}
+
+pub async fn create_api_key_handler(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    ExtractJson(payload): ExtractJson<CreateApiKeyPayload>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use rand::{rngs::OsRng, RngCore};
+    let mut secret_bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut secret_bytes);
+    let secret = URL_SAFE_NO_PAD.encode(secret_bytes);
+
+    let secret_clone = secret.clone();
+    let hash = tokio::task::spawn_blocking(move || {
+        use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(secret_clone.as_bytes(), &salt)
+            .map(|h| h.to_string())
+    })
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Internal error" }))))?
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Hash error" }))))?;
+
+    let id = state.db.create_api_key(&claims.uuid, &hash, payload.label.clone(), payload.scopes.clone()).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+
+    let plaintext_key = format!("{}.{}", id, secret);
+
+    tracing::info!("User {} created a new API key: {}", claims.uuid, id);
+    let _ = state.db.log_audit_event(
+        "create_api_key",
+        Some(&claims.uuid),
+        Some(&claims.username),
+        Some(&format!("key_id: {}, label: {:?}", id, payload.label)),
+        None
+    );
+
+    Ok(Json(serde_json::json!({ "key": plaintext_key, "id": id })))
+}
+
+pub async fn list_api_keys_handler(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let keys = state.db.list_api_keys(&claims.uuid).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+    Ok(Json(serde_json::json!({ "api_keys": keys })))
+}
+
+pub async fn revoke_api_key_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    state.db.revoke_api_key(id, &claims.uuid).map_err(|_| {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "API key not found" })))
+    })?;
+
+    tracing::info!("User {} revoked API key: {}", claims.uuid, id);
+    let _ = state.db.log_audit_event(
+        "revoke_api_key",
+        Some(&claims.uuid),
+        Some(&claims.username),
+        Some(&format!("key_id: {}", id)),
+        None
+    );
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn get_me_handler(
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "uuid": claims.uuid,
+        "username": claims.username,
+        "role": claims.role,
+    }))
 }

@@ -65,6 +65,21 @@ impl Database {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_hash TEXT NOT NULL UNIQUE,
+                user_uuid TEXT NOT NULL,
+                label TEXT,
+                created_at INTEGER NOT NULL,
+                last_used_at INTEGER,
+                scopes TEXT,
+                FOREIGN KEY(user_uuid) REFERENCES users(uuid) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_uuid)", []);
+
         // Performance Indexes
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_invites_used_by ON invites(used_by_uuid)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_share_links_owner ON share_links(owner_uuid)", []);
@@ -494,6 +509,67 @@ impl Database {
         if affected == 0 {
             return Err(rusqlite::Error::QueryReturnedNoRows);
         }
+        Ok(())
+    }
+
+    // --- API Keys ---
+    pub fn create_api_key(&self, user_uuid: &str, key_hash: &str, label: Option<String>, scopes: Option<String>) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO api_keys (key_hash, user_uuid, label, created_at, scopes) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![key_hash, user_uuid, label, now, scopes],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_api_keys(&self, user_uuid: &str) -> Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, label, created_at, last_used_at, scopes FROM api_keys WHERE user_uuid = ?1 ORDER BY created_at DESC")?;
+        
+        let it = stmt.query_map(params![user_uuid], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "label": row.get::<_, Option<String>>(1)?,
+                "created_at": row.get::<_, i64>(2)?,
+                "last_used_at": row.get::<_, Option<i64>>(3)?,
+                "scopes": row.get::<_, Option<String>>(4)?,
+            }))
+        })?;
+        
+        let mut res = Vec::new();
+        for val in it {
+            res.push(val?);
+        }
+        Ok(res)
+    }
+
+    pub fn revoke_api_key(&self, id: i64, user_uuid: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute("DELETE FROM api_keys WHERE id = ?1 AND user_uuid = ?2", params![id, user_uuid])?;
+        if affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub fn get_api_key_hash(&self, id: i64) -> Result<Option<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT key_hash, user_uuid FROM api_keys WHERE id = ?1")?;
+        let mut iter = stmt.query_map(params![id], |row| {
+             Ok((row.get(0)?, row.get(1)?))
+        })?;
+        if let Some(res) = iter.next() {
+            Ok(Some(res?))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    pub fn touch_api_key(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute("UPDATE api_keys SET last_used_at = ?1 WHERE id = ?2", params![now, id])?;
         Ok(())
     }
 
