@@ -565,6 +565,19 @@ impl Database {
             Ok(None)
         }
     }
+
+    pub fn get_api_key_by_hash(&self, hash: &str) -> Result<Option<(i64, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, user_uuid FROM api_keys WHERE key_hash = ?1")?;
+        let mut iter = stmt.query_map(params![hash], |row| {
+             Ok((row.get(0)?, row.get(1)?))
+        })?;
+        if let Some(res) = iter.next() {
+            Ok(Some(res?))
+        } else {
+            Ok(None)
+        }
+    }
     
     pub fn touch_api_key(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();

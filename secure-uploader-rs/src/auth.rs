@@ -16,6 +16,7 @@ use crate::config::{AppState, SessionInfo, UPLOAD_ROOT, PROFILE_ROOT};
 // Unused bollard imports removed
 use std::path::PathBuf;
 use tokio::fs;
+use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
@@ -707,31 +708,24 @@ pub async fn auth_middleware(
         .and_then(|value| value.to_str().ok());
 
     if let Some(api_key) = api_key_header {
-        // Parse "id.secret"
-        if let Some((id_str, secret)) = api_key.split_once('.') {
-            if let Ok(id) = id_str.parse::<i64>() {
-                if let Ok(Some((hash, uuid))) = state.db.get_api_key_hash(id) {
-                    use argon2::{password_hash::{PasswordHash, PasswordVerifier}, Argon2};
-                    if let Ok(parsed_hash) = PasswordHash::new(&hash) {
-                        if Argon2::default().verify_password(secret.as_bytes(), &parsed_hash).is_ok() {
-                            if let Ok(Some(user)) = state.db.get_user_by_uuid(&uuid) {
-                                let _ = state.db.touch_api_key(id);
-                                let claims = Claims {
-                                    uuid: user.uuid,
-                                    username: user.username.unwrap_or_default(),
-                                    role: user.role,
-                                    sid: "api_key_auth".to_string(), // Fake session ID so downstream uses think there's a session
-                                    exp: chrono::Utc::now().timestamp() + 3600,
-                                };
-                                req.extensions_mut().insert(claims);
-                                return Ok(next.run(req).await);
-                            }
-                        }
-                    }
-                }
+        let mut hasher = Sha256::new();
+        hasher.update(api_key.as_bytes());
+        let hash_hex = hex::encode(hasher.finalize());
+
+        if let Ok(Some((id, uuid))) = state.db.get_api_key_by_hash(&hash_hex) {
+            if let Ok(Some(user)) = state.db.get_user_by_uuid(&uuid) {
+                let _ = state.db.touch_api_key(id);
+                let claims = Claims {
+                    uuid: user.uuid,
+                    username: user.username.unwrap_or_default(),
+                    role: user.role,
+                    sid: "api_key_auth".to_string(), 
+                    exp: chrono::Utc::now().timestamp() + 3600,
+                };
+                req.extensions_mut().insert(claims);
+                return Ok(next.run(req).await);
             }
         }
-        // If API key is present but invalid, reject immediately.
         return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid API Key" }))));
     }
 
@@ -1368,23 +1362,13 @@ pub async fn create_api_key_handler(
     OsRng.fill_bytes(&mut secret_bytes);
     let secret = URL_SAFE_NO_PAD.encode(secret_bytes);
 
-    let secret_clone = secret.clone();
-    let hash = tokio::task::spawn_blocking(move || {
-        use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
-        let salt = SaltString::generate(&mut OsRng);
-        Argon2::default()
-            .hash_password(secret_clone.as_bytes(), &salt)
-            .map(|h| h.to_string())
-    })
-    .await
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Internal error" }))))?
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Hash error" }))))?;
+    let mut hasher = Sha256::new();
+    hasher.update(secret.as_bytes());
+    let hash_hex = hex::encode(hasher.finalize());
 
-    let id = state.db.create_api_key(&claims.uuid, &hash, payload.label.clone(), payload.scopes.clone()).map_err(|_| {
+    let id = state.db.create_api_key(&claims.uuid, &hash_hex, payload.label.clone(), payload.scopes.clone()).map_err(|_| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
     })?;
-
-    let plaintext_key = format!("{}.{}", id, secret);
 
     tracing::info!("User {} created a new API key: {}", claims.uuid, id);
     let _ = state.db.log_audit_event(
@@ -1395,7 +1379,7 @@ pub async fn create_api_key_handler(
         None
     );
 
-    Ok(Json(serde_json::json!({ "key": plaintext_key, "id": id })))
+    Ok(Json(serde_json::json!({ "key": secret, "id": id })))
 }
 
 pub async fn list_api_keys_handler(
