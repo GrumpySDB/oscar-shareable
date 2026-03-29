@@ -539,9 +539,10 @@ button.danger:hover:not(:disabled) {
 .summary {
   display: none;
   margin-top: 1rem;
-  padding: 0.8rem 0.9rem;
+  padding: 0.8rem 1rem;
   border: 1px solid var(--surface-border);
-  border-radius: 10px;
+  border-left: 6px solid var(--accent);
+  border-radius: 12px;
   background: var(--surface-subtle);
 }
 
@@ -685,6 +686,7 @@ button.oscar-cta:hover:not(:disabled) {
 .policy-info-box-green {
   background: var(--success-bg) !important;
   border: 1px solid var(--success-border) !important;
+  border-left: 6px solid var(--success-text) !important;
   color: var(--success-text) !important;
 }
 
@@ -695,6 +697,7 @@ button.oscar-cta:hover:not(:disabled) {
 .policy-info-box-orange {
   background: var(--warning-bg) !important;
   border: 1px solid var(--warning-border) !important;
+  border-left: 6px solid #d88a1c !important;
   color: var(--warning-text) !important;
 }
 
@@ -704,9 +707,10 @@ button.oscar-cta:hover:not(:disabled) {
 
 .encryption-option {
   margin-top: 0.95rem;
-  padding: 0.8rem 0.9rem;
+  padding: 0.8rem 1rem;
   border: 1px solid var(--surface-border);
-  border-radius: 10px;
+  border-left: 6px solid var(--accent);
+  border-radius: 12px;
   background: var(--surface-subtle);
 }
 
@@ -1384,6 +1388,7 @@ details p {
   border-radius: 12px;
   background: var(--bg-alt);
   border: 1px solid var(--border-alt);
+  border-left: 6px solid var(--border-alt);
   font-size: 0.92rem;
   color: var(--text);
   line-height: 1.6;
@@ -1409,7 +1414,7 @@ details p {
 
 .copy-box:hover {
   border-color: var(--accent);
-  background-color: #f8faff;
+  background-color: var(--accent-light);
 }
 
 .copy-box:active {
@@ -1442,25 +1447,6 @@ details p {
   line-height: 1.5;
 }
 
-/* Tooltip for copy confirmation */
-.copy-box::after {
-  content: 'Copied!';
-  position: absolute;
-  top: -30px;
-  right: 10px;
-  background: var(--text);
-  color: #fff;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-}
-
-.copy-box.copied::after {
-  opacity: 1;
-}
 
 /* Aesthetic Toggle Switch */
 .toggle-switch-container {
@@ -1563,13 +1549,222 @@ input:checked+.toggle-slider-round:before {
   letter-spacing: 0.05em;
 }
 
-#signupForm {
-  display: flex;
-  flex-direction: column;
+/* Split Header for API Key Creation */
+.split-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 2rem;
+    width: 100%;
+}
+
+.split-header-left {
+    flex: 1;
+}
+
+.split-header-right {
+    flex: 1;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.invite-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+    max-width: 400px;
+}
+
+.label-right {
+    text-align: right;
+    font-weight: 600;
+    margin-bottom: 0.25rem !important;
+}
+
+.input-right {
+    text-align: right;
+    padding: 0.8rem 1rem !important;
+}
+
+.btn-right {
+    margin-top: 0.5rem;
+    align-self: flex-end;
+    width: auto !important;
+    padding: 0.8rem 2rem !important;
+}
+
+/* Header Row Alignment */
+.header-row h2 {
+    margin: 0 !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* API Key Creation Box */
+.create-key-box {
+    padding: 1.5rem;
+    border-radius: 12px;
+    margin-bottom: 2rem;
+    line-height: 1.5;
+    background: var(--accent-light);
+    border: 1px solid var(--header-border);
+    border-left: 6px solid var(--accent);
+    animation: fadeIn 0.4s ease-out;
+}
+
+[data-theme="dark"] .create-key-box {
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.create-key-box .split-header {
+    align-items: center; /* Better vertical alignment for inputs vs text */
+}
+
+.create-key-actions {
+    margin-top: 1.5rem;
+    width: 100%;
+}
+
+.create-key-actions .btn-full {
+    width: 100% !important;
+    margin-top: 0;
+}
+
+/* Modal Footer Styles for Revoke Confirmation */
+.split-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 1.5rem;
+}
+
+.split-footer button {
+    margin-top: 0;
+    height: 42px;
+    padding: 0 1.25rem;
+    font-size: 0.95rem;
+}
+
+#cancelRevokeBtn {
+    flex: 0 0 100px; /* Keep cancel button smaller */
+}
+
+#confirmRevokeBtn {
+    flex: 1; /* Widen revoke button to take up remaining space */
+}
+
+#confirmRevokeBtn:hover:not(:disabled) {
+    transform: translateY(-2px); /* Add lift effect */
+}
+
+.modal-narrow {
+    width: min(500px, 95%) !important;
+}
+
+.modal-title-danger {
+    color: var(--danger);
+    margin: 0;
+    font-size: 1.4rem;
+    font-weight: 700;
+}
+
+.banner-box-danger {
+    background: rgba(239, 68, 68, 0.05);
+    border: 1px solid rgba(239, 68, 68, 0.1);
+    border-left: 6px solid var(--danger);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 0;
+}
+
+.modal-text-danger {
+    color: var(--danger);
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+    .split-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1.5rem;
+    }
+    
+    .split-header-right {
+        justify-content: flex-start;
+        width: 100%;
+    }
+    
+    .label-right, .input-right {
+        text-align: left;
+    }
+    
+    .btn-right {
+        align-self: flex-start;
+        width: 100% !important;
+    }
 }
 
 #signupForm .info-box:empty {
   display: none;
+}
+
+/* API Key Limitation Info Box */
+.limitation-info-box {
+  display: flex;
+  gap: 1.25rem;
+  padding: 1.25rem;
+  border-radius: 12px;
+  margin-top: 1.5rem; /* More spacing above the info box */
+  margin-bottom: 2rem;
+  line-height: 1.5;
+  background: var(--accent-light);
+  border: 1px solid var(--header-border);
+  border-left: 6px solid var(--accent);
+  color: var(--header-text);
+  animation: fadeIn 0.4s ease-out;
+}
+
+.limitation-info-box .info-box-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  display: flex;
+  align-items: flex-start;
+  padding-top: 0.15rem;
+}
+
+.limitation-info-box .info-box-content p {
+  margin: 0;
+}
+
+.limitation-info-box .info-box-content .small-text {
+  font-size: 0.88rem;
+  opacity: 0.9;
+  margin-top: 0.35rem;
+}
+
+.modal-limitation-note {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  margin: 1rem 0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.modal-limitation-note svg {
+  flex-shrink: 0;
+}
+
+/* Ensure greater spacing for the create header if needed */
+.panel-header-desc {
+    margin-bottom: 0.5rem;
 }
 
 /* Date Picker Redesign */
@@ -1857,8 +2052,8 @@ input:checked+.toggle-slider-round:before {
 .cursor-notification {
   position: absolute;
   z-index: 10000;
-  background: var(--text);
-  color: #fff;
+  background: #1e293b; /* Consistent dark background for visibility in both modes */
+  color: #ffffff; /* High contrast white text */
   padding: 8px 16px;
   border-radius: 8px;
   font-size: 0.88rem;
@@ -1866,8 +2061,8 @@ input:checked+.toggle-slider-round:before {
   pointer-events: none;
   transform: translate(-50%, -120%);
   animation: floatUp 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 @keyframes floatUp {
@@ -2120,6 +2315,7 @@ button.danger.large {
   margin: 1.5rem 0;
   background: var(--help-example-bg);
   border: 1px solid var(--help-example-border);
+  border-left: 6px solid var(--help-example-header-color);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -2195,11 +2391,7 @@ button.danger.large {
 }
 
 .warning-panel {
-  transition: transform 0.2s ease;
-}
-
-.warning-panel:hover {
-  transform: scale(1.005);
+  transition: none;
 }
 /* Pagination Controls */
 .pagination-controls {
@@ -2499,6 +2691,7 @@ button.danger.large {
     justify-content: center;
     min-height: 250px;
     padding: 1rem 2rem 2rem;
+    border-left: 6px solid #d88a1c;
 }
 
 .banner-box-danger {

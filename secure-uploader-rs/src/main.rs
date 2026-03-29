@@ -7,6 +7,7 @@ pub mod db;
 pub mod templates;
 pub mod validation;
 pub mod worker;
+pub mod api_imports;
 
 use axum::{
     extract::{DefaultBodyLimit, Request},
@@ -124,8 +125,11 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Daily audit log purge (entries > 90 days)
-            let _ = cleaner_state.db.purge_old_audit_logs(90);
+            // Housekeeping: Revoke API keys unused for 30 days
+            let _ = cleaner_state.db.revoke_stale_api_keys(30);
+
+            // Housekeeping: Cleanup expired sync sessions (2 hours)
+            let _ = cleaner_state.db.cleanup_expired_sync_sessions(2 * 3600);
         }
     });
 
@@ -159,6 +163,9 @@ async fn main() -> anyhow::Result<()> {
         .nest("/admin", admin_api_routes)
         .merge(
             Router::new()
+                .route("/v1/imports", post(api_imports::create_session_handler))
+                .route("/v1/imports/:id/files", post(api_imports::upload_file_handler))
+                .route("/v1/imports/:id/process_files", post(api_imports::process_files_handler))
                 .route("/logout", post(auth::logout))
                 .route("/session", get(auth::session_check))
                 .route("/encryption-public-key", get(auth::get_public_key))
@@ -273,7 +280,7 @@ async fn add_security_headers(req: Request, next: Next) -> Response {
         headers.insert(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(
-                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                "default-src 'self'; script-src 'self' 'sha256-titxeNoOsmyFXE4i+hcXPkKm/Xvug3fJyV01fHtQbVk='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
             ),
         );
         headers.insert(

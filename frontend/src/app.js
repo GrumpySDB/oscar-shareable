@@ -629,6 +629,7 @@ async function scanAndPrepare(manualFiles = null) {
   } else if (hasSpo2) {
     uploadType = 'spo2';
   }
+  preparedUploadType = uploadType;
 
   if (uploadType === 'sdcard') {
     if (Number.isNaN(selectedDate.getTime())) {
@@ -643,12 +644,19 @@ async function scanAndPrepare(manualFiles = null) {
     }
 
     const basenamesLower = new Set(files.map((file) => getBasename(file).toLowerCase()));
-    const isResMed = basenamesLower.has('str.edf') || basenamesLower.has('identification.crc') || basenamesLower.has('identification.tgt');
     
+    const isResMed = basenamesLower.has('str.edf') || basenamesLower.has('identification.crc') || basenamesLower.has('identification.tgt');
+    const isPhilips = basenamesLower.has('p-series') || basenamesLower.has('prop.txt') || basenamesLower.has('properties.xml');
+
+    if (!isResMed && !isPhilips) {
+       setMessage('Unrecognized SD card data format. Only ResMed and Philips data are supported.', true);
+       return;
+    }
+
     if (isResMed) {
       for (const required of REQUIRED_ALWAYS) {
         if (!basenamesLower.has(required.toLowerCase())) {
-          setMessage(`Invalid data: missing required file ${required}.`, true);
+          setMessage(`Invalid ResMed data: missing required file ${required}.`, true);
           return;
         }
       }
@@ -660,7 +668,7 @@ async function scanAndPrepare(manualFiles = null) {
   let skippedInvalid = 0;
 
   for (const file of files) {
-    const relativePath = getRelativePath(file);
+    const relativePath = getStandardizedRelativePath(file);
     const basename = getBasename(file);
 
     if (uploadType === 'sdcard') {
@@ -732,7 +740,7 @@ async function scanAndPrepare(manualFiles = null) {
   const checkPayload = {
     deviceId: null,
     files: eligible.map(f => ({
-      path: f.webkitRelativePath || f.name,
+      path: getStandardizedRelativePath(f),
       size: f.size,
       md5: null
     }))
@@ -754,7 +762,7 @@ async function scanAndPrepare(manualFiles = null) {
       const finalEligible = [];
       let serverSkipped = 0;
       for (const f of eligible) {
-         if (statusMap.get(f.webkitRelativePath || f.name) === 'UPLOAD') {
+         if (statusMap.get(getStandardizedRelativePath(f)) === 'UPLOAD') {
             finalEligible.push(f);
          } else {
             serverSkipped += 1;
@@ -811,11 +819,22 @@ async function scanAndPrepare(manualFiles = null) {
   preparedWellueDbParents = uploadType === 'wellue-spo2' ? wellueDbParents : [];
   uploadBtn.disabled = false;
 
-  const detectionMessage = uploadType === 'spo2'
-    ? 'SPO2 Data Detected'
-    : uploadType === 'wellue-spo2'
-      ? 'Wellue/Viatom SPO2 Data Detected'
-      : 'Resmed SD card data detected.';
+  const basenamesLower = new Set(preparedFiles.map((file) => getBasename(file).toLowerCase()));
+  const isResMed = basenamesLower.has('str.edf') || basenamesLower.has('identification.crc') || basenamesLower.has('identification.tgt');
+  const isPhilips = basenamesLower.has('p-series') || basenamesLower.has('prop.txt') || basenamesLower.has('properties.xml');
+
+  let detectionMessage = '';
+  if (uploadType === 'spo2') {
+    detectionMessage = 'SPO2 Data Detected';
+  } else if (uploadType === 'wellue-spo2') {
+    detectionMessage = 'Wellue/Viatom SPO2 Data Detected';
+  } else if (isPhilips) {
+    detectionMessage = 'Philips SD card data detected.';
+  } else if (isResMed) {
+    detectionMessage = 'Resmed SD card data detected.';
+  } else {
+    detectionMessage = 'SD card data detected.'; // Fallback
+  }
 
   setMessage(detectionMessage, false, `Valid files to upload: ${eligible.length} • Files skipped: ${skippedTotal}`);
 }
@@ -894,7 +913,7 @@ function createUploadBatches(files) {
   return batches;
 }
 
-function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, tinfoilHatMode, encryptionEnvelope }) {
+function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, totalFiles, tinfoilHatMode, encryptionEnvelope }) {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     form.append('selectedDateMs', String(selectedDateMs));
@@ -905,6 +924,8 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, t
     form.append('uploadSessionId', sessionId);
     form.append('batchIndex', String(batchIndex));
     form.append('totalBatches', String(totalBatches));
+    form.append('totalFiles', String(totalFiles));
+    form.append('totalBytes', String(totalBytes));
     form.append('tinfoilHatMode', tinfoilHatMode ? 'true' : 'false');
     if (tinfoilHatMode && encryptionEnvelope) {
       form.append('encryptionEnvelope', JSON.stringify(encryptionEnvelope));
@@ -1026,6 +1047,7 @@ async function uploadPreparedFiles() {
             totalBatches: batches.length,
             sessionId,
             totalBytes,
+            totalFiles: preparedFiles.length,
             tinfoilHatMode: tinfoilHatModeEnabled,
             encryptionEnvelope,
           });

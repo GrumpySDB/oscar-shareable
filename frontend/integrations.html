@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Integrations & API Keys</title>
     <script>
-        (function() {
-            const saved = localStorage.getItem('oscar-uploader-theme');
-            const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-            document.documentElement.setAttribute('data-theme', theme);
-        })();
-    </script>
+    (function() {
+      const saved = localStorage.getItem('oscar-uploader-theme');
+      const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
     <link rel="stylesheet" href="./src/index.css" />
     <script type="module" src="./src/theme.js"></script>
 </head>
@@ -32,32 +32,35 @@
                         </svg>
                         Back to App
                     </a>
-                    <button id="logoutBtn" class="logout-btn">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="19" y1="12" x2="5" y2="12"></line>
-                            <polyline points="12 19 5 12 12 5"></polyline>
-                        </svg>
-                        <span>Logout</span>
-                    </button>
                 </div>
             </div>
-            <p class="subtle">Manage API keys for ESP32 and third-party integrations.</p>
-
             <div class="panel active">
-                <div class="panel-header">
-                    <div class="panel-header-desc">
-                        <h3>Create new API Key</h3>
-                        <p class="subtle no-margin no-padding">Generate a key to upload data automatically.</p>
+                <div class="limitation-info-box">
+                    <div class="info-box-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    </div>
+                    <div class="info-box-content">
+                        <p><strong>Manage API keys for third party integrations</strong></p>
+                        <p class="small-text">Users are limited to 3 active API keys. Keys that remain unused for 30 days will be automatically revoked for security.</p>
                     </div>
                 </div>
 
-                <div class="invite-generation-row">
-                    <div class="invite-input-group">
-                        <label for="apiKeyLabel">Device Label / Note (Optional):</label>
-                        <input type="text" id="apiKeyLabel" placeholder="e.g. ESP32 AutoSync" maxlength="64" />
+                <div class="create-key-box">
+                    <div class="split-header">
+                        <div class="split-header-left">
+                            <h3 class="no-margin">Create new API Key</h3>
+                            <p class="subtle no-margin no-padding">Generate a key to upload data automatically.</p>
+                        </div>
+                        <div class="split-header-right">
+                            <div class="invite-input-group">
+                                <label for="apiKeyLabel" class="label-right">Device Label / Note (Optional):</label>
+                                <input type="text" id="apiKeyLabel" placeholder="e.g. ESP32 AutoSync" maxlength="64" class="input-right" />
+                            </div>
+                        </div>
                     </div>
-                    <button id="generateApiKeyBtn">Create API Key</button>
+                    <div class="create-key-actions">
+                        <button id="generateApiKeyBtn" class="btn-full">Create API Key</button>
+                    </div>
                 </div>
 
                 <div class="panel-header panel-header-mt">
@@ -67,7 +70,6 @@
                     <table id="apiKeysTable">
                         <thead>
                             <tr>
-                                <th>ID</th>
                                 <th>Label</th>
                                 <th>Created</th>
                                 <th>Last Used</th>
@@ -94,6 +96,11 @@
                             This key will <strong>never</strong> be shown again! Please save it now.
                         </p>
 
+                        <div class="modal-limitation-note">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                            <span>Limit: 3 keys. Stale keys (unused for 30 days) are revoked.</span>
+                        </div>
+
                         <label class="label-muted">API Key</label>
                         <div class="copy-box" id="copyApiKey">
                             <span class="text-content" id="newApiKeyText"></span>
@@ -109,6 +116,23 @@
 
                         <div class="modal-footer">
                             <button id="closeApiKeyBtn" class="modal-close-btn">I saved it, Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Revoke Confirmation Modal -->
+            <div id="revokeConfirmModal" class="modal-overlay hidden">
+                <div class="modal-content modal-narrow">
+                    <div class="modal-header">
+                        <h3 class="modal-title-danger">Confirm Revocation</h3>
+                    </div>
+                    <div class="modal-body">
+                        <p>Are you sure you want to revoke this API key?</p>
+                        <p class="modal-text-danger">This will permanently break any integrations using it.</p>
+                        <div class="modal-footer split-footer">
+                            <button id="cancelRevokeBtn" class="ghost">Cancel</button>
+                            <button id="confirmRevokeBtn" class="danger">Revoke Key</button>
                         </div>
                     </div>
                 </div>

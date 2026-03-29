@@ -713,13 +713,46 @@ pub async fn auth_middleware(
         let hash_hex = hex::encode(hasher.finalize());
 
         if let Ok(Some((id, uuid))) = state.db.get_api_key_by_hash(&hash_hex) {
+            // Apply 300 RPM Rate Limit for API Keys
+            let now = chrono::Utc::now().timestamp();
+            let mut entry = state.api_key_attempts.entry(id).or_insert((0, now));
+            let (count, start_time) = entry.value_mut();
+
+            if now - *start_time > 60 {
+                *count = 1;
+                *start_time = now;
+            } else {
+                *count += 1;
+            }
+
+            if *count > 300 {
+                return Err((
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({ "error": "API key rate limit exceeded (300 RPM)" })),
+                ));
+            }
+            drop(entry);
+
             if let Ok(Some(user)) = state.db.get_user_by_uuid(&uuid) {
                 let _ = state.db.touch_api_key(id);
+                
+                // Scope Enforcement: /api/v1/imports requires 'upload' scope
+                if req.uri().path().starts_with("/api/v1/imports") {
+                    let scopes = state.db.list_api_keys(&uuid).ok()
+                        .and_then(|keys| keys.into_iter().find(|k| k["id"] == id))
+                        .and_then(|k| k["scopes"].as_str().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    
+                    if !scopes.split(',').any(|s| s.trim() == "upload") {
+                        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Insufficient scope: 'upload' required" }))));
+                    }
+                }
+
                 let claims = Claims {
                     uuid: user.uuid,
                     username: user.username.unwrap_or_default(),
                     role: user.role,
-                    sid: "api_key_auth".to_string(), 
+                    sid: format!("api_key_{}", id), 
                     exp: chrono::Utc::now().timestamp() + 3600,
                 };
                 req.extensions_mut().insert(claims);
@@ -1344,8 +1377,6 @@ pub fn create_user_profile(username: &str, uuid: &str, config: &crate::config::A
     Ok(())
 }
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-
 #[derive(Deserialize)]
 pub struct CreateApiKeyPayload {
     pub label: Option<String>,
@@ -1357,10 +1388,24 @@ pub async fn create_api_key_handler(
     axum::Extension(claims): axum::Extension<Claims>,
     ExtractJson(payload): ExtractJson<CreateApiKeyPayload>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use rand::{rngs::OsRng, RngCore};
-    let mut secret_bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut secret_bytes);
-    let secret = URL_SAFE_NO_PAD.encode(secret_bytes);
+    // Limit to 3 API keys per user
+    let existing_keys = state.db.list_api_keys(&claims.uuid).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error checking key limit" })))
+    })?;
+    
+    if existing_keys.len() >= 3 {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "API key limit reached. Maximum 3 keys allowed." }))
+        ));
+    }
+
+    use rand::{rngs::OsRng, Rng, distributions::Alphanumeric};
+    let secret: String = OsRng
+        .sample_iter(&Alphanumeric)
+        .take(64)
+        .map(char::from)
+        .collect();
 
     let mut hasher = Sha256::new();
     hasher.update(secret.as_bytes());

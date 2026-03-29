@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
 export default defineConfig({
-    publicDir: false,
+    publicDir: 'public',
     build: {
         rollupOptions: {
             input: {

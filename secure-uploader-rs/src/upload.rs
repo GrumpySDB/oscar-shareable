@@ -197,6 +197,8 @@ pub async fn handle_upload(
     let mut tinfoil_hat_mode = false;
     let mut total_batches = 1usize;
     let mut batch_index = 0usize;
+    let mut total_files = 0usize;
+    let mut total_bytes_grand = 0u64;
     let mut upload_type = String::new();
     let mut raw_encryption_envelope_map = String::new();
 
@@ -245,6 +247,10 @@ pub async fn handle_upload(
             total_batches = field.text().await.unwrap_or_default().parse().unwrap_or(1);
         } else if name == "batchIndex" {
             batch_index = field.text().await.unwrap_or_default().parse().unwrap_or(0);
+        } else if name == "totalFiles" {
+            total_files = field.text().await.unwrap_or_default().parse().unwrap_or(0);
+        } else if name == "totalBytes" {
+            total_bytes_grand = field.text().await.unwrap_or_default().parse().unwrap_or(0);
         } else if name == "uploadType" {
             upload_type = field.text().await.unwrap_or_default();
         } else if name == "encryptionEnvelope" {
@@ -501,6 +507,16 @@ pub async fn handle_upload(
                 }
             }
         }
+    }
+
+    if batch_index + 1 == total_batches {
+        let _ = state.db.log_audit_event(
+            "upload_completed",
+            Some(&claims.uuid),
+            Some(&claims.username),
+            Some(&format!("files: {}, total_size: {} bytes", total_files, total_bytes_grand)),
+            None
+        );
     }
 
     (StatusCode::OK, Json(serde_json::json!({

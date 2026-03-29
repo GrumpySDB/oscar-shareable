@@ -1,3 +1,5 @@
+import { showCursorNotification } from './theme.js';
+
 let token = sessionStorage.getItem('authToken');
 if (!token) window.location.href = '/';
 
@@ -22,46 +24,75 @@ const labelInput = document.getElementById('apiKeyLabel');
 
 async function loadKeys() {
     try {
-        tableBody.innerHTML = '<tr><td colspan="5">Loading...</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
         const res = await api('/api/account/api-keys');
         const keys = res.api_keys || [];
         tableBody.innerHTML = '';
         if (keys.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No active API keys found.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No active API keys found.</td></tr>';
             return;
         }
         for (const k of keys) {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${k.id}</td>
                 <td>${k.label || '-'}</td>
                 <td>${new Date(k.created_at * 1000).toLocaleString()}</td>
                 <td>${k.last_used_at ? new Date(k.last_used_at * 1000).toLocaleString() : 'Never'}</td>
-                <td><button class="danger-small revoke-btn" data-id="${k.id}">Revoke</button></td>
+                <td><button class="danger-small revoke-trigger-btn" data-id="${k.id}">Revoke</button></td>
             `;
             tableBody.appendChild(tr);
         }
         
-        document.querySelectorAll('.revoke-btn').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                if (!confirm('Are you sure you want to revoke this API key? This will permanently break any integrations using it.')) return;
+        document.querySelectorAll('.revoke-trigger-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
                 const id = e.target.getAttribute('data-id');
-                e.target.disabled = true;
-                e.target.textContent = 'Revoking...';
-                try {
-                    await api(`/api/account/api-keys/${id}`, { method: 'DELETE' });
-                    loadKeys();
-                } catch (err) {
-                    alert('Failed to revoke API key');
-                    e.target.disabled = false;
-                    e.target.textContent = 'Revoke';
-                }
+                showRevokeConfirm(id, e.target);
             });
         });
     } catch (err) {
-        tableBody.innerHTML = '<tr><td colspan="5" class="error">Failed to load API keys</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="4" class="error">Failed to load API keys</td></tr>';
     }
 }
+
+let keyToRevoke = null;
+let btnToDisable = null;
+
+function showRevokeConfirm(id, btn) {
+    keyToRevoke = id;
+    btnToDisable = btn;
+    document.getElementById('revokeConfirmModal').classList.remove('hidden');
+}
+
+document.getElementById('cancelRevokeBtn').addEventListener('click', () => {
+    document.getElementById('revokeConfirmModal').classList.add('hidden');
+    keyToRevoke = null;
+    btnToDisable = null;
+});
+
+document.getElementById('confirmRevokeBtn').addEventListener('click', async () => {
+    if (!keyToRevoke) return;
+    
+    const confirmBtn = document.getElementById('confirmRevokeBtn');
+    const cancelBtn = document.getElementById('cancelRevokeBtn');
+    
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Revoking...';
+    cancelBtn.disabled = true;
+
+    try {
+        await api(`/api/account/api-keys/${keyToRevoke}`, { method: 'DELETE' });
+        document.getElementById('revokeConfirmModal').classList.add('hidden');
+        loadKeys();
+    } catch (err) {
+        alert('Failed to revoke API key');
+    } finally {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Revoke Key';
+        cancelBtn.disabled = false;
+        keyToRevoke = null;
+        btnToDisable = null;
+    }
+});
 
 generateBtn.addEventListener('click', async () => {
     const label = labelInput.value.trim();
@@ -79,7 +110,13 @@ generateBtn.addEventListener('click', async () => {
         labelInput.value = '';
         loadKeys();
     } catch (err) {
-        alert('Failed to create API key');
+        // Handle specific limit error if backend returns JSON
+        if (err.message.includes('Limit reached') || err.message.includes('409') || err.message.includes('Maximum 3 keys')) {
+            alert('API Key Limit Reached: You can only have up to 3 active API keys at once. Please revoke an old key first.');
+        } else {
+            // Check if we can extract the error from the response (api helper might need change)
+            alert('Failed to create API key. Ensure you have fewer than 3 active keys.');
+        }
     } finally {
         generateBtn.disabled = false;
         generateBtn.textContent = 'Create API Key';
@@ -101,18 +138,12 @@ if (logoutBtn) {
 
 const copyApiKeyBtn = document.getElementById('copyApiKey');
 if (copyApiKeyBtn) {
-    copyApiKeyBtn.addEventListener('click', async () => {
+    copyApiKeyBtn.addEventListener('click', async (e) => {
         const text = document.getElementById('newApiKeyText').textContent;
         if (!text) return;
         try {
             await navigator.clipboard.writeText(text);
-            const originalIcon = copyApiKeyBtn.innerHTML;
-            copyApiKeyBtn.innerHTML = '<span class="text-content">Copied!</span>';
-            setTimeout(() => {
-                copyApiKeyBtn.innerHTML = originalIcon;
-                // re-insert the text since we overwrote innerHTML
-                document.getElementById('newApiKeyText') ? document.getElementById('newApiKeyText').textContent = text : null;
-            }, 2000);
+            showCursorNotification(e, 'Copied!');
         } catch (err) {
             console.error('Failed to copy', err);
         }

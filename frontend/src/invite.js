@@ -1,3 +1,5 @@
+import { showCursorNotification } from './theme.js';
+
 const urlParams = new URLSearchParams(window.location.search);
 const inviteCode = urlParams.get('code');
 
@@ -139,12 +141,11 @@ if (signupForm) {
 function setupCopy(elementId, textElementId) {
     const el = document.getElementById(elementId);
     if (!el) return;
-    el.addEventListener('click', async () => {
+    el.addEventListener('click', async (e) => {
         const text = document.getElementById(textElementId).textContent;
         try {
             await navigator.clipboard.writeText(text);
-            el.classList.add('copied');
-            setTimeout(() => el.classList.remove('copied'), 2000);
+            showCursorNotification(e, 'Copied!');
         } catch (err) {
             console.error('Copy failed', err);
         }

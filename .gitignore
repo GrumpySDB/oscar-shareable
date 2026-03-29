@@ -22,6 +22,7 @@ frontend/dist/
 frontend/build_debug.txt
 frontend/build_output.txt
 secure-uploader-rs/public/assets/
+secure-uploader-rs/public/images/
 secure-uploader-rs/public/*.js
 secure-uploader-rs/public/*.css
 secure-uploader-rs/public/*.html
