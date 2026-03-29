@@ -91,5 +91,25 @@ function updateToggleIcons(theme) {
     });
 }
 
+/**
+ * Shows a floating notification at the cursor position.
+ * @param {MouseEvent} e The click event.
+ * @param {string} message The message to display.
+ */
+export function showCursorNotification(e, message) {
+    const el = document.createElement('div');
+    el.className = 'cursor-notification';
+    el.textContent = message;
+    document.body.appendChild(el);
+
+    el.style.left = `${e.pageX}px`;
+    el.style.top = `${e.pageY}px`;
+
+    setTimeout(() => {
+        el.classList.add('fade-out');
+        setTimeout(() => el.remove(), 500);
+    }, 1500);
+}
+
 // Auto-initialize
 initTheme();

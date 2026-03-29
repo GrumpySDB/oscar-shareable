@@ -271,6 +271,18 @@ function getRelativePath(file) {
   return slashNormalized.replace(/^\.\//, '');
 }
 
+function getStandardizedRelativePath(file) {
+  let relativePath = getRelativePath(file);
+  if (preparedUploadType === 'sdcard') {
+    const parts = relativePath.split('/');
+    if (parts.length > 1) {
+      parts[0] = 'SD_CARD';
+      return parts.join('/');
+    }
+  }
+  return relativePath;
+}
+
 function getBasename(file) {
   const relativePath = getRelativePath(file);
   const segments = relativePath.split('/').filter(Boolean);
@@ -617,6 +629,7 @@ async function scanAndPrepare(manualFiles = null) {
   } else if (hasSpo2) {
     uploadType = 'spo2';
   }
+  preparedUploadType = uploadType;
 
   if (uploadType === 'sdcard') {
     if (Number.isNaN(selectedDate.getTime())) {
@@ -630,21 +643,32 @@ async function scanAndPrepare(manualFiles = null) {
       return;
     }
 
-    const requiredBasenamesLower = new Set(files.map((file) => getBasename(file).toLowerCase()));
-    for (const required of REQUIRED_ALWAYS) {
-      if (!requiredBasenamesLower.has(required.toLowerCase())) {
-        setMessage(`Invalid data: missing required file ${required}.`, true);
-        return;
+    const basenamesLower = new Set(files.map((file) => getBasename(file).toLowerCase()));
+    
+    const isResMed = basenamesLower.has('str.edf') || basenamesLower.has('identification.crc') || basenamesLower.has('identification.tgt');
+    const isPhilips = basenamesLower.has('p-series') || basenamesLower.has('prop.txt') || basenamesLower.has('properties.xml');
+
+    if (!isResMed && !isPhilips) {
+       setMessage('Unrecognized SD card data format. Only ResMed and Philips data are supported.', true);
+       return;
+    }
+
+    if (isResMed) {
+      for (const required of REQUIRED_ALWAYS) {
+        if (!basenamesLower.has(required.toLowerCase())) {
+          setMessage(`Invalid ResMed data: missing required file ${required}.`, true);
+          return;
+        }
       }
     }
   }
 
-  const eligible = [];
+  let eligible = [];
   let skippedExisting = 0;
   let skippedInvalid = 0;
 
   for (const file of files) {
-    const relativePath = getRelativePath(file);
+    const relativePath = getStandardizedRelativePath(file);
     const basename = getBasename(file);
 
     if (uploadType === 'sdcard') {
@@ -713,6 +737,52 @@ async function scanAndPrepare(manualFiles = null) {
     eligible.push(file);
   }
 
+  const checkPayload = {
+    deviceId: null,
+    files: eligible.map(f => ({
+      path: getStandardizedRelativePath(f),
+      size: f.size,
+      md5: null
+    }))
+  };
+
+  if (eligible.length > 0) {
+    try {
+      const checkRes = await api('/api/upload/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(checkPayload)
+      });
+      
+      const statusMap = new Map();
+      if (checkRes && checkRes.status) {
+        checkRes.status.forEach(s => statusMap.set(s.path, s.action));
+      }
+
+      const finalEligible = [];
+      let serverSkipped = 0;
+      for (const f of eligible) {
+         if (statusMap.get(getStandardizedRelativePath(f)) === 'UPLOAD') {
+            finalEligible.push(f);
+         } else {
+            serverSkipped += 1;
+         }
+      }
+      
+      // We already skipped some locally via existingSet, but if the server
+      // skipped more, we add that to skippedExisting
+      if (serverSkipped > 0) {
+          // Because existingSet was loaded at the beginning, the server might have caught
+          // duplicates we missed, or it might just overlap. Just use serverSkipped + local duplicates.
+          // Wait, if existingSet caught it, it wasn't in list anyway. So we just add serverSkipped.
+          skippedExisting += serverSkipped;
+      }
+      eligible = finalEligible;
+    } catch(err) {
+       console.error("Deduplication check error:", err);
+    }
+  }
+
   const skippedTotal = skippedExisting + skippedInvalid;
   if (eligible.length === 0) {
     if (uploadType !== 'sdcard' && skippedExisting > 0 && skippedInvalid === 0) {
@@ -743,17 +813,28 @@ async function scanAndPrepare(manualFiles = null) {
   }
 
   preparedFiles = eligible;
-  preparedSourceRootFolder = selectedRootFolder;
+  preparedSourceRootFolder = uploadType === 'sdcard' ? 'SD_CARD' : selectedRootFolder;
   selectedDateMs = selectedDate.getTime();
   preparedUploadType = uploadType;
   preparedWellueDbParents = uploadType === 'wellue-spo2' ? wellueDbParents : [];
   uploadBtn.disabled = false;
 
-  const detectionMessage = uploadType === 'spo2'
-    ? 'SPO2 Data Detected'
-    : uploadType === 'wellue-spo2'
-      ? 'Wellue/Viatom SPO2 Data Detected'
-      : 'Resmed SD card data detected.';
+  const basenamesLower = new Set(preparedFiles.map((file) => getBasename(file).toLowerCase()));
+  const isResMed = basenamesLower.has('str.edf') || basenamesLower.has('identification.crc') || basenamesLower.has('identification.tgt');
+  const isPhilips = basenamesLower.has('p-series') || basenamesLower.has('prop.txt') || basenamesLower.has('properties.xml');
+
+  let detectionMessage = '';
+  if (uploadType === 'spo2') {
+    detectionMessage = 'SPO2 Data Detected';
+  } else if (uploadType === 'wellue-spo2') {
+    detectionMessage = 'Wellue/Viatom SPO2 Data Detected';
+  } else if (isPhilips) {
+    detectionMessage = 'Philips SD card data detected.';
+  } else if (isResMed) {
+    detectionMessage = 'Resmed SD card data detected.';
+  } else {
+    detectionMessage = 'SD card data detected.'; // Fallback
+  }
 
   setMessage(detectionMessage, false, `Valid files to upload: ${eligible.length} • Files skipped: ${skippedTotal}`);
 }
@@ -796,7 +877,7 @@ async function buildEncryptedBatchPayload(files) {
     const tag = encryptedBytes.slice(encryptedBytes.length - 16);
     const cipherText = encryptedBytes.slice(0, encryptedBytes.length - 16);
     const wrappedKey = await window.crypto.subtle.encrypt({ name: 'RSA-OAEP' }, encryptionKey, aesKeyBytes);
-    const relativePath = getRelativePath(file);
+    const relativePath = getStandardizedRelativePath(file);
 
     envelope[relativePath] = {
       wrappedKey: btoa(String.fromCharCode(...new Uint8Array(wrappedKey))),
@@ -832,7 +913,7 @@ function createUploadBatches(files) {
   return batches;
 }
 
-function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, tinfoilHatMode, encryptionEnvelope }) {
+function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, totalFiles, tinfoilHatMode, encryptionEnvelope }) {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     form.append('selectedDateMs', String(selectedDateMs));
@@ -843,12 +924,14 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, t
     form.append('uploadSessionId', sessionId);
     form.append('batchIndex', String(batchIndex));
     form.append('totalBatches', String(totalBatches));
+    form.append('totalFiles', String(totalFiles));
+    form.append('totalBytes', String(totalBytes));
     form.append('tinfoilHatMode', tinfoilHatMode ? 'true' : 'false');
     if (tinfoilHatMode && encryptionEnvelope) {
       form.append('encryptionEnvelope', JSON.stringify(encryptionEnvelope));
     }
     for (const file of files) {
-      let relativePath = getRelativePath(file);
+      let relativePath = getStandardizedRelativePath(file);
       if (preparedUploadType === 'spo2') {
         relativePath = `Oximetry/${getBasename(file)}`;
       } else if (preparedUploadType === 'wellue-spo2') {
@@ -964,6 +1047,7 @@ async function uploadPreparedFiles() {
             totalBatches: batches.length,
             sessionId,
             totalBytes,
+            totalFiles: preparedFiles.length,
             tinfoilHatMode: tinfoilHatModeEnabled,
             encryptionEnvelope,
           });

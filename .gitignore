@@ -10,23 +10,33 @@ template.json
 Cargo.lock
 target/
 .vscode/
+samples/
+external_research/
+upload_api_blueprint/
 
 # Node/Vite build artifacts
 node_modules/
 dist/
 frontend/node_modules/
 frontend/dist/
+frontend/build_debug.txt
+frontend/build_output.txt
 secure-uploader-rs/public/assets/
+secure-uploader-rs/public/images/
 secure-uploader-rs/public/*.js
 secure-uploader-rs/public/*.css
 secure-uploader-rs/public/*.html
 # Keep public/ itself but ignore its auto-generated content if it replicates frontend/dist
 # If secure-uploader-rs/public/ contains source files, be more selective.
 
+# Docker
+docker-compose.override.yml
+
 # Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
 
 # OS specific
 .DS_Store

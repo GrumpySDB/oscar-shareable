@@ -1,3 +1,5 @@
+import { showCursorNotification } from './theme.js';
+
 const token = sessionStorage.getItem('authToken');
 // Session is now also verified server-side before this page is served.
 // The api() helper will use the token if present, or fallback to the secure cookie.
@@ -208,12 +210,11 @@ let passwordCopied = false;
 function setupCopy(elementId, textElementId, onCopyCallback) {
     const el = document.getElementById(elementId);
     if (!el) return;
-    el.addEventListener('click', async () => {
+    el.addEventListener('click', async (e) => {
         const text = document.getElementById(textElementId).textContent;
         try {
             await navigator.clipboard.writeText(text);
-            el.classList.add('copied');
-            setTimeout(() => el.classList.remove('copied'), 2000);
+            showCursorNotification(e, 'Copied!');
             if (onCopyCallback) onCopyCallback();
         } catch (err) {
             console.error('Copy failed', err);
@@ -350,20 +351,6 @@ function renderInvites() {
     }
 }
 
-function showCursorNotification(e, message) {
-    const el = document.createElement('div');
-    el.className = 'cursor-notification';
-    el.textContent = message;
-    document.body.appendChild(el);
-
-    el.style.left = `${e.pageX}px`;
-    el.style.top = `${e.pageY}px`;
-
-    setTimeout(() => {
-        el.classList.add('fade-out');
-        setTimeout(() => el.remove(), 500);
-    }, 1500);
-}
 
 document.getElementById('inviteSearch').addEventListener('input', renderInvites);
 

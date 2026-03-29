@@ -65,6 +65,21 @@ impl Database {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_hash TEXT NOT NULL UNIQUE,
+                user_uuid TEXT NOT NULL,
+                label TEXT,
+                created_at INTEGER NOT NULL,
+                last_used_at INTEGER,
+                scopes TEXT,
+                FOREIGN KEY(user_uuid) REFERENCES users(uuid) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_uuid)", []);
+
         // Performance Indexes
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_invites_used_by ON invites(used_by_uuid)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_share_links_owner ON share_links(owner_uuid)", []);
@@ -82,6 +97,36 @@ impl Database {
             [],
         )?;
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp)", []);
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_hashes (
+                hash TEXT NOT NULL,
+                user_uuid TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                PRIMARY KEY (user_uuid, file_path),
+                FOREIGN KEY(user_uuid) REFERENCES users(uuid) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_file_hashes_hash ON file_hashes(hash)", []);
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sync_sessions (
+                id TEXT PRIMARY KEY,
+                user_uuid TEXT NOT NULL,
+                device_id TEXT,
+                import_type TEXT,
+                created_at INTEGER NOT NULL,
+                last_active_at INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                files_processed INTEGER DEFAULT 0,
+                FOREIGN KEY(user_uuid) REFERENCES users(uuid) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_sessions_user ON sync_sessions(user_uuid)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_sessions_status ON sync_sessions(status)", []);
 
         let db = Database {
             conn: Mutex::new(conn),
@@ -497,6 +542,95 @@ impl Database {
         Ok(())
     }
 
+    // --- API Keys ---
+    pub fn create_api_key(&self, user_uuid: &str, key_hash: &str, label: Option<String>, scopes: Option<String>) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO api_keys (key_hash, user_uuid, label, created_at, scopes) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![key_hash, user_uuid, label, now, scopes],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_api_keys(&self, user_uuid: &str) -> Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, label, created_at, last_used_at, scopes FROM api_keys WHERE user_uuid = ?1 ORDER BY created_at DESC")?;
+        
+        let it = stmt.query_map(params![user_uuid], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "label": row.get::<_, Option<String>>(1)?,
+                "created_at": row.get::<_, i64>(2)?,
+                "last_used_at": row.get::<_, Option<i64>>(3)?,
+                "scopes": row.get::<_, Option<String>>(4)?,
+            }))
+        })?;
+        
+        let mut res = Vec::new();
+        for val in it {
+            res.push(val?);
+        }
+        Ok(res)
+    }
+
+    pub fn revoke_api_key(&self, id: i64, user_uuid: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute("DELETE FROM api_keys WHERE id = ?1 AND user_uuid = ?2", params![id, user_uuid])?;
+        if affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub fn get_api_key_hash(&self, id: i64) -> Result<Option<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT key_hash, user_uuid FROM api_keys WHERE id = ?1")?;
+        let mut iter = stmt.query_map(params![id], |row| {
+             Ok((row.get(0)?, row.get(1)?))
+        })?;
+        if let Some(res) = iter.next() {
+            Ok(Some(res?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_api_key_by_hash(&self, hash: &str) -> Result<Option<(i64, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, user_uuid FROM api_keys WHERE key_hash = ?1")?;
+        let mut iter = stmt.query_map(params![hash], |row| {
+             Ok((row.get(0)?, row.get(1)?))
+        })?;
+        if let Some(res) = iter.next() {
+            Ok(Some(res?))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    pub fn touch_api_key(&self, id: i64) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE api_keys SET last_used_at = ?1 WHERE id = ?2", params![now, id])?;
+        Ok(())
+    }
+
+    pub fn revoke_stale_api_keys(&self, days: i64) -> Result<usize> {
+        let now = chrono::Utc::now().timestamp();
+        let cutoff = now - (days * 24 * 60 * 60);
+        let conn = self.conn.lock().unwrap();
+        // Delete keys where last_used_at (if it exists) or created_at is older than cutoff
+        let affected = conn.execute(
+            "DELETE FROM api_keys WHERE COALESCE(last_used_at, created_at) < ?1",
+            params![cutoff],
+        )?;
+        if affected > 0 {
+            tracing::info!("Revoked {} stale API keys older than {} days", affected, days);
+        }
+        Ok(affected)
+    }
+
     // --- Audit Logging ---
 
     pub fn log_audit_event(&self, action: &str, user_uuid: Option<&str>, username: Option<&str>, details: Option<&str>, ip: Option<&str>) -> Result<()> {
@@ -541,6 +675,135 @@ impl Database {
         let affected = conn.execute("DELETE FROM audit_logs WHERE timestamp < ?1", params![cutoff])?;
         if affected > 0 {
             tracing::info!("Purged {} audit log entries older than {} days", affected, days);
+        }
+        Ok(affected)
+    }
+
+    pub fn record_file_hash(&self, hash: &str, user_uuid: &str, file_path: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO file_hashes (hash, user_uuid, file_path, timestamp)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(user_uuid, file_path) DO UPDATE SET
+                hash = excluded.hash,
+                timestamp = excluded.timestamp",
+            params![hash, user_uuid, file_path, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_file_hash(&self, user_uuid: &str, file_path: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT hash FROM file_hashes WHERE user_uuid = ?1 AND file_path = ?2")?;
+        let mut rows = stmt.query(params![user_uuid, file_path])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // --- Sync Sessions ---
+
+    pub fn create_sync_session(&self, id: &str, user_uuid: &str, device_id: Option<&str>, import_type: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO sync_sessions (id, user_uuid, device_id, import_type, created_at, last_active_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, user_uuid, device_id, import_type, now, now, "active"],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_active_sync_session(&self, user_uuid: &str) -> Result<Option<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, device_id, import_type, created_at, last_active_at, status, files_processed 
+             FROM sync_sessions 
+             WHERE user_uuid = ?1 AND status = 'active'"
+        )?;
+        let mut rows = stmt.query(params![user_uuid])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "device_id": row.get::<_, Option<String>>(1)?,
+                "import_type": row.get::<_, String>(2)?,
+                "created_at": row.get::<_, i64>(3)?,
+                "last_active_at": row.get::<_, i64>(4)?,
+                "status": row.get::<_, String>(5)?,
+                "files_processed": row.get::<_, i32>(6)?,
+            })))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_sync_session_by_id(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, user_uuid, device_id, import_type, created_at, last_active_at, status, files_processed 
+             FROM sync_sessions 
+             WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "user_uuid": row.get::<_, String>(1)?,
+                "device_id": row.get::<_, Option<String>>(2)?,
+                "import_type": row.get::<_, String>(3)?,
+                "created_at": row.get::<_, i64>(4)?,
+                "last_active_at": row.get::<_, i64>(5)?,
+                "status": row.get::<_, String>(6)?,
+                "files_processed": row.get::<_, i32>(7)?,
+            })))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn update_sync_session_status(&self, id: &str, status: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE sync_sessions SET status = ?1, last_active_at = ?2 WHERE id = ?3",
+            params![status, now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn touch_sync_session(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE sync_sessions SET last_active_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn increment_sync_session_files(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE sync_sessions SET files_processed = files_processed + 1, last_active_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn cleanup_expired_sync_sessions(&self, timeout_seconds: i64) -> Result<usize> {
+        let now = chrono::Utc::now().timestamp();
+        let cutoff = now - timeout_seconds;
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "UPDATE sync_sessions SET status = 'failed' WHERE status = 'active' AND last_active_at < ?1",
+            params![cutoff],
+        )?;
+        if affected > 0 {
+            tracing::info!("Cleaned up {} expired sync sessions", affected);
         }
         Ok(affected)
     }

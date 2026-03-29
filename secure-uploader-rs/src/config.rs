@@ -155,6 +155,7 @@ pub struct AppState {
     pub docker: Docker,
     pub active_containers: DashMap<String, ContainerInfo>,
     pub auth_attempts: DashMap<String, (u32, i64)>, // IP -> (count, first_attempt_timestamp)
+    pub api_key_attempts: DashMap<i64, (u32, i64)>, // API Key ID -> (count, first_attempt_timestamp)
 }
 
 #[derive(Clone, Debug)]
@@ -205,6 +206,7 @@ impl AppState {
             },
             active_containers: DashMap::new(),
             auth_attempts: DashMap::new(),
+            api_key_attempts: DashMap::new(),
         })
     }
 }

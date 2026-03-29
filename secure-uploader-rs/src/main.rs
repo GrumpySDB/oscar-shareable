@@ -5,6 +5,9 @@ pub mod upload;
 pub mod utils;
 pub mod db;
 pub mod templates;
+pub mod validation;
+pub mod worker;
+pub mod api_imports;
 
 use axum::{
     extract::{DefaultBodyLimit, Request},
@@ -122,8 +125,11 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Daily audit log purge (entries > 90 days)
-            let _ = cleaner_state.db.purge_old_audit_logs(90);
+            // Housekeeping: Revoke API keys unused for 30 days
+            let _ = cleaner_state.db.revoke_stale_api_keys(30);
+
+            // Housekeeping: Cleanup expired sync sessions (2 hours)
+            let _ = cleaner_state.db.cleanup_expired_sync_sessions(2 * 3600);
         }
     });
 
@@ -157,6 +163,9 @@ async fn main() -> anyhow::Result<()> {
         .nest("/admin", admin_api_routes)
         .merge(
             Router::new()
+                .route("/v1/imports", post(api_imports::create_session_handler))
+                .route("/v1/imports/:id/files", post(api_imports::upload_file_handler))
+                .route("/v1/imports/:id/process_files", post(api_imports::process_files_handler))
                 .route("/logout", post(auth::logout))
                 .route("/session", get(auth::session_check))
                 .route("/encryption-public-key", get(auth::get_public_key))
@@ -165,6 +174,10 @@ async fn main() -> anyhow::Result<()> {
                 .route("/upload", post(upload::handle_upload))
                 .route("/files", delete(upload::delete_folder))
                 .route("/account", delete(auth::delete_self_handler))
+                .route("/account/api-keys", get(auth::list_api_keys_handler))
+                .route("/account/api-keys", post(auth::create_api_key_handler))
+                .route("/account/api-keys/:id", delete(auth::revoke_api_key_handler))
+                .route("/me", get(auth::get_me_handler))
                 .route("/share-links", get(auth::list_share_links))
                 .route("/share-links", post(auth::create_share_link))
                 .route("/share-links/:token", delete(auth::delete_share_link))
@@ -212,6 +225,10 @@ async fn main() -> anyhow::Result<()> {
         .layer(middleware::from_fn(auth::admin_middleware))
         .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
 
+    let integrations_page_route = Router::new()
+        .route_service("/integrations", ServeFile::new("./public/integrations.html"))
+        .layer(middleware::from_fn_with_state(shared_state.clone(), auth::auth_middleware));
+
     let invite_page_route = Router::new()
         .route_service("/invite", ServeFile::new("./public/invite.html"));
 
@@ -220,6 +237,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(oscar_login_route)
         .merge(proxy_routes)
         .merge(admin_page_route)
+        .merge(integrations_page_route)
         .merge(invite_page_route)
         .route_service("/", ServeFile::new("./public/index.html"))
         .route_service("/privacy-security-policy", ServeFile::new("./public/privacy-security-policy.html"))
@@ -262,7 +280,7 @@ async fn add_security_headers(req: Request, next: Next) -> Response {
         headers.insert(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(
-                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                "default-src 'self'; script-src 'self' 'sha256-titxeNoOsmyFXE4i+hcXPkKm/Xvug3fJyV01fHtQbVk='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
             ),
         );
         headers.insert(

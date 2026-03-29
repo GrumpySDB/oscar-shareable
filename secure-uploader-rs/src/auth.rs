@@ -16,6 +16,7 @@ use crate::config::{AppState, SessionInfo, UPLOAD_ROOT, PROFILE_ROOT};
 // Unused bollard imports removed
 use std::path::PathBuf;
 use tokio::fs;
+use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
@@ -702,6 +703,65 @@ pub async fn auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let api_key_header = req.headers()
+        .get("x-api-key")
+        .and_then(|value| value.to_str().ok());
+
+    if let Some(api_key) = api_key_header {
+        let mut hasher = Sha256::new();
+        hasher.update(api_key.as_bytes());
+        let hash_hex = hex::encode(hasher.finalize());
+
+        if let Ok(Some((id, uuid))) = state.db.get_api_key_by_hash(&hash_hex) {
+            // Apply 300 RPM Rate Limit for API Keys
+            let now = chrono::Utc::now().timestamp();
+            let mut entry = state.api_key_attempts.entry(id).or_insert((0, now));
+            let (count, start_time) = entry.value_mut();
+
+            if now - *start_time > 60 {
+                *count = 1;
+                *start_time = now;
+            } else {
+                *count += 1;
+            }
+
+            if *count > 300 {
+                return Err((
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({ "error": "API key rate limit exceeded (300 RPM)" })),
+                ));
+            }
+            drop(entry);
+
+            if let Ok(Some(user)) = state.db.get_user_by_uuid(&uuid) {
+                let _ = state.db.touch_api_key(id);
+                
+                // Scope Enforcement: /api/v1/imports requires 'upload' scope
+                if req.uri().path().starts_with("/api/v1/imports") {
+                    let scopes = state.db.list_api_keys(&uuid).ok()
+                        .and_then(|keys| keys.into_iter().find(|k| k["id"] == id))
+                        .and_then(|k| k["scopes"].as_str().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    
+                    if !scopes.split(',').any(|s| s.trim() == "upload") {
+                        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Insufficient scope: 'upload' required" }))));
+                    }
+                }
+
+                let claims = Claims {
+                    uuid: user.uuid,
+                    username: user.username.unwrap_or_default(),
+                    role: user.role,
+                    sid: format!("api_key_{}", id), 
+                    exp: chrono::Utc::now().timestamp() + 3600,
+                };
+                req.extensions_mut().insert(claims);
+                return Ok(next.run(req).await);
+            }
+        }
+        return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Invalid API Key" }))));
+    }
+
     let auth_header = req.headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -1315,4 +1375,95 @@ pub fn create_user_profile(username: &str, uuid: &str, config: &crate::config::A
     }
 
     Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct CreateApiKeyPayload {
+    pub label: Option<String>,
+    pub scopes: Option<String>,
+}
+
+pub async fn create_api_key_handler(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    ExtractJson(payload): ExtractJson<CreateApiKeyPayload>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Limit to 3 API keys per user
+    let existing_keys = state.db.list_api_keys(&claims.uuid).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error checking key limit" })))
+    })?;
+    
+    if existing_keys.len() >= 3 {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "API key limit reached. Maximum 3 keys allowed." }))
+        ));
+    }
+
+    use rand::{rngs::OsRng, Rng, distributions::Alphanumeric};
+    let secret: String = OsRng
+        .sample_iter(&Alphanumeric)
+        .take(64)
+        .map(char::from)
+        .collect();
+
+    let mut hasher = Sha256::new();
+    hasher.update(secret.as_bytes());
+    let hash_hex = hex::encode(hasher.finalize());
+
+    let id = state.db.create_api_key(&claims.uuid, &hash_hex, payload.label.clone(), payload.scopes.clone()).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+
+    tracing::info!("User {} created a new API key: {}", claims.uuid, id);
+    let _ = state.db.log_audit_event(
+        "create_api_key",
+        Some(&claims.uuid),
+        Some(&claims.username),
+        Some(&format!("key_id: {}, label: {:?}", id, payload.label)),
+        None
+    );
+
+    Ok(Json(serde_json::json!({ "key": secret, "id": id })))
+}
+
+pub async fn list_api_keys_handler(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let keys = state.db.list_api_keys(&claims.uuid).map_err(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
+    })?;
+    Ok(Json(serde_json::json!({ "api_keys": keys })))
+}
+
+pub async fn revoke_api_key_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    state.db.revoke_api_key(id, &claims.uuid).map_err(|_| {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "API key not found" })))
+    })?;
+
+    tracing::info!("User {} revoked API key: {}", claims.uuid, id);
+    let _ = state.db.log_audit_event(
+        "revoke_api_key",
+        Some(&claims.uuid),
+        Some(&claims.username),
+        Some(&format!("key_id: {}", id)),
+        None
+    );
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn get_me_handler(
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "uuid": claims.uuid,
+        "username": claims.username,
+        "role": claims.role,
+    }))
 }

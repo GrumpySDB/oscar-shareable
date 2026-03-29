@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
 export default defineConfig({
+    publicDir: 'public',
     build: {
         rollupOptions: {
             input: {
@@ -13,6 +14,7 @@ export default defineConfig({
                 privacy: resolve(__dirname, 'privacy-security-policy.html'),
                 recovery: resolve(__dirname, 'recovery.html'),
                 licensing: resolve(__dirname, 'licensing.html'),
+                integrations: resolve(__dirname, 'integrations.html'),
             },
         },
         outDir: 'dist',

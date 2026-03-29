@@ -6,10 +6,11 @@ services:
     volumes:
       - ${DOCKER_HOST_PATH:-.}/cloudflared:/template:ro
       - cloudflared-config:/etc/cloudflared
+      - ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt:/run/secrets/tunnel_token:ro
     env_file:
       - .env
     command: >
-      sh -c "envsubst < /template/config.yml.example > /etc/cloudflared/config.yml"
+      sh -c "echo \"token: $$(cat /run/secrets/tunnel_token | tr -d '\n\r')\" > /etc/cloudflared/config.yml"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -25,12 +26,12 @@ services:
     env_file:
       - .env
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
-      CF_TUNNEL_ID: ${CF_TUNNEL_ID}
+      TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN}
       CF_HOSTNAME: ${CF_HOSTNAME}
     restart: unless-stopped
     volumes:
       - cloudflared-config:/etc/cloudflared:ro
+      - ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt:/run/secrets/tunnel_token:ro
     depends_on:
       config-prepper:
         condition: service_completed_successfully
@@ -43,9 +44,7 @@ services:
     read_only: true
 
   docker-socket-proxy:
-    build:
-      context: ./docker-socket-proxy
-      dockerfile: Dockerfile.patched
+    image: ghcr.io/grumpysdb/oscar-shareable-proxy:${DOCKER_IMAGE_TAG:-latest}
     container_name: docker-socket-proxy
     restart: unless-stopped
     volumes:
@@ -74,9 +73,7 @@ services:
       - /run
 
   nginx:
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile.patched
+    image: ghcr.io/grumpysdb/oscar-shareable-nginx:${DOCKER_IMAGE_TAG:-latest}
     container_name: nginx-internal
     volumes:
       - ${DOCKER_HOST_PATH:-.}/nginx/nginx.conf.template:/etc/nginx/templates/oscar.conf.template:ro
@@ -108,8 +105,7 @@ services:
 
   uploader:
     container_name: uploader
-    build:
-      context: .
+    image: ghcr.io/grumpysdb/oscar-shareable-uploader:${DOCKER_IMAGE_TAG:-latest}
     expose:
       - "8080"
     group_add:
@@ -125,7 +121,7 @@ services:
       DOCKER_HOST_PATH: ${DOCKER_HOST_PATH:-/opt/secure-uploader}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       OSCAR_PROFILE_VERSION: ${OSCAR_PROFILE_VERSION:-1.7.1+-plus}
-      OSCAR_DOCKER_IMAGE: custom-oscar-vnc:latest
+      OSCAR_DOCKER_IMAGE: ghcr.io/grumpysdb/oscar-shareable-oscar:${DOCKER_IMAGE_TAG:-latest}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-oscar-shareable_internal}
       JWT_SECRET_FILE: /run/secrets/jwt_secret
       APP_USERNAME_FILE: /run/secrets/app_username
@@ -161,16 +157,12 @@ services:
       - internal
 
   oscar:
-    build:
-      context: ./docker-oscar
-      args:
-        - OSCAR_VERSION=${OSCAR_VERSION:-1.7.1}
-    image: custom-oscar-vnc:latest
+    image: ghcr.io/grumpysdb/oscar-shareable-oscar:${DOCKER_IMAGE_TAG:-latest}
     profiles: [ "template" ]
     container_name: oscar-template
     restart: "no"
     ports:
-      - 127.0.0.1:3030:3000
+      - 0.0.0.0:3030:3000
     volumes:
       - ${DOCKER_HOST_PATH:-.}/data/profiles:/config/Documents/OSCAR_Data:rw
       - ${DOCKER_HOST_PATH:-.}/data/uploads:/config/Documents/SDCARD:rw
@@ -230,6 +222,8 @@ secrets:
     file: ${DOCKER_HOST_PATH:-.}/secrets/app_password.txt
   discord_client_secret:
     file: ${DOCKER_HOST_PATH:-.}/secrets/discord_client_secret.txt
+  tunnel_token:
+    file: ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt
 
 networks:
   internal:
