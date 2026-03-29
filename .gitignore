@@ -13,6 +13,11 @@ target/
 samples/
 external_research/
 upload_api_blueprint/
+# Development artifacts
+tests/
+cpap_autosync_pr_design.md
+secure-uploader-rs/verify_order_fix.py
+*.py
 
 # Node/Vite build artifacts
 node_modules/
