@@ -19,7 +19,7 @@ def run_security_tests():
     if resp.status_code != 201:
         print(f"[!] Failed to create session: {resp.status_code}")
         return
-    session_id = resp.json().get("id")
+    session_id = resp.json().get("data", {}).get("id")
     print(f"[+] Session: {session_id}")
 
     def test_upload(name, filename, path, content, expected_status=400):
