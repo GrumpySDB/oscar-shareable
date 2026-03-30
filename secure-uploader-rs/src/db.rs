@@ -110,10 +110,14 @@ impl Database {
             [],
         )?;
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_file_hashes_hash ON file_hashes(hash)", []);
+        
+        // --- Migration: Force sync_sessions to INTEGER PRIMARY KEY ---
+        // This is necessary if the table was previously created with the TEXT ID schema.
+        let _ = conn.execute("DROP TABLE IF EXISTS sync_sessions", []);
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sync_sessions (
-                id TEXT PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_uuid TEXT NOT NULL,
                 device_id TEXT,
                 import_type TEXT,
@@ -706,15 +710,15 @@ impl Database {
 
     // --- Sync Sessions ---
 
-    pub fn create_sync_session(&self, id: &str, user_uuid: &str, device_id: Option<&str>, import_type: &str) -> Result<()> {
+    pub fn create_sync_session(&self, user_uuid: &str, device_id: Option<&str>, import_type: &str) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
         conn.execute(
-            "INSERT INTO sync_sessions (id, user_uuid, device_id, import_type, created_at, last_active_at, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![id, user_uuid, device_id, import_type, now, now, "active"],
+            "INSERT INTO sync_sessions (user_uuid, device_id, import_type, created_at, last_active_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'active')",
+            params![user_uuid, device_id, import_type, now, now],
         )?;
-        Ok(())
+        Ok(conn.last_insert_rowid())
     }
 
     pub fn get_active_sync_session(&self, user_uuid: &str) -> Result<Option<serde_json::Value>> {
@@ -727,12 +731,6 @@ impl Database {
         let mut rows = stmt.query(params![user_uuid])?;
         if let Some(row) = rows.next()? {
             Ok(Some(serde_json::json!({
-                "id": row.get::<_, String>(0)?,
-                "device_id": row.get::<_, Option<String>>(1)?,
-                "import_type": row.get::<_, String>(2)?,
-                "created_at": row.get::<_, i64>(3)?,
-                "last_active_at": row.get::<_, i64>(4)?,
-                "status": row.get::<_, String>(5)?,
                 "files_processed": row.get::<_, i32>(6)?,
             })))
         } else {
@@ -740,7 +738,16 @@ impl Database {
         }
     }
 
-    pub fn get_sync_session_by_id(&self, id: &str) -> Result<Option<serde_json::Value>> {
+    pub fn cancel_active_sync_sessions(&self, user_uuid: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sync_sessions SET status = 'failed', last_active_at = ?1 WHERE user_uuid = ?2 AND status = 'active'",
+            params![chrono::Utc::now().timestamp(), user_uuid],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_sync_session_by_id(&self, id: i64) -> Result<Option<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, user_uuid, device_id, import_type, created_at, last_active_at, status, files_processed 
@@ -750,7 +757,7 @@ impl Database {
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(serde_json::json!({
-                "id": row.get::<_, String>(0)?,
+                "id": row.get::<_, i64>(0)?,
                 "user_uuid": row.get::<_, String>(1)?,
                 "device_id": row.get::<_, Option<String>>(2)?,
                 "import_type": row.get::<_, String>(3)?,
@@ -764,7 +771,7 @@ impl Database {
         }
     }
 
-    pub fn update_sync_session_status(&self, id: &str, status: &str) -> Result<()> {
+    pub fn update_sync_session_status(&self, id: i64, status: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
         conn.execute(
@@ -774,7 +781,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn touch_sync_session(&self, id: &str) -> Result<()> {
+    pub fn touch_sync_session(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
         conn.execute(
@@ -784,7 +791,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn increment_sync_session_files(&self, id: &str) -> Result<()> {
+    pub fn increment_sync_session_files(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
         conn.execute(

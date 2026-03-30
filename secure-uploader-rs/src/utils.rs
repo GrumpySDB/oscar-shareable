@@ -35,11 +35,24 @@ pub fn sanitize_upload_relative_path(value: &str) -> Option<String> {
     }
 
     // Replace all backslashes with forward slashes immediately
-    let path_str = value.replace('\\', "/");
+    let mut path_str = value.replace('\\', "/");
+
+    // Strip leading slashes and dots to treat as relative path
+    while path_str.starts_with('/') || path_str.starts_with("./") {
+        if path_str.starts_with('/') {
+            path_str = path_str[1..].to_string();
+        } else {
+            path_str = path_str[2..].to_string();
+        }
+    }
 
     // Deny fundamental traversal indicators and null bytes
-    if path_str.contains('\0') || path_str.contains("..") || path_str.starts_with('/') || path_str.starts_with("./") {
+    if path_str.contains('\0') || path_str.contains("..") {
         return None;
+    }
+
+    if path_str.is_empty() {
+        return Some("".to_string());
     }
 
     let segments: Vec<&str> = path_str.split('/').collect();
@@ -47,7 +60,8 @@ pub fn sanitize_upload_relative_path(value: &str) -> Option<String> {
 
     for seg in segments {
         let trimmed = seg.trim();
-        // Reject empty segments, dots, hidden files, or overly long segment names
+        // Reject empty segments (except if it's the only one and we already handled empty above), 
+        // dots, hidden files, or overly long segment names
         if trimmed.is_empty() || trimmed == "." || trimmed == ".." || trimmed.starts_with('.') || trimmed.len() > 255 {
             return None;
         }

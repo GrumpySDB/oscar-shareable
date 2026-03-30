@@ -1,7 +1,8 @@
 use axum::{
     extract::{Path, State, Multipart},
-    http::StatusCode,
+    http::{StatusCode, HeaderMap},
     response::{IntoResponse, Json},
+    body::Bytes,
     Extension,
 };
 use std::sync::Arc;
@@ -10,7 +11,6 @@ use tokio::io::AsyncWriteExt;
 use std::path::PathBuf;
 use serde::Deserialize;
 use uuid::Uuid;
-// md5 = "0.7.0" uses md5::compute
 use bollard::container::{StopContainerOptions, RemoveContainerOptions};
 
 use crate::{
@@ -18,41 +18,81 @@ use crate::{
     config::{AppState, UPLOAD_ROOT},
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct CreateSessionPayload {
-    pub device_id: Option<String>,
+    pub device_id: Option<serde_json::Value>,
     pub import_type: Option<String>,
 }
 
 pub async fn create_session_handler(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
-    Json(payload): Json<CreateSessionPayload>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> impl IntoResponse {
-    let import_type = payload.import_type.unwrap_or_else(|| "sdcard".to_string());
-    
-    // Enforce 1 active session per user
-    if let Ok(Some(_)) = state.db.get_active_sync_session(&claims.uuid) {
-        return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "A session is already active for this user." }))).into_response();
+    let mut payload = CreateSessionPayload::default();
+
+    if !body.is_empty() {
+        let content_type = headers
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+
+        if content_type.contains("application/json") {
+            if let Ok(p) = serde_json::from_slice(&body) {
+                payload = p;
+            }
+        } else if content_type.contains("application/x-www-form-urlencoded") {
+            if let Ok(p) = serde_urlencoded::from_bytes(&body) {
+                payload = p;
+            }
+        }
     }
 
-    let id = Uuid::new_v4().to_string();
-    if let Err(e) = state.db.create_sync_session(&id, &claims.uuid, payload.device_id.as_deref(), &import_type) {
-        tracing::error!("Failed to create sync session: {}", e);
+    let import_type = payload.import_type.unwrap_or_else(|| "sdcard".to_string());
+    let device_id_str = payload.device_id.map(|v| match v {
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s,
+        _ => v.to_string(),
+    });
+    
+    // Enforce 1 active session per user
+    // 1. Check for existing active session - instead of erroring, we automatically cancel old ones
+    // for this user to allow the firmware to recover from crashes/reboots effortlessly.
+    if let Err(e) = state.db.cancel_active_sync_sessions(&claims.uuid) {
+        tracing::error!("Failed to cancel old sync sessions for user {}: {}", claims.uuid, e);
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" }))).into_response();
     }
 
-    (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
+    let id = match state.db.create_sync_session(&claims.uuid, device_id_str.as_deref(), &import_type) {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!("Failed to create sync session: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" }))).into_response();
+        }
+    };
+
+    // Return SleepHQ-compatible structure
+    (StatusCode::CREATED, Json(serde_json::json!({ 
+        "data": {
+            "id": id,
+            "type": "imports",
+            "attributes": {
+                "id": id,
+                "status": "active"
+            }
+        }
+    }))).into_response()
 }
 
 pub async fn upload_file_handler(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     // 1. Verify session ownership and status
-    let session = match state.db.get_sync_session_by_id(&id) {
+    let session = match state.db.get_sync_session_by_id(id) {
         Ok(Some(s)) => s,
         _ => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Session not found" }))).into_response(),
     };
@@ -62,7 +102,8 @@ pub async fn upload_file_handler(
     }
 
     let mut client_hash = String::new();
-    let mut sanitized_rel_path = String::new();
+    let mut sanitized_rel_dir = String::new();
+    let mut original_file_name = String::new();
     let mut temp_path: Option<PathBuf> = None;
     let mut computed_hash = String::new();
 
@@ -72,14 +113,21 @@ pub async fn upload_file_handler(
         if name == "path" {
             let path_str = field.text().await.unwrap_or_default();
             if let Some(p) = crate::utils::sanitize_upload_relative_path(&path_str) {
-                sanitized_rel_path = p;
+                sanitized_rel_dir = p;
             } else {
                 if let Some(tp) = temp_path { let _ = fs::remove_file(tp).await; }
-                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid path" }))).into_response();
+                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid directory path" }))).into_response();
             }
+        } else if name == "name" {
+            // Firmware may send "name" field with the filename
+            original_file_name = field.text().await.unwrap_or_default();
         } else if name == "content_hash" {
             client_hash = field.text().await.unwrap_or_default();
         } else if name == "file" {
+            if original_file_name.is_empty() {
+                original_file_name = field.file_name().unwrap_or("").to_string();
+            }
+
             // 3. Setup Temp File & Hashing
             let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
             let upload_dir = PathBuf::from(UPLOAD_ROOT).join(&folder);
@@ -103,12 +151,11 @@ pub async fn upload_file_handler(
             let mut writer = tokio::io::BufWriter::new(file);
             let mut context = md5::Context::new();
             let mut total_bytes = 0;
-            let max_bytes = 10 * 1024 * 1024; // 10MB limit
 
             // 4. Stream Chunks to Disk
             while let Ok(Some(chunk)) = field.chunk().await {
                 total_bytes += chunk.len();
-                if total_bytes > max_bytes {
+                if total_bytes > 10 * 1024 * 1024 {
                     let _ = fs::remove_file(&t_path).await;
                     return (StatusCode::PAYLOAD_TOO_LARGE, Json(serde_json::json!({ "error": "File too large (max 10MB)" }))).into_response();
                 }
@@ -127,19 +174,36 @@ pub async fn upload_file_handler(
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "FileSystem error" }))).into_response();
             }
 
+            // Sync with firmware: MD5(file_content + filename)
+            context.consume(original_file_name.as_bytes());
             computed_hash = format!("{:x}", context.compute());
         }
     }
 
     // 5. Finalization
-    if sanitized_rel_path.is_empty() || temp_path.is_none() {
+    if original_file_name.is_empty() || temp_path.is_none() {
         if let Some(tp) = temp_path { let _ = fs::remove_file(tp).await; }
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Missing path or file content" }))).into_response();
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Missing filename or file content" }))).into_response();
     }
 
     let tp = temp_path.unwrap();
     let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
-    let final_path = PathBuf::from(UPLOAD_ROOT).join(&folder).join(&sanitized_rel_path);
+    
+    // Construct final path: root / user / dir / filename
+    let mut final_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    if !sanitized_rel_dir.is_empty() {
+        final_path = final_path.join(&sanitized_rel_dir);
+    }
+    
+    // Sanitize the filename one more time to be sure
+    let safe_filename = match crate::utils::sanitize_upload_relative_path(&original_file_name) {
+        Some(s) if !s.contains('/') => s,
+        _ => {
+            let _ = fs::remove_file(&tp).await;
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid filename" }))).into_response();
+        }
+    };
+    final_path = final_path.join(&safe_filename);
 
     // 6. Integrity check
     if !client_hash.is_empty() && client_hash != computed_hash {
@@ -181,9 +245,14 @@ pub async fn upload_file_handler(
         }
     }
 
-    // 9. Record Hash & Progress
-    let _ = state.db.record_file_hash(&computed_hash, &claims.uuid, &sanitized_rel_path);
-    let _ = state.db.increment_sync_session_files(&id);
+    // 10. Record file hash
+    let rel_path = if sanitized_rel_dir.is_empty() {
+        safe_filename.clone()
+    } else {
+        format!("{}/{}", sanitized_rel_dir, safe_filename)
+    };
+    let _ = state.db.record_file_hash(&computed_hash, &claims.uuid, &rel_path);
+    let _ = state.db.increment_sync_session_files(id);
 
     (StatusCode::CREATED, Json(serde_json::json!({ "status": "received" }))).into_response()
 }
@@ -191,10 +260,10 @@ pub async fn upload_file_handler(
 pub async fn process_files_handler(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
 ) -> impl IntoResponse {
     // 1. Verify session
-    let session = match state.db.get_sync_session_by_id(&id) {
+    let session = match state.db.get_sync_session_by_id(id) {
         Ok(Some(s)) => s,
         _ => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Session not found" }))).into_response(),
     };
@@ -204,7 +273,7 @@ pub async fn process_files_handler(
     }
 
     // 2. Finalize Session
-    if let Err(e) = state.db.update_sync_session_status(&id, "completed") {
+    if let Err(e) = state.db.update_sync_session_status(id, "completed") {
         tracing::error!("Failed to complete session: {}", e);
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" }))).into_response();
     }
