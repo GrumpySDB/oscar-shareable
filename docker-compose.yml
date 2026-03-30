@@ -1,23 +1,6 @@
 services:
 
-  config-prepper:
-    image: nginx:stable-alpine
-    container_name: config-prepper
-    volumes:
-      - ${DOCKER_HOST_PATH:-.}/cloudflared:/template:ro
-      - cloudflared-config:/etc/cloudflared
-      - ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt:/run/secrets/tunnel_token:ro
-    env_file:
-      - .env
-    command: >
-      sh -c "echo \"token: $$(cat /run/secrets/tunnel_token | tr -d '\n\r')\" > /etc/cloudflared/config.yml"
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp
+
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -26,15 +9,11 @@ services:
     env_file:
       - .env
     environment:
-      TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN}
+      TUNNEL_TOKEN_FILE: /run/secrets/tunnel_token
       CF_HOSTNAME: ${CF_HOSTNAME}
     restart: unless-stopped
     volumes:
-      - cloudflared-config:/etc/cloudflared:ro
-      - ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt:/run/secrets/tunnel_token:ro
-    depends_on:
-      config-prepper:
-        condition: service_completed_successfully
+      - ${DOCKER_HOST_PATH:-.}/secrets/tunnel_token.txt:/run/secrets/tunnel_token:ro,z
     networks:
       - internal
     security_opt:
@@ -48,7 +27,7 @@ services:
     container_name: docker-socket-proxy
     restart: unless-stopped
     volumes:
-      - ${XDG_RUNTIME_DIR:-/var/run}/docker.sock:/var/run/docker.sock:ro
+      - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock:ro
     environment:
       - CONTAINERS=1
       - IMAGES=1
@@ -209,8 +188,6 @@ services:
       - SETUID
       - SETGID
 
-volumes:
-  cloudflared-config:
 
 
 secrets:
