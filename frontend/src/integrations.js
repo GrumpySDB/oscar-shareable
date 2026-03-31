@@ -13,7 +13,8 @@ async function api(path, options = {}) {
             window.location.href = '/';
             return;
         }
-        throw new Error('API Request Failed');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'API Request Failed');
     }
     return response.json();
 }
@@ -95,7 +96,33 @@ document.getElementById('confirmRevokeBtn').addEventListener('click', async () =
 });
 
 generateBtn.addEventListener('click', async () => {
+    const labelInput = document.getElementById('apiKeyLabel');
+    const errorMsg = document.getElementById('apiKeyError');
     const label = labelInput.value.trim();
+    
+    // Frontend Validation
+    if (label) {
+        if (label.length > 30) {
+            showError("Label is too long (max 30).");
+            return;
+        }
+        if (!/^[a-zA-Z0-9_-]+$/.test(label)) {
+            showError("Invalid characters. Use A-Z, 0-9, - and _ only.");
+            return;
+        }
+    }
+
+    function showError(msg) {
+        labelInput.classList.add('invalid-input');
+        errorMsg.textContent = msg;
+        errorMsg.classList.remove('hidden');
+        setTimeout(() => labelInput.classList.remove('invalid-input'), 500);
+    }
+
+    // Clear previous errors
+    labelInput.classList.remove('invalid-input');
+    errorMsg.classList.add('hidden');
+
     generateBtn.disabled = true;
     generateBtn.textContent = 'Creating...';
     try {
@@ -106,21 +133,22 @@ generateBtn.addEventListener('click', async () => {
         });
         
         document.getElementById('newApiKeyText').textContent = res.key;
+        document.getElementById('newApiKeyFolder').textContent = `api-${res.label}`;
         document.getElementById('newApiKeyModal').classList.remove('hidden');
         labelInput.value = '';
         loadKeys();
     } catch (err) {
-        // Handle specific limit error if backend returns JSON
-        if (err.message.includes('Limit reached') || err.message.includes('409') || err.message.includes('Maximum 3 keys')) {
-            alert('API Key Limit Reached: You can only have up to 3 active API keys at once. Please revoke an old key first.');
-        } else {
-            // Check if we can extract the error from the response (api helper might need change)
-            alert('Failed to create API key. Ensure you have fewer than 3 active keys.');
-        }
+        showError(err.message || 'Failed to create API key.');
     } finally {
         generateBtn.disabled = false;
         generateBtn.textContent = 'Create API Key';
     }
+});
+
+// Clear error on type
+labelInput.addEventListener('input', () => {
+    labelInput.classList.remove('invalid-input');
+    document.getElementById('apiKeyError').classList.add('hidden');
 });
 
 document.getElementById('closeApiKeyBtn').addEventListener('click', () => {
