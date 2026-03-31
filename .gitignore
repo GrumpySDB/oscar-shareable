@@ -47,3 +47,7 @@ yarn-error.log*
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Test configurations
+test_config.yml
+test_config_token.yml
