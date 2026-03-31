@@ -64,7 +64,19 @@ pub async fn create_session_handler(
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" }))).into_response();
     }
 
-    let id = match state.db.create_sync_session(&claims.uuid, device_id_str.as_deref(), &import_type) {
+    // Resolve subfolder name from API key
+    let subfolder = if claims.sid.starts_with("api_key_") {
+        let id_str = &claims.sid["api_key_".len()..];
+        if let Ok(id) = id_str.parse::<i64>() {
+            state.db.get_api_key_label(id).ok().flatten().map(|l| format!("api-{}", l))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let id = match state.db.create_sync_session(&claims.uuid, device_id_str.as_deref(), &import_type, subfolder.as_deref()) {
         Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to create sync session: {}", e);
@@ -129,10 +141,11 @@ pub async fn upload_file_handler(
             }
 
             // 3. Setup Temp File & Hashing
-            let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
-            let upload_dir = PathBuf::from(UPLOAD_ROOT).join(&folder);
+            let username = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+            let subfolder = session["subfolder"].as_str().unwrap_or("uploads");
+            let upload_dir = PathBuf::from(UPLOAD_ROOT).join(&username).join(subfolder);
             
-            // Ensure user upload dir exists
+            // Ensure subfolder exists
             if let Err(e) = fs::create_dir_all(&upload_dir).await {
                 tracing::error!("Failed to create upload dir: {}", e);
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "FileSystem error" }))).into_response();
@@ -190,7 +203,8 @@ pub async fn upload_file_handler(
     let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
     
     // Construct final path: root / user / dir / filename
-    let mut final_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    let subfolder = session["subfolder"].as_str().unwrap_or("uploads");
+    let mut final_path = PathBuf::from(UPLOAD_ROOT).join(&folder).join(subfolder);
     if !sanitized_rel_dir.is_empty() {
         final_path = final_path.join(&sanitized_rel_dir);
     }
@@ -246,10 +260,11 @@ pub async fn upload_file_handler(
     }
 
     // 10. Record file hash
+    let subfolder = session["subfolder"].as_str().unwrap_or("uploads");
     let rel_path = if sanitized_rel_dir.is_empty() {
-        safe_filename.clone()
+        format!("{}/{}", subfolder, safe_filename)
     } else {
-        format!("{}/{}", sanitized_rel_dir, safe_filename)
+        format!("{}/{}/{}", subfolder, sanitized_rel_dir, safe_filename)
     };
     let _ = state.db.record_file_hash(&computed_hash, &claims.uuid, &rel_path);
     let _ = state.db.increment_sync_session_files(id);
@@ -298,6 +313,25 @@ pub async fn process_files_handler(
         Some(&format!("session_id: {}, files: {}", id, session["files_processed"])),
         None
     );
+
+    // 4. Update Profile.xml
+    if session["import_type"] == "sdcard" {
+        let subfolder = session["subfolder"].as_str().unwrap_or("uploads");
+        let username_dir = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+        let profile_xml_path = PathBuf::from(crate::config::PROFILE_ROOT)
+            .join(&username_dir)
+            .join("Profiles")
+            .join(&username_dir)
+            .join("Profile.xml");
+
+        if profile_xml_path.exists() {
+            let new_path = format!("/config/Documents/SDCARD/{}", subfolder);
+            // We reuse the logic from upload.rs by calling update_last_cpap_path
+            // Since it's not exported, let's just implement it here or consider moving to utils
+            use crate::upload::update_last_cpap_path;
+            let _ = update_last_cpap_path(&profile_xml_path, &new_path).await;
+        }
+    }
 
     (StatusCode::OK, Json(serde_json::json!({ "status": "complete" }))).into_response()
 }
