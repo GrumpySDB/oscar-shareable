@@ -121,6 +121,7 @@ impl Database {
                 user_uuid TEXT NOT NULL,
                 device_id TEXT,
                 import_type TEXT,
+                subfolder TEXT,
                 created_at INTEGER NOT NULL,
                 last_active_at INTEGER NOT NULL,
                 status TEXT NOT NULL,
@@ -600,6 +601,13 @@ impl Database {
         }
     }
 
+    pub fn get_api_key_label(&self, id: i64) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT label FROM api_keys WHERE id = ?1")?;
+        let row = stmt.query_row(params![id], |r| r.get(0))?;
+        Ok(row)
+    }
+
     pub fn get_api_key_by_hash(&self, hash: &str) -> Result<Option<(i64, String)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, user_uuid FROM api_keys WHERE key_hash = ?1")?;
@@ -710,13 +718,13 @@ impl Database {
 
     // --- Sync Sessions ---
 
-    pub fn create_sync_session(&self, user_uuid: &str, device_id: Option<&str>, import_type: &str) -> Result<i64> {
+    pub fn create_sync_session(&self, user_uuid: &str, device_id: Option<&str>, import_type: &str, subfolder: Option<&str>) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
         conn.execute(
-            "INSERT INTO sync_sessions (user_uuid, device_id, import_type, created_at, last_active_at, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'active')",
-            params![user_uuid, device_id, import_type, now, now],
+            "INSERT INTO sync_sessions (user_uuid, device_id, import_type, subfolder, created_at, last_active_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active')",
+            params![user_uuid, device_id, import_type, subfolder, now, now],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -750,7 +758,7 @@ impl Database {
     pub fn get_sync_session_by_id(&self, id: i64) -> Result<Option<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_uuid, device_id, import_type, created_at, last_active_at, status, files_processed 
+            "SELECT id, user_uuid, device_id, import_type, created_at, last_active_at, status, files_processed, subfolder 
              FROM sync_sessions 
              WHERE id = ?1"
         )?;
@@ -765,6 +773,7 @@ impl Database {
                 "last_active_at": row.get::<_, i64>(5)?,
                 "status": row.get::<_, String>(6)?,
                 "files_processed": row.get::<_, i32>(7)?,
+                "subfolder": row.get::<_, Option<String>>(8)?,
             })))
         } else {
             Ok(None)

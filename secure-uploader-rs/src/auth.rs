@@ -17,6 +17,7 @@ use crate::config::{AppState, SessionInfo, UPLOAD_ROOT, PROFILE_ROOT};
 use std::path::PathBuf;
 use tokio::fs;
 use sha2::{Sha256, Digest};
+use regex::Regex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
@@ -1401,6 +1402,34 @@ pub async fn create_api_key_handler(
     }
 
     use rand::{rngs::OsRng, Rng, distributions::Alphanumeric};
+
+    let mut label = payload.label.clone().filter(|l| !l.trim().is_empty());
+    
+    if let Some(ref l) = label {
+        // Validation: Max 30 chars, alphanumeric, hyphen, underscore
+        if l.len() > 30 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Label is too long. Maximum 30 characters allowed." }))
+            ));
+        }
+        let re = Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
+        if !re.is_match(l) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Invalid label. Only letters, numbers, hyphens (-), and underscores (_) are allowed." }))
+            ));
+        }
+    } else {
+        // Generate random 6-char alphanumeric label
+        let random_label: String = OsRng
+            .sample_iter(&Alphanumeric)
+            .take(6)
+            .map(char::from)
+            .collect();
+        label = Some(random_label);
+    }
+
     let secret: String = OsRng
         .sample_iter(&Alphanumeric)
         .take(64)
@@ -1411,20 +1440,24 @@ pub async fn create_api_key_handler(
     hasher.update(secret.as_bytes());
     let hash_hex = hex::encode(hasher.finalize());
 
-    let id = state.db.create_api_key(&claims.uuid, &hash_hex, payload.label.clone(), payload.scopes.clone()).map_err(|_| {
+    let id = state.db.create_api_key(&claims.uuid, &hash_hex, label.clone(), payload.scopes.clone()).map_err(|_| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Database error" })))
     })?;
 
-    tracing::info!("User {} created a new API key: {}", claims.uuid, id);
+    tracing::info!("User {} created a new API key: {} with label: {:?}", claims.uuid, id, label);
     let _ = state.db.log_audit_event(
         "create_api_key",
         Some(&claims.uuid),
         Some(&claims.username),
-        Some(&format!("key_id: {}, label: {:?}", id, payload.label)),
+        Some(&format!("key_id: {}, label: {:?}", id, label)),
         None
     );
 
-    Ok(Json(serde_json::json!({ "key": secret, "id": id })))
+    Ok(Json(serde_json::json!({ 
+        "key": secret, 
+        "id": id, 
+        "label": label.unwrap_or_default() 
+    })))
 }
 
 pub async fn list_api_keys_handler(

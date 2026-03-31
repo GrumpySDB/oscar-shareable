@@ -193,7 +193,8 @@ pub async fn handle_upload(
     let stream = req.into_body().into_data_stream();
     let mut multipart = MulterMultipart::with_constraints(stream, boundary, constraints);
 
-    let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+    let username_folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+    let mut provided_folder = String::new();
     let mut tinfoil_hat_mode = false;
     let mut total_batches = 1usize;
     let mut batch_index = 0usize;
@@ -239,7 +240,9 @@ pub async fn handle_upload(
 
         let name = field.name().unwrap_or("").to_string();
         
-        if matches!(name.as_str(), "folder" | "selectedDateMs" | "uploadSessionId" | "wellueDbParents") {
+        if name == "folder" {
+            provided_folder = field.text().await.unwrap_or_default();
+        } else if matches!(name.as_str(), "selectedDateMs" | "uploadSessionId" | "wellueDbParents") {
             let _ = field.text().await;
         } else if name == "tinfoilHatMode" {
             tinfoil_hat_mode = field.text().await.unwrap_or_else(|_| "false".to_string()).to_lowercase() == "true";
@@ -331,7 +334,24 @@ pub async fn handle_upload(
         }
     }
 
-    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
+    // Resolve subfolder name
+    let subfolder = if claims.sid.starts_with("api_key_") {
+        let id_str = &claims.sid["api_key_".len()..];
+        if let Ok(id) = id_str.parse::<i64>() {
+            let label = state.db.get_api_key_label(id).ok().flatten().unwrap_or_else(|| "default".to_string());
+            format!("api-{}", label)
+        } else {
+            "api-unknown".to_string()
+        }
+    } else if !provided_folder.is_empty() {
+        // Sanitize: alphanumeric, hyphen, underscore only
+        let re = Regex::new(r"[^a-zA-Z0-9_-]").unwrap();
+        re.replace_all(&provided_folder, "").to_string()
+    } else {
+        "uploads".to_string()
+    };
+
+    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&username_folder).join(&subfolder);
     fs::create_dir_all(&folder_path).await.unwrap();
 
     let envelopes: std::collections::HashMap<String, Envelope> = if tinfoil_hat_mode && !raw_encryption_envelope_map.is_empty() {
@@ -356,9 +376,9 @@ pub async fn handle_upload(
         }
         
         if !has_ident_crc {
-            let str_on_disk = folder_path.join("SD_CARD/STR.edf").exists() || folder_path.join("STR.edf").exists();
+            let str_on_disk = folder_path.join("STR.edf").exists() || folder_path.join("SD_CARD/STR.edf").exists();
             if has_str_edf || str_on_disk {
-                let ident_on_disk = folder_path.join("SD_CARD/Identification.crc").exists() || folder_path.join("Identification.crc").exists();
+                let ident_on_disk = folder_path.join("Identification.crc").exists() || folder_path.join("SD_CARD/Identification.crc").exists();
                 if !ident_on_disk {
                     return (
                         StatusCode::BAD_REQUEST,
@@ -371,7 +391,6 @@ pub async fn handle_upload(
         }
     }
 
-    let first_file_name = temp_files.first().map(|(n, _)| n.clone());
     let mut write_tasks: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(temp_files.len());
 
     for (filename, payload) in temp_files {
@@ -491,21 +510,16 @@ pub async fn handle_upload(
 
     // --- Update Profile.xml if this is an SD card upload ---
     if upload_type == "sdcard" && batch_index + 1 == total_batches {
-        if let Some(first_file) = first_file_name {
-            let root_folder = first_file.split('/').next().unwrap_or("");
-            if !root_folder.is_empty() {
-                let username_dir = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
-                let profile_xml_path = PathBuf::from(PROFILE_ROOT)
-                    .join(&username_dir)
-                    .join("Profiles")
-                    .join(&username_dir)
-                    .join("Profile.xml");
+        let username_dir = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
+        let profile_xml_path = PathBuf::from(PROFILE_ROOT)
+            .join(&username_dir)
+            .join("Profiles")
+            .join(&username_dir)
+            .join("Profile.xml");
 
-                if profile_xml_path.exists() {
-                    let new_path = format!("/config/Documents/SDCARD/{}", root_folder);
-                    let _ = update_last_cpap_path(&profile_xml_path, &new_path).await;
-                }
-            }
+        if profile_xml_path.exists() {
+            let new_path = format!("/config/Documents/SDCARD/{}", subfolder);
+            let _ = update_last_cpap_path(&profile_xml_path, &new_path).await;
         }
     }
 
@@ -526,16 +540,26 @@ pub async fn handle_upload(
     }))).into_response()
 }
 
-async fn update_last_cpap_path(path: &std::path::Path, new_value: &str) -> std::io::Result<()> {
+pub async fn update_last_cpap_path(path: &std::path::Path, new_value: &str) -> std::io::Result<()> {
     let content = fs::read_to_string(path).await?;
-    // Simple regex-based replacement to avoid heavy XML parsing
-    // Target: <LastCPAPPath type="QString">/config/Documents/SDCARD</LastCPAPPath>
+    
+    // Efficiency: check if it already contains the target path
+    let target_str = format!("<LastCPAPPath type=\"QString\">{}</LastCPAPPath>", new_value);
+    if content.contains(&target_str) {
+        tracing::debug!("Profile.xml already points to {}, skipping write.", new_value);
+        return Ok(());
+    }
+
+    // Simple regex-based replacement
     let re = Regex::new(r#"(<LastCPAPPath type="QString">)(.*?)(</LastCPAPPath>)"#).unwrap();
     let updated = re.replace(&content, |caps: &Captures| {
         format!("{}{}{}", &caps[1], new_value, &caps[3])
     });
 
-    fs::write(path, updated.as_ref()).await?;
+    if updated != content {
+        fs::write(path, updated.as_ref()).await?;
+        tracing::info!("Updated LastCPAPPath in {:?} to {}", path, new_value);
+    }
     Ok(())
 }
 

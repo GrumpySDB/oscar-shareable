@@ -54,7 +54,9 @@
                         <div class="split-header-right">
                             <div class="invite-input-group">
                                 <label for="apiKeyLabel" class="label-right">Device Label / Note (Optional):</label>
-                                <input type="text" id="apiKeyLabel" placeholder="e.g. ESP32 AutoSync" maxlength="64" class="input-right" />
+                                <input type="text" id="apiKeyLabel" placeholder="e.g. ESP32-AutoSync" maxlength="30" class="input-right" />
+                                <p class="input-hint">Max 30 chars. Alphanumeric, - and _ only.</p>
+                                <div id="apiKeyError" class="input-error-msg hidden"></div>
                             </div>
                         </div>
                     </div>
@@ -99,6 +101,11 @@
                         <div class="modal-limitation-note">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                             <span>Limit: 3 keys. Stale keys (unused for 30 days) are revoked.</span>
+                        </div>
+
+                        <div class="folder-info-box">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                            <span>Uploads will be stored in: <strong id="newApiKeyFolder">api-label</strong></span>
                         </div>
 
                         <label class="label-muted">API Key</label>

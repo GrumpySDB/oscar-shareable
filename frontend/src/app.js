@@ -813,7 +813,7 @@ async function scanAndPrepare(manualFiles = null) {
   }
 
   preparedFiles = eligible;
-  preparedSourceRootFolder = uploadType === 'sdcard' ? 'SD_CARD' : selectedRootFolder;
+  preparedSourceRootFolder = selectedRootFolder;
   selectedDateMs = selectedDate.getTime();
   preparedUploadType = uploadType;
   preparedWellueDbParents = uploadType === 'wellue-spo2' ? wellueDbParents : [];
@@ -922,6 +922,11 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, t
       form.append('wellueDbParents', JSON.stringify(preparedWellueDbParents));
     }
     form.append('uploadSessionId', sessionId);
+    if (preparedSourceRootFolder) {
+      // Sanitize: match backend Regex [^a-zA-Z0-9_-]
+      const sanitizedFolder = preparedSourceRootFolder.replace(/[^a-zA-Z0-9_-]/g, '');
+      form.append('folder', sanitizedFolder);
+    }
     form.append('batchIndex', String(batchIndex));
     form.append('totalBatches', String(totalBatches));
     form.append('totalFiles', String(totalFiles));
