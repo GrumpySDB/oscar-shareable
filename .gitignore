@@ -18,6 +18,7 @@ tests/
 cpap_autosync_pr_design.md
 secure-uploader-rs/verify_order_fix.py
 *.py
+oscar-wasm/
 
 # Node/Vite build artifacts
 node_modules/
