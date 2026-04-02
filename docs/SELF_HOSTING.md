@@ -79,8 +79,25 @@ services:
       - TZ=America/Chicago    # Your timezone
       - MAX_RES=2560x1440
       - TITLE=OSCAR Standalone
+      - START_DOCKER=false
+      - DISABLE_IPV6=true
+      - NO_DECOR=false
+      - NO_GAMEPAD=true
       - HARDEN_DESKTOP=true
+      - HARDEN_OPENBOX=true
+      - SELKIES_ENABLE_CURSORS=true
+      - SELKIES_AUDIO_ENABLED=true
+      - SELKIES_GAMEPAD_ENABLED=false
+      - SELKIES_MICROPHONE_ENABLED=false
+      - SELKIES_CLIPBOARD_IN_ENABLED=true
       - SELKIES_CLIPBOARD_OUT_ENABLED=true
+      - SELKIES_ENABLE_SHARING=true
+      - SELKIES_UI_SIDEBAR_SHOW_GAMEPADS=false
+      - SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD=true
+      - SELKIES_UI_SIDEBAR_SHOW_AUDIO_SETTINGS=true
+      - SELKIES_UI_SIDEBAR_SHOW_SHARING=true
+      - SELKIES_UI_SHOW_CORE_BUTTONS=true
+      - SELKIES_USE_BROWSER_CURSORS=true
 ```
 
 1. Save the above as `docker-compose.yml`.
