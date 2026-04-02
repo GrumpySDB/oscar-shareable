@@ -271,13 +271,15 @@ function getRelativePath(file) {
   return slashNormalized.replace(/^\.\//, '');
 }
 
-function getStandardizedRelativePath(file) {
+function getStandardizedRelativePath(file, currentUploadType) {
   let relativePath = getRelativePath(file);
-  if (preparedUploadType === 'sdcard') {
-    const parts = relativePath.split('/');
-    if (parts.length > 1) {
-      parts[0] = 'SD_CARD';
-      return parts.join('/');
+  const type = currentUploadType || preparedUploadType;
+  if (type === 'sdcard' && preparedSourceRootFolder) {
+    // Only strip the root folder once. If relativePath already starts with it, strip it. 
+    // This makes the function idempotent and prevents double-stripping in Tinfoil Hat Mode.
+    const rootPrefix = preparedSourceRootFolder + '/';
+    if (relativePath.startsWith(rootPrefix)) {
+      return relativePath.substring(rootPrefix.length);
     }
   }
   return relativePath;
@@ -581,7 +583,8 @@ function getUploadCompleteMessage() {
     return `Upload Complete.  Import your SD Card data from /config/Documents/SDCARD/${uploadedFolder}`;
   }
 
-  return `Upload Complete.  Import your Oximetry data from /config/Documents/SDCARD/Oximetry`;
+  const uploadedFolder = preparedSourceRootFolder.replace(/[^a-zA-Z0-9_-]/g, '') || 'uploads';
+  return `Upload Complete.  Import your Oximetry data from /config/Documents/SDCARD/Oximetry/${uploadedFolder}`;
 }
 
 async function scanAndPrepare(manualFiles = null) {
@@ -598,6 +601,7 @@ async function scanAndPrepare(manualFiles = null) {
   }
 
   const selectedRootFolder = getSelectedRootFolderName(files);
+  preparedSourceRootFolder = selectedRootFolder;
   const selectedDate = new Date(document.getElementById('startDate').value);
 
   let existingNames = [];
@@ -668,8 +672,11 @@ async function scanAndPrepare(manualFiles = null) {
   let skippedInvalid = 0;
 
   for (const file of files) {
-    const relativePath = getStandardizedRelativePath(file);
+    const relativePath = getStandardizedRelativePath(file, uploadType);
     const basename = getBasename(file);
+
+    const sanitizedRoot = selectedRootFolder.replace(/[^a-zA-Z0-9_-]/g, '');
+    const checkPath = sanitizedRoot ? `${sanitizedRoot}/${relativePath}` : relativePath;
 
     if (uploadType === 'sdcard') {
       if (!validateFile(file, selectedDate.getTime())) {
@@ -677,7 +684,7 @@ async function scanAndPrepare(manualFiles = null) {
         continue;
       }
 
-      if (!isAlwaysIncluded(basename) && existingSet.has(relativePath)) {
+      if (!isAlwaysIncluded(basename) && existingSet.has(checkPath)) {
         skippedExisting += 1;
         continue;
       }
@@ -735,52 +742,6 @@ async function scanAndPrepare(manualFiles = null) {
     }
 
     eligible.push(file);
-  }
-
-  const checkPayload = {
-    deviceId: null,
-    files: eligible.map(f => ({
-      path: getStandardizedRelativePath(f),
-      size: f.size,
-      md5: null
-    }))
-  };
-
-  if (eligible.length > 0) {
-    try {
-      const checkRes = await api('/api/upload/check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(checkPayload)
-      });
-      
-      const statusMap = new Map();
-      if (checkRes && checkRes.status) {
-        checkRes.status.forEach(s => statusMap.set(s.path, s.action));
-      }
-
-      const finalEligible = [];
-      let serverSkipped = 0;
-      for (const f of eligible) {
-         if (statusMap.get(getStandardizedRelativePath(f)) === 'UPLOAD') {
-            finalEligible.push(f);
-         } else {
-            serverSkipped += 1;
-         }
-      }
-      
-      // We already skipped some locally via existingSet, but if the server
-      // skipped more, we add that to skippedExisting
-      if (serverSkipped > 0) {
-          // Because existingSet was loaded at the beginning, the server might have caught
-          // duplicates we missed, or it might just overlap. Just use serverSkipped + local duplicates.
-          // Wait, if existingSet caught it, it wasn't in list anyway. So we just add serverSkipped.
-          skippedExisting += serverSkipped;
-      }
-      eligible = finalEligible;
-    } catch(err) {
-       console.error("Deduplication check error:", err);
-    }
   }
 
   const skippedTotal = skippedExisting + skippedInvalid;
@@ -862,6 +823,24 @@ async function getEncryptionPublicKey() {
   );
 }
 
+function getFinalUploadPath(file, type) {
+  let relativePath = getStandardizedRelativePath(file, type);
+  if (type === 'spo2') {
+    return getBasename(file);
+  } else if (type === 'wellue-spo2') {
+    const basename = getBasename(file);
+    if (is14DigitOximetryFilename(basename)) {
+      return basename;
+    } else {
+      const parts = relativePath.split('/');
+      const fileName = parts[parts.length - 1] || '';
+      const directFolder = parts.length >= 2 ? parts[parts.length - 2] : '';
+      return `${directFolder}/${fileName}`;
+    }
+  }
+  return relativePath;
+}
+
 async function buildEncryptedBatchPayload(files) {
   const encryptionKey = await getEncryptionPublicKey();
   const envelope = {};
@@ -877,7 +856,7 @@ async function buildEncryptedBatchPayload(files) {
     const tag = encryptedBytes.slice(encryptedBytes.length - 16);
     const cipherText = encryptedBytes.slice(0, encryptedBytes.length - 16);
     const wrappedKey = await window.crypto.subtle.encrypt({ name: 'RSA-OAEP' }, encryptionKey, aesKeyBytes);
-    const relativePath = getStandardizedRelativePath(file);
+    const relativePath = getFinalUploadPath(file, preparedUploadType);
 
     envelope[relativePath] = {
       wrappedKey: btoa(String.fromCharCode(...new Uint8Array(wrappedKey))),
@@ -936,20 +915,7 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, t
       form.append('encryptionEnvelope', JSON.stringify(encryptionEnvelope));
     }
     for (const file of files) {
-      let relativePath = getStandardizedRelativePath(file);
-      if (preparedUploadType === 'spo2') {
-        relativePath = `Oximetry/${getBasename(file)}`;
-      } else if (preparedUploadType === 'wellue-spo2') {
-        const basename = getBasename(file);
-        if (is14DigitOximetryFilename(basename)) {
-          relativePath = `Oximetry/${basename}`;
-        } else {
-          const parts = relativePath.split('/');
-          const fileName = parts[parts.length - 1] || '';
-          const directFolder = parts.length >= 2 ? parts[parts.length - 2] : '';
-          relativePath = `Oximetry/${directFolder}/${fileName}`;
-        }
-      }
+      const relativePath = getFinalUploadPath(file, preparedUploadType);
       form.append('files', file, relativePath);
     }
 
@@ -986,7 +952,9 @@ function uploadBatch({ files, batchIndex, totalBatches, sessionId, totalBytes, t
         message = 'Upload rejected by size limit. Please try selecting a more recent start date to reduce the number of files per upload.';
       }
 
-      reject(new Error(message));
+      const err = new Error(message);
+      err.status = request.status;
+      reject(err);
     };
 
     request.onerror = () => {
@@ -1059,17 +1027,28 @@ async function uploadPreparedFiles() {
           success = true;
         } catch (error) {
           lastError = error;
-          // Abort retries for deterministic rule-based failures (limits, validation)
-          if (error.message.includes('exceeds') || error.message.includes('rejected')) {
+          
+          // Stop retrying on terminal client-side or server-side validation errors
+          const status = error.status || 0;
+          const isTerminalError = (status >= 400 && status < 500) && status !== 408 && status !== 429;
+          
+          if (isTerminalError || error.message.includes('exceeds') || error.message.includes('rejected')) {
+            console.error("Terminal upload error:", error.message);
             break;
           }
+          
           console.warn("Batch failed on attempt:", batchIndex + 1, attempt + 1, error.message);
           attempt += 1;
         }
       }
 
       if (!success) {
-        throw new Error(lastError?.message || `Failed to definitively upload batch ${batchIndex + 1} after 3 attempts. Upload aborted.`);
+        const failureReason = lastError?.status === 401 ? 'Session expired. Please log in again.' : (lastError?.message || 'Unknown error');
+        throw new Error(
+          (attempt >= 3)
+          ? `Failed to upload batch ${batchIndex + 1} after 3 attempts. Last error: ${failureReason}`
+          : `Upload aborted due to error: ${failureReason}`
+        );
       }
     }
 
