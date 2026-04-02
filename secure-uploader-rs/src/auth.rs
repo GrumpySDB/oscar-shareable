@@ -838,7 +838,7 @@ pub async fn auth_middleware(
             }
             return Err((
                 StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "Invalid token" })),
+                Json(serde_json::json!({ "error": "Invalid token or session expired" })),
             ));
         }
     };

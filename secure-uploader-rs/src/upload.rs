@@ -38,52 +38,6 @@ pub async fn list_files(
     Json(serde_json::json!({ "filenames": filenames }))
 }
 
-#[derive(Deserialize)]
-pub struct UploadCheckPayload {
-    pub device_id: Option<String>,
-    pub files: Vec<UploadCheckFile>,
-}
-
-#[derive(Deserialize)]
-pub struct UploadCheckFile {
-    pub path: String,
-    pub size: u64,
-    pub md5: Option<String>,
-}
-
-pub async fn handle_upload_check(
-    State(_state): State<Arc<AppState>>,
-    Extension(claims): Extension<Claims>,
-    axum::Json(payload): axum::Json<UploadCheckPayload>,
-) -> impl IntoResponse {
-    let folder = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
-    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&folder);
-    
-    let mut status_list = Vec::new();
-    
-    for file in payload.files {
-        if let Some(sanitized_path) = sanitize_upload_relative_path(&file.path) {
-            let disk_path = folder_path.join(&sanitized_path);
-            let action = if disk_path.exists() {
-                "SKIP"
-            } else {
-                "UPLOAD"
-            };
-            status_list.push(serde_json::json!({
-                "path": file.path,
-                "action": action
-            }));
-        } else {
-            status_list.push(serde_json::json!({
-                "path": file.path,
-                "action": "INVALID"
-            }));
-        }
-    }
-    
-    (StatusCode::OK, Json(serde_json::json!({ "status": status_list }))).into_response()
-}
-
 #[async_recursion::async_recursion]
 async fn collect_filenames_recursive(root: &PathBuf, current: &PathBuf) -> anyhow::Result<Vec<String>> {
     let mut names = Vec::new();
@@ -203,21 +157,6 @@ pub async fn handle_upload(
     let mut upload_type = String::new();
     let mut raw_encryption_envelope_map = String::new();
 
-    // --- Evict active OSCAR container if it exists ---
-    // This ensures that when the user clicks 'Proceed to OSCAR' after the upload,
-    // a fresh container is launched that picks up the newly uploaded data.
-    let uuid = claims.uuid.clone();
-    let docker = state.docker.clone();
-    let state_arc = state.clone();
-
-    tokio::spawn(async move {
-        if let Some((_, info)) = state_arc.active_containers.remove(&uuid) {
-            tracing::info!("Evicting OSCAR container {} due to new upload start.", info.container_id);
-            let _ = docker.stop_container(&info.container_id, None::<StopContainerOptions>).await;
-            let _ = docker.remove_container(&info.container_id, Some(RemoveContainerOptions { force: true, ..Default::default() })).await;
-        }
-    });
-    
     // Files are held in RAM during processing, matching the JS multer.memoryStorage()
     // approach for performance. Size limits are enforced during streaming to prevent
     // unbounded memory consumption.
@@ -351,7 +290,11 @@ pub async fn handle_upload(
         "uploads".to_string()
     };
 
-    let folder_path = PathBuf::from(UPLOAD_ROOT).join(&username_folder).join(&subfolder);
+    let folder_path = if upload_type == "wellue-spo2" || upload_type == "spo2" {
+        PathBuf::from(UPLOAD_ROOT).join(&username_folder).join("Oximetry").join(&subfolder)
+    } else {
+        PathBuf::from(UPLOAD_ROOT).join(&username_folder).join(&subfolder)
+    };
     fs::create_dir_all(&folder_path).await.unwrap();
 
     let envelopes: std::collections::HashMap<String, Envelope> = if tinfoil_hat_mode && !raw_encryption_envelope_map.is_empty() {
@@ -410,11 +353,14 @@ pub async fn handle_upload(
                         final_payload = decrypted;
                     }
                     Err(_) => {
-                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Unable to decrypt {}", sanitized_path) }))).into_response();
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Unable to decrypt {}. Tinfoil Hat Mode envelope mismatch or corrupt payload.", sanitized_path) }))).into_response();
                     }
                 }
             } else {
-                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Missing envelope for {}", sanitized_path) }))).into_response();
+                tracing::warn!("Tinfoil Hat Mode: Missing envelope entry for file: {} (original filename: {})", sanitized_path, filename);
+                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ 
+                    "error": format!("Missing encryption envelope for {}. Please ensure your uploader is sending matching metadata for all files.", sanitized_path) 
+                }))).into_response();
             }
         }
 
@@ -509,7 +455,7 @@ pub async fn handle_upload(
     }
 
     // --- Update Profile.xml if this is an SD card upload ---
-    if upload_type == "sdcard" && batch_index + 1 == total_batches {
+    if (upload_type == "sdcard" || upload_type == "wellue-spo2" || upload_type == "spo2") && batch_index + 1 == total_batches {
         let username_dir = crate::utils::sanitize_folder_name(&claims.username).unwrap_or(claims.uuid.clone());
         let profile_xml_path = PathBuf::from(PROFILE_ROOT)
             .join(&username_dir)
@@ -518,8 +464,13 @@ pub async fn handle_upload(
             .join("Profile.xml");
 
         if profile_xml_path.exists() {
-            let new_path = format!("/config/Documents/SDCARD/{}", subfolder);
-            let _ = update_last_cpap_path(&profile_xml_path, &new_path).await;
+            if upload_type == "sdcard" {
+                let new_path = format!("/config/Documents/SDCARD/{}", subfolder);
+                let _ = update_last_cpap_path(&profile_xml_path, &new_path).await;
+            } else {
+                let new_path = format!("/config/Documents/SDCARD/Oximetry/{}", subfolder);
+                let _ = update_last_oximetry_path(&profile_xml_path, &new_path).await;
+            }
         }
     }
 
@@ -541,25 +492,12 @@ pub async fn handle_upload(
 }
 
 pub async fn update_last_cpap_path(path: &std::path::Path, new_value: &str) -> std::io::Result<()> {
-    let content = fs::read_to_string(path).await?;
-    
-    // Efficiency: check if it already contains the target path
-    let target_str = format!("<LastCPAPPath type=\"QString\">{}</LastCPAPPath>", new_value);
-    if content.contains(&target_str) {
-        tracing::debug!("Profile.xml already points to {}, skipping write.", new_value);
-        return Ok(());
-    }
+    crate::utils::force_xml_setting(path, "LastCPAPPath", "QString", new_value, None).await?;
+    Ok(())
+}
 
-    // Simple regex-based replacement
-    let re = Regex::new(r#"(<LastCPAPPath type="QString">)(.*?)(</LastCPAPPath>)"#).unwrap();
-    let updated = re.replace(&content, |caps: &Captures| {
-        format!("{}{}{}", &caps[1], new_value, &caps[3])
-    });
-
-    if updated != content {
-        fs::write(path, updated.as_ref()).await?;
-        tracing::info!("Updated LastCPAPPath in {:?} to {}", path, new_value);
-    }
+pub async fn update_last_oximetry_path(path: &std::path::Path, new_value: &str) -> std::io::Result<()> {
+    crate::utils::force_xml_setting(path, "LastOximetryPath", "QString", new_value, None).await?;
     Ok(())
 }
 

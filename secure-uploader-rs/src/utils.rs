@@ -1,9 +1,10 @@
-use sha2::Sha256;
+use sha2::{Sha256, Digest};
+use regex::{Regex, Captures};
+use tokio::fs;
 
 pub fn safe_equal(a: &str, b: &str) -> bool {
     // Timing-safe comparison for strings of equal length.
     // Use hash-based comparison to handle variable lengths safely.
-    use sha2::Digest;
     let mut hasher1 = Sha256::new();
     hasher1.update(a.as_bytes());
     let h1 = hasher1.finalize();
@@ -85,4 +86,49 @@ pub fn sanitize_upload_relative_path(value: &str) -> Option<String> {
     }
 
     Some(cleaned_segments.join("/"))
+}
+
+pub async fn force_xml_setting(path: &std::path::Path, key: &str, _val_type: &str, value: &str, init_template: Option<&str>) -> std::io::Result<bool> {
+    let mut was_initialized = false;
+    let content = match fs::read_to_string(path).await {
+        Ok(c) => c,
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                if let Some(template) = init_template {
+                    if let Some(parent) = path.parent() {
+                        fs::create_dir_all(parent).await?;
+                    }
+                    fs::write(path, template).await?;
+                    was_initialized = true;
+                    template.to_string()
+                } else {
+                    return Ok(false); // No template, no file, nothing changed
+                }
+            } else {
+                return Err(e);
+            }
+        }
+    };
+
+    // Use a non-greedy, dot-all regex to match the tag regardless of attribute order or whitespace
+    let pattern = format!(r#"(?s)(<{}\s*[^>]*>)(.*?)(</{}>)"#, key, key);
+    let re = Regex::new(&pattern).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    
+    let mut found = false;
+    let updated = re.replace(&content, |caps: &Captures| {
+        found = true;
+        format!("{}{}{}", &caps[1], value, &caps[3])
+    });
+
+    if updated != content {
+        fs::write(path, updated.as_ref()).await?;
+        tracing::info!("Forced XML setting {} in {:?} to {}", key, path, value);
+        Ok(true)
+    } else if !found {
+        tracing::debug!("XML setting element <{}> not found in {:?}", key, path);
+        Ok(was_initialized) // If we initialized the file, treat it as a change
+    } else {
+        tracing::debug!("XML setting element <{}> in {:?} was already set to {}", key, path, value);
+        Ok(was_initialized) // If we initialized the file and it happens to match, it's still a change from "nothing"
+    }
 }
