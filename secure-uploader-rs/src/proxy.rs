@@ -131,12 +131,14 @@ pub async fn ensure_oscar_container(
 
     let is_active = {
         let mut to_cleanup = Vec::new();
-        if !is_ephemeral {
-            // For primary sessions, find any existing active containers for the SAME user
-            // but with DIFFERENT keys (stale sessions from a previous launch).
-            for entry in state.active_containers.iter() {
-                let (k, info) = entry.pair();
-                if info.owner_uuid == owner_uuid && k != container_key {
+        
+        // Find existing containers for this user
+        for entry in state.active_containers.iter() {
+            let (k, info) = entry.pair();
+            if info.owner_uuid == owner_uuid {
+                // If it's a different session key, it's stale.
+                // If settings changed, even the SAME key's container must be refreshed.
+                if k != container_key {
                     to_cleanup.push((k.clone(), info.container_id.clone()));
                 }
             }
@@ -145,7 +147,8 @@ pub async fn ensure_oscar_container(
         if !to_cleanup.is_empty() {
             for (k, cid) in to_cleanup {
                 if state.active_containers.remove(&k).is_some() {
-                    tracing::info!("Evicting stale session {} for user {} as a new session is launching.", k, owner_uuid);
+                    let reason = "stale session";
+                    tracing::info!("Evicting container {} for user {} because {}.", cid, owner_uuid, reason);
                     let state_clone = state.clone();
                     let uuid_clone = owner_uuid.to_string();
                     tokio::spawn(async move {
