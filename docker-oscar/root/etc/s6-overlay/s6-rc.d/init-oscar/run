@@ -12,5 +12,4 @@ if [ -w "/config/Documents/SDCARD" ]; then
     mkdir -p /config/Documents/SDCARD
     chown -R "${OSCAR_UID}:${OSCAR_GID}" /config/Documents/SDCARD
 else
-    echo "Notice: /config/Documents/SDCARD is read-only or not writable. Skipping ownership change."
 fi
